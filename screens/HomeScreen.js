@@ -1,36 +1,53 @@
-// src/screens/HomeScreen.js
 import React, { useState } from "react";
-import { View, Text, TextInput, Button } from "react-native";
-import { sendText } from "../api/api";
+import { Text, TextInput, Button, StyleSheet, ScrollView, Alert, TouchableOpacity } from "react-native";
+import { registerUser } from "../api/api";
 
-export default function HomeScreen() {
-    const [text, setText] = useState("");
-    const [response, setResponse] = useState("");
+export default function HomeScreen({ onSwitch }) {
+    const [username, setUsername] = useState("");
+    const [email, setEmail] = useState("");
+    const [phoneNumber, setPhoneNumber] = useState("");
+    const [password, setPassword] = useState("");
 
     const handleSend = async () => {
-        const result = await sendText(text);
-        setResponse(JSON.stringify(result));
+        const userData = {
+            Username: username,
+            Email: email,
+            PhoneNumber: phoneNumber,
+            Password: password
+        };
+
+        const result = await registerUser(userData);
+
+        if (result.error) {
+            Alert.alert("Помилка", result.error);
+        } else {
+            Alert.alert("Успіх", "Реєстрація успішна! Увійдіть.");
+            onSwitch();
+        }
     };
 
     return (
-        <View style={{ padding: 20, marginTop: 50 }}>
+        <ScrollView contentContainerStyle={styles.container}>
+            <Text style={styles.header}>Реєстрація</Text>
 
-            <TextInput
-                value={text}
-                onChangeText={setText}
-                placeholder="1223"
-                style={{
-                    borderWidth: 1,
-                    padding: 10,
-                    marginVertical: 10,
-                }}
-            />
+            <TextInput placeholder="Логін" value={username} onChangeText={setUsername} style={styles.input} autoCapitalize="none"/>
+            <TextInput placeholder="Email" value={email} onChangeText={setEmail} style={styles.input} keyboardType="email-address" autoCapitalize="none"/>
+            <TextInput placeholder="Телефон" value={phoneNumber} onChangeText={setPhoneNumber} style={styles.input} keyboardType="phone-pad"/>
+            <TextInput placeholder="Пароль" value={password} onChangeText={setPassword} style={styles.input} secureTextEntry/>
 
-            <Button title="отправить" onPress={handleSend} />
+            <Button title="Зареєструватися" color="#2196F3" onPress={handleSend} />
 
-            <Text style={{ marginTop: 20 }}>
-                ответ: {response}
-            </Text>
-        </View>
+            <TouchableOpacity onPress={onSwitch} style={styles.linkButton}>
+                <Text style={styles.linkText}>Вже є акаунт? Вхід</Text>
+            </TouchableOpacity>
+        </ScrollView>
     );
 }
+
+const styles = StyleSheet.create({
+    container: { flexGrow: 1, justifyContent: 'center', padding: 20 },
+    header: { fontSize: 24, fontWeight: "bold", marginBottom: 30, textAlign: "center" },
+    input: { borderWidth: 1, borderColor: "#ccc", borderRadius: 5, padding: 10, marginBottom: 15 },
+    linkButton: { alignItems: 'center', marginTop: 20 },
+    linkText: { color: '#2196F3', fontSize: 16 }
+});
