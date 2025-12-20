@@ -1,134 +1,149 @@
-// Адреса твого бекенду (перевір, чи порт 5001 правильний)
-const API_URL = "http://192.168.68.102:5000";
+import axios from 'axios';
 
-export const registerUser = async (userData) => {
+const API_URL = 'http://127.0.0.1:5000';
+
+/* =========================
+   Axios instance
+========================= */
+const api = axios.create({
+    baseURL: API_URL,
+    timeout: 10000,
+});
+
+/* =========================
+   AUTH
+========================= */
+export const registerUser = async (username, email, phone, password) => {
     try {
-        const url = `${API_URL}/api/Auth/register`;
-        console.log(`🔗 [POST] Реєстрація: ${url}`);
-        console.log("📦 Дані:", userData);
-
-        const response = await fetch(url, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(userData),
+        const res = await api.post('/api/Auth/register', {
+            Username: username,
+            Email: email,
+            PhoneNumber: phone, // ✅ ВАЖЛИВО
+            Password: password
         });
-
-        const text = await response.text();
-        console.log(`📞 Статус: ${response.status}`);
-
-        if (response.ok) {
-            console.log("✅ Успішна реєстрація");
-            return text ? JSON.parse(text) : { message: "Успішно" };
-        } else {
-            console.log("❌ Помилка реєстрації:", text);
-            return { error: text || `Помилка ${response.status}` };
-        }
-    } catch (error) {
-        console.error("❌ Catch Error:", error);
-        return { error: error.message };
+        return res.data;
+    } catch (e) {
+        return {
+            error: e.response?.data || 'Register error'
+        };
     }
 };
 
-export const loginUser = async (loginData) => {
+export const loginUser = async (username, password) => {
     try {
-        const url = `${API_URL}/api/Auth/login`;
-        console.log(`🔗 [POST] Вхід: ${url}`);
-
-        const response = await fetch(url, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(loginData),
+        const res = await api.post('/api/Auth/login', {
+            Username: username,
+            Password: password
         });
-
-        const text = await response.text();
-        console.log(`📞 Статус: ${response.status}`);
-
-        if (response.ok) {
-            console.log("✅ Вхід виконано");
-            return text ? JSON.parse(text) : { message: "Успішний вхід" };
-        } else {
-            console.log("❌ Помилка входу:", text);
-            return { error: text || "Невірний логін або пароль" };
-        }
-    } catch (error) {
-        console.error("❌ Catch Error:", error);
-        return { error: "Помилка підключення до сервера" };
+        return res.data;
+    } catch (e) {
+        return {
+            error: e.response?.data || 'Login error'
+        };
     }
 };
 
-// --- ОТРИМАННЯ СПИСКУ ТРЕКІВ ---
-export const getTracks = async () => {
+/* =========================
+   ALBUMS
+========================= */
+export const getAlbums = async () => {
     try {
-        const url = `${API_URL}/api/Tracks`;
-        console.log(`🎵 [GET] Отримання треків: ${url}`);
-
-        const response = await fetch(url);
-
-        if (response.ok) {
-            const data = await response.json();
-            console.log(`✅ Отримано треків: ${data.length}`);
-            return data;
-        } else {
-            console.log("⚠️ Не вдалося отримати треки");
-            return [];
-        }
-    } catch (error) {
-        console.error("❌ Catch Error (getTracks):", error);
+        const res = await api.get('/api/Album/all');
+        return res.data;
+    } catch {
         return [];
     }
 };
 
-export const uploadTrack = async (file, title, artist, album) => {
+export const getAlbumDetails = async (id) => {
     try {
-        const url = `${API_URL}/api/Tracks/upload`;
-        console.log(`⬆️ [POST] Завантаження файлу на: ${url}`);
-
-        // Створюємо FormData для відправки файлу
-        const formData = new FormData();
-
-        // Формуємо об'єкт файлу для React Native
-        const fileData = {
-            uri: file.uri,
-            name: file.name,
-            type: file.mimeType || "audio/mpeg" // Якщо тип не визначився, ставимо стандартний mp3
-        };
-
-        console.log("📄 Файл:", fileData);
-        console.log(`📝 Інфо: ${title} - ${artist} (${album})`);
-
-        formData.append("file", fileData);
-        formData.append("title", title);
-        formData.append("artist", artist);
-        formData.append("album", album);
-
-        // Відправляємо як multipart/form-data
-        // Важливо: Content-Type не вказуємо вручну, fetch сам підставить boundary
-        const response = await fetch(url, {
-            method: "POST",
-            body: formData,
-            headers: {
-                "Content-Type": "multipart/form-data",
-            },
-        });
-
-        const text = await response.text();
-        console.log(`📞 Статус завантаження: ${response.status}`);
-
-        if (response.ok) {
-            console.log("✅ Трек успішно завантажено!");
-            return { success: true };
-        } else {
-            console.log("❌ Помилка сервера при завантаженні:", text);
-            return { error: text };
-        }
-    } catch (error) {
-        console.error("❌ Catch Error (uploadTrack):", error);
-        return { error: error.message };
+        const res = await api.get(`/api/Album/${id}`);
+        return res.data;
+    } catch {
+        return null;
     }
 };
 
-export const getStreamUrl = (id) => {
-    const url = `${API_URL}/api/Tracks/stream/${id}`;
-    // console.log(`🎧 Stream URL: ${url}`); // Можна розкоментувати, якщо треба бачити посилання
-    return url;
+export const createAlbum = async (title, artist, cover) => {
+    const formData = new FormData();
+    formData.append('title', title);
+    formData.append('artist', artist);
+
+    if (cover) {
+        formData.append('cover', {
+            uri: cover.uri,
+            name: 'cover.jpg',
+            type: 'image/jpeg'
+        });
+    }
+
+    try {
+        await api.post('/api/Album/create', formData, {
+            headers: {
+                'Content-Type': 'multipart/form-data'
+            }
+        });
+        return { success: true };
+    } catch {
+        return { error: 'Create album failed' };
+    }
 };
+
+/* =========================
+   TRACKS
+========================= */
+export const getTracks = async () => {
+    try {
+        const res = await api.get('/api/Tracks');
+        return res.data;
+    } catch {
+        return [];
+    }
+};
+
+export const uploadTrack = async (file, title, artist, albumId, cover) => {
+    const formData = new FormData();
+
+    formData.append('file', {
+        uri: file.uri,
+        name: file.name || 'audio.mp3',
+        type: 'audio/mpeg'
+    });
+    formData.append('title', title);
+    formData.append('artist', artist);
+
+    if (albumId) {
+        formData.append('albumId', albumId);
+    }
+
+    if (cover) {
+        formData.append('cover', {
+            uri: cover.uri,
+            name: 'cover.jpg',
+            type: 'image/jpeg'
+        });
+    }
+
+    try {
+        const res = await api.post('/api/Tracks/upload', formData, {
+            headers: {
+                'Content-Type': 'multipart/form-data'
+            }
+        });
+        return { success: true, data: res.data };
+    } catch {
+        return { error: 'Upload failed' };
+    }
+};
+
+/* =========================
+   MEDIA URLS
+========================= */
+export const getStreamUrl = (id) =>
+    `${API_URL}/api/Tracks/stream/${id}`;
+
+export const getTrackCoverUrl = (id) =>
+    `${API_URL}/api/Tracks/cover/${id}`;
+
+export const getAlbumCoverUrl = (id) =>
+    `${API_URL}/api/Album/cover/${id}`;

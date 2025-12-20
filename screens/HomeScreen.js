@@ -1,53 +1,297 @@
 import React, { useState } from "react";
-import { Text, TextInput, Button, StyleSheet, ScrollView, Alert, TouchableOpacity } from "react-native";
+import {
+    View,
+    Text,
+    TextInput,
+    StyleSheet,
+    TouchableOpacity,
+    ScrollView,
+    Platform,
+    KeyboardAvoidingView,
+    Alert
+} from "react-native";
+
 import { registerUser } from "../api/api";
 
-export default function HomeScreen({ onSwitch }) {
+const INPUT_HEIGHT = Platform.OS === "ios" ? 56 : 52;
+
+export default function RegisterScreen({ navigation }) {
     const [username, setUsername] = useState("");
     const [email, setEmail] = useState("");
-    const [phoneNumber, setPhoneNumber] = useState("");
     const [password, setPassword] = useState("");
+    const [secure, setSecure] = useState(true);
+    const [error, setError] = useState("");
 
-    const handleSend = async () => {
-        const userData = {
-            Username: username,
-            Email: email,
-            PhoneNumber: phoneNumber,
-            Password: password
-        };
+    const isPasswordValid = password.length >= 8;
+    const isFormValid = username && email && isPasswordValid;
 
-        const result = await registerUser(userData);
+    const handleRegister = async () => {
+        if (!isFormValid) return;
 
-        if (result.error) {
-            Alert.alert("Помилка", result.error);
+        const res = await registerUser(username, email, "", password);
+
+        if (res?.error) {
+            Alert.alert("Error", res.error);
         } else {
-            Alert.alert("Успіх", "Реєстрація успішна! Увійдіть.");
-            onSwitch();
+            Alert.alert("Success", "Account created");
+            navigation.goBack();
         }
     };
 
+    const handleGoogleAuth = () => {
+        Alert.alert("Google Auth", "Backend not connected yet");
+    };
+
+    const handleDiscordAuth = () => {
+        Alert.alert("Discord Auth", "Backend not connected yet");
+    };
+
     return (
-        <ScrollView contentContainerStyle={styles.container}>
-            <Text style={styles.header}>Реєстрація</Text>
+        <KeyboardAvoidingView
+            style={{ flex: 1 }}
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
+        >
+            <ScrollView
+                contentContainerStyle={styles.container}
+                keyboardShouldPersistTaps="handled"
+            >
+                {/* HEADER */}
+                <Text style={styles.title}>
+                    Hey,{"\n"}Nice to meet you
+                </Text>
 
-            <TextInput placeholder="Логін" value={username} onChangeText={setUsername} style={styles.input} autoCapitalize="none"/>
-            <TextInput placeholder="Email" value={email} onChangeText={setEmail} style={styles.input} keyboardType="email-address" autoCapitalize="none"/>
-            <TextInput placeholder="Телефон" value={phoneNumber} onChangeText={setPhoneNumber} style={styles.input} keyboardType="phone-pad"/>
-            <TextInput placeholder="Пароль" value={password} onChangeText={setPassword} style={styles.input} secureTextEntry/>
+                {/* INPUTS */}
+                <View style={styles.inputsWrap}>
+                    {/* NAME */}
+                    <View style={styles.inputWrapper}>
+                        <View style={styles.iconContainer} />
+                        <TextInput
+                            placeholder="Name"
+                            value={username}
+                            onChangeText={setUsername}
+                            style={styles.input}
+                            placeholderTextColor="#999"
+                        />
+                    </View>
 
-            <Button title="Зареєструватися" color="#2196F3" onPress={handleSend} />
+                    {/* EMAIL */}
+                    <View style={styles.inputWrapper}>
+                        <View style={styles.iconContainer} />
+                        <TextInput
+                            placeholder="Email"
+                            value={email}
+                            onChangeText={setEmail}
+                            style={styles.input}
+                            placeholderTextColor="#999"
+                            autoCapitalize="none"
+                            keyboardType="email-address"
+                        />
+                    </View>
 
-            <TouchableOpacity onPress={onSwitch} style={styles.linkButton}>
-                <Text style={styles.linkText}>Вже є акаунт? Вхід</Text>
-            </TouchableOpacity>
-        </ScrollView>
+                    {/* PASSWORD */}
+                    <View
+                        style={[
+                            styles.inputWrapper,
+                            error && styles.inputError
+                        ]}
+                    >
+                        <View style={styles.iconContainer} />
+
+                        <TextInput
+                            placeholder="Password"
+                            value={password}
+                            onChangeText={(v) => {
+                                setPassword(v);
+                                setError(v.length >= 8 ? "" : "Invalid password");
+                            }}
+                            secureTextEntry={secure}
+                            style={styles.input}
+                            placeholderTextColor="#999"
+                        />
+
+                        <TouchableOpacity onPress={() => setSecure(!secure)}>
+                            <Text style={styles.toggle}>
+                                {secure ? "Show" : "Hide"}
+                            </Text>
+                        </TouchableOpacity>
+                    </View>
+
+                    {/* HELPER */}
+                    <Text style={styles.helper}>
+                        Password must contain at least 8 characters
+                    </Text>
+
+                    {error ? <Text style={styles.error}>{error}</Text> : null}
+                </View>
+
+                {/* BUTTON */}
+                <TouchableOpacity
+                    disabled={!isFormValid}
+                    onPress={handleRegister}
+                    style={[
+                        styles.button,
+                        !isFormValid && styles.buttonDisabled
+                    ]}
+                >
+                    <Text
+                        style={[
+                            styles.buttonText,
+                            !isFormValid && styles.buttonTextDisabled
+                        ]}
+                    >
+                        Sign up
+                    </Text>
+                </TouchableOpacity>
+
+                {/* SOCIAL */}
+                <Text style={styles.or}>or continue with</Text>
+
+                <View style={styles.socialRow}>
+                    <TouchableOpacity
+                        style={styles.socialStub}
+                        onPress={handleGoogleAuth}
+                    />
+                    <TouchableOpacity
+                        style={styles.socialStub}
+                        onPress={handleDiscordAuth}
+                    />
+                </View>
+
+                {/* FOOTER */}
+                <Text style={styles.footer}>
+                    Already have an account?{" "}
+                    <Text
+                        style={styles.link}
+                        onPress={() => navigation.goBack()}
+                    >
+                        Sign in
+                    </Text>
+                </Text>
+            </ScrollView>
+        </KeyboardAvoidingView>
     );
 }
 
 const styles = StyleSheet.create({
-    container: { flexGrow: 1, justifyContent: 'center', padding: 20 },
-    header: { fontSize: 24, fontWeight: "bold", marginBottom: 30, textAlign: "center" },
-    input: { borderWidth: 1, borderColor: "#ccc", borderRadius: 5, padding: 10, marginBottom: 15 },
-    linkButton: { alignItems: 'center', marginTop: 20 },
-    linkText: { color: '#2196F3', fontSize: 16 }
+    container: {
+        flexGrow: 1,
+        paddingHorizontal: 16,
+        backgroundColor: "#fff"
+    },
+
+    title: {
+        marginTop: 130,
+        fontSize: 34,
+        fontWeight: "700",
+        lineHeight: 40
+    },
+
+    inputsWrap: {
+        marginTop: 40
+    },
+
+    inputWrapper: {
+        flexDirection: "row",
+        alignItems: "center",
+        height: INPUT_HEIGHT,
+        borderWidth: 1,
+        borderColor: "#434343",
+        borderRadius: INPUT_HEIGHT / 2,
+        marginTop: 20,
+        paddingRight: 16
+    },
+
+    iconContainer: {
+        width: INPUT_HEIGHT,
+        height: INPUT_HEIGHT,
+        borderRadius: INPUT_HEIGHT / 2,
+        borderWidth: 1,
+        borderColor: "#434343",
+        marginLeft: -1,
+        marginRight: 12
+    },
+
+    input: {
+        flex: 1,
+        fontSize: 16
+    },
+
+    toggle: {
+        fontSize: 12,
+        color: "#000"
+    },
+
+    helper: {
+        marginTop: 8,
+        fontSize: 12,
+        color: "#999",
+        textAlign: "center"
+    },
+
+    error: {
+        marginTop: 8,
+        color: "red",
+        fontSize: 12,
+        textAlign: "center"
+    },
+
+    inputError: {
+        borderColor: "red"
+    },
+
+    button: {
+        marginTop: 61,
+        height: 56,
+        borderRadius: 28,
+        backgroundColor: "#000",
+        alignItems: "center",
+        justifyContent: "center"
+    },
+
+    buttonDisabled: {
+        backgroundColor: "#9F9F9F"
+    },
+
+    buttonText: {
+        color: "#fff",
+        fontSize: 16,
+        fontWeight: "600"
+    },
+
+    buttonTextDisabled: {
+        color: "#BFBFBF"
+    },
+
+    or: {
+        marginTop: 38,
+        textAlign: "center",
+        color: "#000"
+    },
+
+    socialRow: {
+        marginTop: 16,
+        flexDirection: "row",
+        justifyContent: "center",
+        gap: 20
+    },
+
+    socialStub: {
+        width: 48,
+        height: 48,
+        borderRadius: 24,
+        borderWidth: 1,
+        borderColor: "#000"
+    },
+
+    footer: {
+        marginTop: 24,
+        textAlign: "center",
+        color: "#999"
+    },
+
+    link: {
+        color: "#868686",
+        fontWeight: "600",
+        textDecorationLine: "underline"
+    }
 });

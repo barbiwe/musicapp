@@ -5,14 +5,11 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="4dc7471c-7e11-428f-9b6d-dd157181614d" name="Changes" comment="">
-      <change afterPath="$PROJECT_DIR$/.idea/dataSources.local.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/dataSources.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/dataSources/c22d2d14-8829-4cb5-a971-2ab3cdfb42af.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/dataSources/c22d2d14-8829-4cb5-a971-2ab3cdfb42af/storage_v2/_src_/database/mussicdb.IEncMg.meta" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/dataSources/c22d2d14-8829-4cb5-a971-2ab3cdfb42af/storage_v2/_src_/database/mussicdb.IEncMg/schema/public.abK9xQ.meta" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/data_source_mapping.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/screens/LoginScreen.js" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/screens/MusicScreen.js" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/screens/AlbumDetailScreen.js" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/screens/AlbumListScreen.js" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/screens/CreateAlbumScreen.js" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/screens/TrackListScreen.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/dataSources/c22d2d14-8829-4cb5-a971-2ab3cdfb42af.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/dataSources/c22d2d14-8829-4cb5-a971-2ab3cdfb42af.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/App.js" beforeDir="false" afterPath="$PROJECT_DIR$/App.js" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/api/api.js" beforeDir="false" afterPath="$PROJECT_DIR$/api/api.js" afterDir="false" />
@@ -20,6 +17,8 @@
       <change beforePath="$PROJECT_DIR$/package-lock.json" beforeDir="false" afterPath="$PROJECT_DIR$/package-lock.json" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/package.json" beforeDir="false" afterPath="$PROJECT_DIR$/package.json" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/screens/HomeScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/HomeScreen.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/screens/LoginScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/LoginScreen.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/screens/MusicScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/MusicScreen.js" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -33,6 +32,9 @@
   &quot;associatedIndex&quot;: 6
 }</component>
   <component name="ProjectId" id="36Q3EpVNfA5ejHuVxYtBRoHynGW" />
+  <component name="ProjectLevelVcsManager">
+    <ConfirmationsSetting value="2" id="Add" />
+  </component>
   <component name="ProjectViewState">
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
@@ -46,7 +48,7 @@
     "RunOnceActivity.git.unshallow": "true",
     "git-widget-placeholder": "main",
     "kotlin-language-version-configured": "true",
-    "last_opened_file_path": "/Users/fidanukayapomidu/Desktop/music",
+    "last_opened_file_path": "/Users/fidanukayapomidu/Desktop/music/assets/fonts",
     "node.js.detected.package.eslint": "true",
     "node.js.detected.package.tslint": "true",
     "node.js.selected.package.eslint": "(autodetect)",
@@ -60,18 +62,10 @@
     ]
   }
 }]]></component>
-  <component name="RunManager">
-    <configuration default="true" type="JetRunConfigurationType">
-      <module name="music" />
-      <method v="2">
-        <option name="Make" enabled="true" />
-      </method>
-    </configuration>
-    <configuration default="true" type="KotlinStandaloneScriptRunConfigurationType">
-      <module name="music" />
-      <option name="filePath" />
-      <method v="2" />
-    </configuration>
+  <component name="RecentsManager">
+    <key name="CopyFile.RECENT_KEYS">
+      <recent name="$PROJECT_DIR$/assets/fonts" />
+    </key>
   </component>
   <component name="SharedIndexes">
     <attachedChunks>
@@ -90,7 +84,8 @@
       <updated>1764924858586</updated>
       <workItem from="1764924859793" duration="546000" />
       <workItem from="1764926094772" duration="20720000" />
-      <workItem from="1765112999021" duration="4667000" />
+      <workItem from="1765112999021" duration="23066000" />
+      <workItem from="1765921137890" duration="14148000" />
     </task>
     <servers />
   </component>

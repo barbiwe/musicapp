@@ -29460,8 +29460,8 @@ false Zulu
     </table>
     <table id="6360" parent="274" name="Users">
       <DetailsLevel>2</DetailsLevel>
-      <ObjectId>16414</ObjectId>
-      <StateNumber>767</StateNumber>
+      <ObjectId>24611</ObjectId>
+      <StateNumber>787</StateNumber>
       <AccessMethodId>2</AccessMethodId>
       <OwnerName>postgres</OwnerName>
     </table>
@@ -69272,7 +69272,6 @@ false Zulu
       <Position>1</Position>
       <StateNumber>767</StateNumber>
       <StoredType>integer|0s</StoredType>
-      <SequenceId>16398</SequenceId>
       <TypeId>23</TypeId>
     </column>
     <column id="18835" parent="6359" name="Title">
@@ -69341,52 +69340,52 @@ false Zulu
       <IdentityKind>by-default</IdentityKind>
       <NotNull>1</NotNull>
       <Position>1</Position>
-      <StateNumber>767</StateNumber>
+      <StateNumber>787</StateNumber>
       <StoredType>integer|0s</StoredType>
-      <SequenceId>16413</SequenceId>
+      <SequenceId>24610</SequenceId>
       <TypeId>23</TypeId>
     </column>
     <column id="18845" parent="6360" name="Username">
       <NotNull>1</NotNull>
       <Position>2</Position>
-      <StateNumber>767</StateNumber>
+      <StateNumber>787</StateNumber>
       <StoredType>text|0s</StoredType>
       <TypeId>25</TypeId>
     </column>
     <column id="18846" parent="6360" name="Email">
       <NotNull>1</NotNull>
       <Position>3</Position>
-      <StateNumber>767</StateNumber>
+      <StateNumber>787</StateNumber>
       <StoredType>text|0s</StoredType>
       <TypeId>25</TypeId>
     </column>
     <column id="18847" parent="6360" name="PhoneNumber">
       <NotNull>1</NotNull>
       <Position>4</Position>
-      <StateNumber>767</StateNumber>
+      <StateNumber>787</StateNumber>
       <StoredType>text|0s</StoredType>
       <TypeId>25</TypeId>
     </column>
-    <column id="18848" parent="6360" name="Password">
+    <column id="18848" parent="6360" name="PasswordHash">
       <NotNull>1</NotNull>
       <Position>5</Position>
-      <StateNumber>767</StateNumber>
+      <StateNumber>787</StateNumber>
       <StoredType>text|0s</StoredType>
       <TypeId>25</TypeId>
     </column>
     <index id="18849" parent="6360" name="PK_Users">
       <ColNames>Id</ColNames>
-      <ObjectId>16424</ObjectId>
+      <ObjectId>24621</ObjectId>
       <Primary>1</Primary>
-      <StateNumber>767</StateNumber>
+      <StateNumber>787</StateNumber>
       <Unique>1</Unique>
       <AccessMethodId>403</AccessMethodId>
     </index>
     <key id="18850" parent="6360" name="PK_Users">
-      <ObjectId>16425</ObjectId>
+      <ObjectId>24622</ObjectId>
       <Primary>1</Primary>
-      <StateNumber>767</StateNumber>
-      <UnderlyingIndexId>16424</UnderlyingIndexId>
+      <StateNumber>787</StateNumber>
+      <UnderlyingIndexId>24621</UnderlyingIndexId>
     </key>
     <column id="18851" parent="6361" name="MigrationId">
       <NotNull>1</NotNull>
