@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
     View,
     Text,
@@ -10,11 +10,13 @@ import {
     TouchableOpacity,
     Alert
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { Audio } from 'expo-av';
 import {
     getTracks,
     getTrackCoverUrl,
-    getStreamUrl
+    getStreamUrl,
+    logoutUser // 👇 Додав функцію виходу
 } from '../api/api';
 
 export default function TrackListScreen({ navigation }) {
@@ -23,36 +25,40 @@ export default function TrackListScreen({ navigation }) {
     const [sound, setSound] = useState(null);
     const [playingTrackId, setPlayingTrackId] = useState(null);
 
-    useEffect(() => {
-        loadTracks();
-
-        return () => {
-            if (sound) {
-                sound.unloadAsync();
-            }
-        };
-    }, [sound]);
+    useFocusEffect(
+        useCallback(() => {
+            loadTracks();
+            return () => {
+                if (sound) {
+                    sound.unloadAsync();
+                }
+            };
+        }, [])
+    );
 
     const loadTracks = async () => {
         setLoading(true);
         const data = await getTracks();
-        setTracks(data);
+        setTracks(Array.isArray(data) ? data : []);
         setLoading(false);
     };
 
     const playTrack = async (track) => {
         try {
+            const trackId = track.id || track._id;
+            if (!trackId) return;
+
             if (sound) {
                 await sound.unloadAsync();
-                setPlayingTrackId(null);
+                setSound(null);
             }
 
-            if (playingTrackId === track.id) {
-                setSound(null);
+            if (playingTrackId === trackId) {
+                setPlayingTrackId(null);
                 return;
             }
 
-            const streamUrl = getStreamUrl(track.id);
+            const streamUrl = getStreamUrl(trackId);
 
             const { sound: newSound } = await Audio.Sound.createAsync(
                 { uri: streamUrl },
@@ -60,30 +66,47 @@ export default function TrackListScreen({ navigation }) {
             );
 
             setSound(newSound);
-            setPlayingTrackId(track.id);
+            setPlayingTrackId(trackId);
+
+            newSound.setOnPlaybackStatusUpdate((status) => {
+                if (status.didJustFinish) {
+                    setPlayingTrackId(null);
+                }
+            });
+
         } catch (e) {
+            console.error("Play Error:", e);
             Alert.alert('Error', 'Cannot play track');
         }
     };
 
     const renderItem = ({ item }) => {
-        const isPlaying = playingTrackId === item.id;
+        const trackId = item.id || item._id;
+        const isPlaying = playingTrackId === trackId;
+
+        // 👇 Використовуємо нову функцію, яка бачить і великі, і маленькі літери
+        const coverUri = getTrackCoverUrl(item);
 
         return (
             <TouchableOpacity
                 onPress={() => playTrack(item)}
                 style={styles.row}
             >
-                <Image
-                    source={{ uri: getTrackCoverUrl(item.id) }}
-                    style={styles.cover}
-                />
+                {coverUri ? (
+                    <Image
+                        source={{ uri: coverUri }}
+                        style={styles.cover}
+                    />
+                ) : (
+                    <View style={styles.cover} />
+                )}
 
                 <View style={styles.info}>
-                    <Text style={styles.title}>{item.title}</Text>
-                    <Text style={styles.artist}>{item.artist}</Text>
+                    <Text style={styles.title} numberOfLines={1}>{item.title}</Text>
+                    <Text style={styles.artist} numberOfLines={1}>{item.artist}</Text>
                 </View>
 
+                {/* 👇 Твій текст, жодних іконок */}
                 <Text style={styles.playText}>
                     {isPlaying ? 'Stop' : 'Play'}
                 </Text>
@@ -93,7 +116,6 @@ export default function TrackListScreen({ navigation }) {
 
     return (
         <View style={styles.container}>
-            {/* HEADER */}
             <View style={styles.headerRow}>
                 <Text style={styles.header}>Tracks</Text>
 
@@ -103,26 +125,25 @@ export default function TrackListScreen({ navigation }) {
                         if (sound) {
                             await sound.unloadAsync();
                         }
-                        navigation.replace('Login');
+                        await logoutUser(); // 👇 Видаляємо токен
+                        navigation.replace('AuthChoice'); // Повертаємось на вибір
                     }}
                 />
             </View>
 
-            {/* LIST */}
             {loading ? (
                 <ActivityIndicator size="large" />
             ) : (
                 <FlatList
                     data={tracks}
-                    keyExtractor={(item) => item.id.toString()}
+                    keyExtractor={(item) => item.id || item._id || Math.random().toString()}
                     renderItem={renderItem}
                     ListEmptyComponent={
-                        <Text style={styles.emptyText}>No tracks</Text>
+                        <Text style={styles.emptyText}>No tracks found</Text>
                     }
                 />
             )}
 
-            {/* FOOTER BUTTON */}
             <View style={{ marginTop: 10 }}>
                 <Button
                     title="Upload track"
@@ -135,6 +156,7 @@ export default function TrackListScreen({ navigation }) {
 
 const styles = StyleSheet.create({
     container: {
+        paddingTop: 40,
         flex: 1,
         padding: 20,
         backgroundColor: '#fff'
@@ -160,13 +182,16 @@ const styles = StyleSheet.create({
         width: 40,
         height: 40,
         backgroundColor: '#ddd',
-        marginRight: 10
+        marginRight: 10,
+        borderRadius: 4
     },
     info: {
-        flex: 1
+        flex: 1,
+        paddingRight: 10
     },
     title: {
-        fontSize: 15
+        fontSize: 15,
+        fontWeight: '500'
     },
     artist: {
         fontSize: 12,
@@ -174,7 +199,8 @@ const styles = StyleSheet.create({
     },
     playText: {
         fontSize: 14,
-        color: '#000'
+        color: '#007AFF',
+        fontWeight: '600'
     },
     emptyText: {
         textAlign: 'center',

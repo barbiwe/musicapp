@@ -14,9 +14,9 @@ import {
 import * as ImagePicker from 'expo-image-picker';
 import { createAlbum } from '../api/api';
 
-export default function CreateAlbumScreen({ onBack }) {
+export default function CreateAlbumScreen({ navigation }) {
     const [title, setTitle] = useState('');
-    const [artist, setArtist] = useState('');
+    // const [artist, setArtist] = useState(''); // ❌ Видалено
     const [cover, setCover] = useState(null);
     const [loading, setLoading] = useState(false);
 
@@ -34,20 +34,24 @@ export default function CreateAlbumScreen({ onBack }) {
     };
 
     const handleCreate = async () => {
-        if (!title || !artist) {
-            Alert.alert('Error', 'Enter album title and artist');
+        if (!title) {
+            Alert.alert('Error', 'Enter album title');
             return;
         }
 
         setLoading(true);
-        const result = await createAlbum(title, artist, cover);
+
+        const result = await createAlbum(title, "", cover);
+
         setLoading(false);
 
-        if (result.success) {
-            Alert.alert('Success', 'Album created');
-            onBack();
+        if (result.error) {
+            Alert.alert('Error', result.error);
         } else {
-            Alert.alert('Error', result.error || 'Failed to create album');
+            Alert.alert('Success', 'Album created');
+            if (navigation && navigation.goBack) {
+                navigation.goBack();
+            }
         }
     };
 
@@ -81,30 +85,16 @@ export default function CreateAlbumScreen({ onBack }) {
                 placeholder="Album title"
             />
 
-            <Text style={styles.label}>Artist</Text>
-            <TextInput
-                style={styles.input}
-                value={artist}
-                onChangeText={setArtist}
-                placeholder="Artist name"
-            />
-
             <View style={styles.button}>
                 {loading ? (
                     <ActivityIndicator size="large" />
                 ) : (
-                    <Button
-                        title="Create"
-                        onPress={handleCreate}
-                    />
+                    <Button title="Create" onPress={handleCreate} />
                 )}
             </View>
 
             <View style={styles.button}>
-                <Button
-                    title="Cancel"
-                    onPress={onBack}
-                />
+                <Button title="Cancel" onPress={() => navigation.goBack()} />
             </View>
         </ScrollView>
     );

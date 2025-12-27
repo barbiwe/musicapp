@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
     View,
     Text,
@@ -8,10 +8,17 @@ import {
     ScrollView,
     Platform,
     KeyboardAvoidingView,
-    Alert
+    Alert,
+    ActivityIndicator // Додав імпорт індикатора
 } from "react-native";
 
-import { registerUser } from "../api/api";
+import * as WebBrowser from "expo-web-browser";
+import * as Google from "expo-auth-session/providers/google";
+
+// 👇 Використовуємо твої функції з API
+import { registerUser, googleLogin } from "../api/api";
+
+WebBrowser.maybeCompleteAuthSession();
 
 const INPUT_HEIGHT = Platform.OS === "ios" ? 56 : 52;
 
@@ -21,29 +28,77 @@ export default function RegisterScreen({ navigation }) {
     const [password, setPassword] = useState("");
     const [secure, setSecure] = useState(true);
     const [error, setError] = useState("");
+    const [loading, setLoading] = useState(false);
 
-    const isPasswordValid = password.length >= 8;
-    const isFormValid = username && email && isPasswordValid;
+    /* =========================
+       GOOGLE AUTH CONFIG (FIXED)
+    ========================= */
+    const [request, response, promptAsync] = Google.useIdTokenAuthRequest({
+        // 👇 iOS Client ID (Native)
+        iosClientId: '651816373430-s2bjgg2rh5pjga66kuevbt3u8e6e56e6.apps.googleusercontent.com',
 
-    const handleRegister = async () => {
-        if (!isFormValid) return;
+        // 👇 Web Client ID (для бекенду)
+        clientId: '651816373430-hjii65stgn3ei6q1lrfs4e0dm298j9gn.apps.googleusercontent.com',
 
-        const res = await registerUser(username, email, "", password);
+        // 👇 ВАЖЛИВО: Виправляємо помилку redirect_uri_mismatch
+        redirectUri: 'com.googleusercontent.apps.651816373430-s2bjgg2rh5pjga66kuevbt3u8e6e56e6:/oauth2redirect/google'
+    });
 
-        if (res?.error) {
-            Alert.alert("Error", res.error);
+    useEffect(() => {
+        if (response?.type === "success") {
+            const { id_token } = response.params;
+            handleBackendGoogleRegister(id_token);
+        } else if (response?.type === "error") {
+            // Логуємо помилку, якщо щось піде не так
+            console.log("Google Register Error:", response.error);
+        }
+    }, [response]);
+
+    const handleBackendGoogleRegister = async (token) => {
+        setLoading(true);
+        // Реєстрація через Google і логін — це один і той самий ендпоінт на бекенді
+        const result = await googleLogin(token);
+        setLoading(false);
+
+        if (result?.error) {
+            Alert.alert("Error", typeof result.error === 'string' ? result.error : 'Google registration failed');
         } else {
-            Alert.alert("Success", "Account created");
-            navigation.goBack();
+            // Успіх
+            navigation.replace("Tracks");
         }
     };
 
-    const handleGoogleAuth = () => {
-        Alert.alert("Google Auth", "Backend not connected yet");
+    /* =========================
+       FORM VALIDATION
+    ========================= */
+    const isPasswordValid = password.length >= 8;
+    const isFormValid = username && email && isPasswordValid;
+
+    /* =========================
+       EMAIL REGISTER
+    ========================= */
+    const handleRegister = async () => {
+        if (!isFormValid) return;
+
+        setLoading(true);
+        // Передаємо пустий телефон "", бо в формі його немає, а API вимагає
+        const res = await registerUser(username, email, "", password);
+        setLoading(false);
+
+        if (res?.error) {
+            // Якщо помилка (наприклад, Email зайнятий)
+            Alert.alert("Error", typeof res.error === 'string' ? res.error : "Registration failed");
+        } else {
+            Alert.alert("Success", "Account created");
+            navigation.replace("Tracks");
+        }
     };
 
+    /* =========================
+       DISCORD (LATER)
+    ========================= */
     const handleDiscordAuth = () => {
-        Alert.alert("Discord Auth", "Backend not connected yet");
+        Alert.alert("Discord Auth", "Coming soon");
     };
 
     return (
@@ -62,7 +117,7 @@ export default function RegisterScreen({ navigation }) {
 
                 {/* INPUTS */}
                 <View style={styles.inputsWrap}>
-                    {/* NAME */}
+                    {/* USERNAME */}
                     <View style={styles.inputWrapper}>
                         <View style={styles.iconContainer} />
                         <TextInput
@@ -116,7 +171,6 @@ export default function RegisterScreen({ navigation }) {
                         </TouchableOpacity>
                     </View>
 
-                    {/* HELPER */}
                     <Text style={styles.helper}>
                         Password must contain at least 8 characters
                     </Text>
@@ -124,33 +178,49 @@ export default function RegisterScreen({ navigation }) {
                     {error ? <Text style={styles.error}>{error}</Text> : null}
                 </View>
 
-                {/* BUTTON */}
+                {/* REGISTER BUTTON */}
                 <TouchableOpacity
-                    disabled={!isFormValid}
+                    disabled={!isFormValid || loading}
                     onPress={handleRegister}
                     style={[
                         styles.button,
-                        !isFormValid && styles.buttonDisabled
+                        (!isFormValid || loading) && styles.buttonDisabled
                     ]}
                 >
-                    <Text
-                        style={[
-                            styles.buttonText,
-                            !isFormValid && styles.buttonTextDisabled
-                        ]}
-                    >
-                        Sign up
-                    </Text>
+                    {loading ? (
+                        <ActivityIndicator color="#fff" />
+                    ) : (
+                        <Text
+                            style={[
+                                styles.buttonText,
+                                !isFormValid && styles.buttonTextDisabled
+                            ]}
+                        >
+                            Sign up
+                        </Text>
+                    )}
                 </TouchableOpacity>
 
                 {/* SOCIAL */}
                 <Text style={styles.or}>or continue with</Text>
 
                 <View style={styles.socialRow}>
+                    {/* GOOGLE BUTTON */}
                     <TouchableOpacity
                         style={styles.socialStub}
-                        onPress={handleGoogleAuth}
-                    />
+                        onPress={() => {
+                            if (request) {
+                                promptAsync();
+                            } else {
+                                Alert.alert("Wait", "Google loading...");
+                            }
+                        }}
+                        disabled={!request}
+                    >
+                        <Text style={{ fontWeight: 'bold', fontSize: 18, textAlign: 'center', lineHeight: 46 }}>G</Text>
+                    </TouchableOpacity>
+
+                    {/* DISCORD BUTTON */}
                     <TouchableOpacity
                         style={styles.socialStub}
                         onPress={handleDiscordAuth}
@@ -178,18 +248,15 @@ const styles = StyleSheet.create({
         paddingHorizontal: 16,
         backgroundColor: "#fff"
     },
-
     title: {
         marginTop: 130,
         fontSize: 34,
         fontWeight: "700",
         lineHeight: 40
     },
-
     inputsWrap: {
         marginTop: 40
     },
-
     inputWrapper: {
         flexDirection: "row",
         alignItems: "center",
@@ -200,7 +267,6 @@ const styles = StyleSheet.create({
         marginTop: 20,
         paddingRight: 16
     },
-
     iconContainer: {
         width: INPUT_HEIGHT,
         height: INPUT_HEIGHT,
@@ -210,35 +276,21 @@ const styles = StyleSheet.create({
         marginLeft: -1,
         marginRight: 12
     },
-
-    input: {
-        flex: 1,
-        fontSize: 16
-    },
-
-    toggle: {
-        fontSize: 12,
-        color: "#000"
-    },
-
+    input: { flex: 1, fontSize: 16 },
+    toggle: { fontSize: 12, color: "#000" },
     helper: {
         marginTop: 8,
         fontSize: 12,
         color: "#999",
         textAlign: "center"
     },
-
     error: {
         marginTop: 8,
         color: "red",
         fontSize: 12,
         textAlign: "center"
     },
-
-    inputError: {
-        borderColor: "red"
-    },
-
+    inputError: { borderColor: "red" },
     button: {
         marginTop: 61,
         height: 56,
@@ -247,34 +299,24 @@ const styles = StyleSheet.create({
         alignItems: "center",
         justifyContent: "center"
     },
-
-    buttonDisabled: {
-        backgroundColor: "#9F9F9F"
-    },
-
+    buttonDisabled: { backgroundColor: "#9F9F9F" },
     buttonText: {
         color: "#fff",
         fontSize: 16,
         fontWeight: "600"
     },
-
-    buttonTextDisabled: {
-        color: "#BFBFBF"
-    },
-
+    buttonTextDisabled: { color: "#BFBFBF" },
     or: {
         marginTop: 38,
         textAlign: "center",
         color: "#000"
     },
-
     socialRow: {
         marginTop: 16,
         flexDirection: "row",
         justifyContent: "center",
         gap: 20
     },
-
     socialStub: {
         width: 48,
         height: 48,
@@ -282,16 +324,14 @@ const styles = StyleSheet.create({
         borderWidth: 1,
         borderColor: "#000"
     },
-
     footer: {
         marginTop: 24,
         textAlign: "center",
         color: "#999"
     },
-
     link: {
         color: "#868686",
         fontWeight: "600",
-        textDecorationLine: "underline"
+        textDecorationLine: 'underline'
     }
 });

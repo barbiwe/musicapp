@@ -1,9 +1,12 @@
-import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, StatusBar } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, StatusBar, ActivityIndicator } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 /* SCREENS */
+import OnboardingScreen from './screens/OnboardingScreen';
+import AuthChoiceScreen from './screens/AuthChoiceScreen';
 import LoginScreen from './screens/LoginScreen';
 import RegisterScreen from './screens/HomeScreen';
 import TrackListScreen from './screens/TrackListScreen';
@@ -11,6 +14,7 @@ import MusicScreen from './screens/MusicScreen';
 import AlbumListScreen from './screens/AlbumListScreen';
 import AlbumDetailScreen from './screens/AlbumDetailScreen';
 import CreateAlbumScreen from './screens/CreateAlbumScreen';
+import ProfileScreen from './screens/ProfileScreen'; // 👈 Додав імпорт
 
 const Stack = createNativeStackNavigator();
 
@@ -29,6 +33,11 @@ function DemoNav({ navigation }) {
             <TouchableOpacity onPress={() => navigation.navigate('Upload')}>
                 <Text style={styles.demoLink}>Upload</Text>
             </TouchableOpacity>
+
+            {/* 👇 Додав кнопку Profile */}
+            <TouchableOpacity onPress={() => navigation.navigate('Profile')}>
+                <Text style={styles.demoLink}>Profile</Text>
+            </TouchableOpacity>
         </View>
     );
 }
@@ -46,14 +55,61 @@ function WithDemoNav(Component) {
 }
 
 export default function App() {
+    const [isLoading, setIsLoading] = useState(true);
+    const [initialRoute, setInitialRoute] = useState('Onboarding');
+
+    //токен
+    useEffect(() => {
+        const checkToken = async () => {
+            try {
+                const token = await AsyncStorage.getItem('userToken');
+                if (token) {
+                    setInitialRoute('Tracks');
+                }
+            } catch (e) {
+                console.log(e);
+            } finally {
+                setIsLoading(false);
+            }
+        };
+        checkToken();
+    }, []);
+
+    if (isLoading) {
+        return (
+            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+                <ActivityIndicator size="large" color="#000" />
+            </View>
+        );
+    }
+
     return (
         <NavigationContainer>
             <StatusBar barStyle="dark-content" />
 
-            <Stack.Navigator screenOptions={{ headerShown: false }}>
+            <Stack.Navigator
+                initialRouteName={initialRoute}
+                screenOptions={{ headerShown: false }}
+            >
+                {/* ONBOARDING */}
+                <Stack.Screen
+                    name="Onboarding"
+                    component={OnboardingScreen}
+                />
+
                 {/* AUTH */}
-                <Stack.Screen name="Login" component={LoginScreen} />
-                <Stack.Screen name="Register" component={RegisterScreen} />
+                <Stack.Screen
+                    name="AuthChoice"
+                    component={AuthChoiceScreen}
+                />
+                <Stack.Screen
+                    name="Login"
+                    component={LoginScreen}
+                />
+                <Stack.Screen
+                    name="Register"
+                    component={RegisterScreen}
+                />
 
                 {/* MAIN */}
                 <Stack.Screen
@@ -75,6 +131,12 @@ export default function App() {
                 <Stack.Screen
                     name="AlbumDetail"
                     component={WithDemoNav(AlbumDetailScreen)}
+                />
+
+                {/* 👇 Додав екран Profile */}
+                <Stack.Screen
+                    name="Profile"
+                    component={WithDemoNav(ProfileScreen)}
                 />
             </Stack.Navigator>
         </NavigationContainer>
