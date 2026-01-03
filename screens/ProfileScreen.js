@@ -14,20 +14,28 @@ import {
 import { useFocusEffect } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Audio } from 'expo-av';
+import * as ImagePicker from 'expo-image-picker';
+
 import {
     getMyTracks,
-    getMyAlbums, // 👈 ТУТ ЗМІНА
+    getMyAlbums,
+    getTracks,       // 👈 Додано: треба завантажити всі треки для пошуку по ID
+    getLikedTracks,  // 👈 Додано: отримуємо ID лайкнутих
     getTrackCoverUrl,
     getStreamUrl,
     getAlbumCoverUrl,
+    getUserAvatarUrl,
+    changeAvatar,
     logoutUser
 } from '../api/api';
 
 export default function ProfileScreen({ navigation }) {
     const [myTracks, setMyTracks] = useState([]);
     const [myAlbums, setMyAlbums] = useState([]);
+    const [likedTracks, setLikedTracks] = useState([]); // 👈 Стейт для лайкнутих
     const [loading, setLoading] = useState(true);
     const [username, setUsername] = useState('User');
+    const [avatarUri, setAvatarUri] = useState(null);
 
     // Аудіо
     const [sound, setSound] = useState(null);
@@ -48,18 +56,71 @@ export default function ProfileScreen({ navigation }) {
             const storedName = await AsyncStorage.getItem('username');
             if (storedName) setUsername(storedName);
 
+            const storedId = await AsyncStorage.getItem('userId');
+            if (storedId) {
+                setAvatarUri(`${getUserAvatarUrl(storedId)}?t=${new Date().getTime()}`);
+            }
+
             // 1. Мої треки
             const tracksData = await getMyTracks();
             setMyTracks(Array.isArray(tracksData) ? tracksData : []);
 
-            // 2. Мої альбоми (через новий ендпоінт)
+            // 2. Мої альбоми
             const albumsData = await getMyAlbums();
             setMyAlbums(Array.isArray(albumsData) ? albumsData : []);
+
+            // 3. Лайкнуті треки (Отримуємо IDs -> Шукаємо повні дані)
+            const likedIds = await getLikedTracks(); // Повертає масив ID ['id1', 'id2']
+            const allTracks = await getTracks(); // Повертає всі треки (щоб взяти назву, автора і т.д.)
+
+            if (Array.isArray(likedIds) && Array.isArray(allTracks)) {
+                const filteredLiked = allTracks.filter(track =>
+                    likedIds.includes(track.id || track._id)
+                );
+                setLikedTracks(filteredLiked);
+            } else {
+                setLikedTracks([]);
+            }
 
         } catch (e) {
             console.log(e);
         } finally {
             setLoading(false);
+        }
+    };
+
+    const pickAvatar = async () => {
+        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (status !== 'granted') {
+            Alert.alert('Permission denied', 'Need access to gallery');
+            return;
+        }
+
+        // Універсальний фікс для версій Expo
+        let mediaTypes;
+        if (ImagePicker.MediaTypeOptions) {
+            mediaTypes = ImagePicker.MediaTypeOptions.Images;
+        } else {
+            mediaTypes = ImagePicker.MediaType.Images;
+        }
+
+        const result = await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: mediaTypes,
+            allowsEditing: true,
+            aspect: [1, 1],
+            quality: 0.7,
+        });
+
+        if (!result.canceled) {
+            const asset = result.assets[0];
+            setAvatarUri(asset.uri);
+
+            const res = await changeAvatar(asset.uri);
+            if (res.error) {
+                Alert.alert('Error', typeof res.error === 'string' ? res.error : 'Avatar upload failed');
+            } else {
+                Alert.alert('Success', 'Avatar updated');
+            }
         }
     };
 
@@ -153,6 +214,19 @@ export default function ProfileScreen({ navigation }) {
                 <ScrollView contentContainerStyle={styles.scrollContent}>
 
                     <View style={styles.userInfo}>
+                        <TouchableOpacity onPress={pickAvatar} style={styles.avatarContainer}>
+                            {avatarUri ? (
+                                <Image source={{ uri: avatarUri }} style={styles.avatarImage} />
+                            ) : (
+                                <View style={styles.avatarPlaceholder}>
+                                    <Text style={styles.avatarText}>{username.charAt(0).toUpperCase()}</Text>
+                                </View>
+                            )}
+                            <View style={styles.editIconBadge}>
+                                <Text style={styles.editIconText}>+</Text>
+                            </View>
+                        </TouchableOpacity>
+
                         <Text style={styles.usernameText}>{username}</Text>
                     </View>
 
@@ -177,6 +251,20 @@ export default function ProfileScreen({ navigation }) {
                             <Text style={styles.emptyText}>No tracks uploaded.</Text>
                         ) : (
                             myTracks.map((item, index) => (
+                                <View key={index}>
+                                    {renderTrackItem({ item })}
+                                </View>
+                            ))
+                        )}
+                    </View>
+
+                    {/* 👇 НОВА СЕКЦІЯ: LIKED TRACKS */}
+                    <View style={styles.section}>
+                        <Text style={styles.sectionTitle}>Liked Tracks</Text>
+                        {likedTracks.length === 0 ? (
+                            <Text style={styles.emptyText}>No liked tracks yet.</Text>
+                        ) : (
+                            likedTracks.map((item, index) => (
                                 <View key={index}>
                                     {renderTrackItem({ item })}
                                 </View>
@@ -217,6 +305,49 @@ const styles = StyleSheet.create({
         borderBottomWidth: 1,
         borderBottomColor: '#f0f0f0',
         paddingBottom: 20,
+    },
+    avatarContainer: {
+        width: 100,
+        height: 100,
+        marginBottom: 15,
+        position: 'relative',
+    },
+    avatarImage: {
+        width: 100,
+        height: 100,
+        borderRadius: 50,
+        backgroundColor: '#ddd',
+    },
+    avatarPlaceholder: {
+        width: 100,
+        height: 100,
+        borderRadius: 50,
+        backgroundColor: '#eee',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    avatarText: {
+        fontSize: 40,
+        color: '#888',
+        fontWeight: 'bold',
+    },
+    editIconBadge: {
+        position: 'absolute',
+        bottom: 0,
+        right: 0,
+        backgroundColor: '#007AFF',
+        width: 28,
+        height: 28,
+        borderRadius: 14,
+        justifyContent: 'center',
+        alignItems: 'center',
+        borderWidth: 2,
+        borderColor: '#fff',
+    },
+    editIconText: {
+        color: '#fff',
+        fontWeight: 'bold',
+        marginTop: -2,
     },
     usernameText: {
         fontSize: 18,

@@ -1,5 +1,13 @@
+// App.js
 import React, { useEffect, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, StatusBar, ActivityIndicator } from 'react-native';
+import {
+    View,
+    Text,
+    TouchableOpacity,
+    StyleSheet,
+    StatusBar,
+    ActivityIndicator
+} from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -14,11 +22,12 @@ import MusicScreen from './screens/MusicScreen';
 import AlbumListScreen from './screens/AlbumListScreen';
 import AlbumDetailScreen from './screens/AlbumDetailScreen';
 import CreateAlbumScreen from './screens/CreateAlbumScreen';
-import ProfileScreen from './screens/ProfileScreen'; // 👈 Додав імпорт
+import ProfileScreen from './screens/ProfileScreen';
+import PlayerScreen from './screens/PlayerScreen'; // 👈 NEW
 
 const Stack = createNativeStackNavigator();
 
-/* 🔹 SIMPLE DEMO NAV */
+/* 🔹 BOTTOM DEMO NAV */
 function DemoNav({ navigation }) {
     return (
         <View style={styles.demoNav}>
@@ -34,7 +43,6 @@ function DemoNav({ navigation }) {
                 <Text style={styles.demoLink}>Upload</Text>
             </TouchableOpacity>
 
-            {/* 👇 Додав кнопку Profile */}
             <TouchableOpacity onPress={() => navigation.navigate('Profile')}>
                 <Text style={styles.demoLink}>Profile</Text>
             </TouchableOpacity>
@@ -42,7 +50,7 @@ function DemoNav({ navigation }) {
     );
 }
 
-/* 🔹 WRAPPER FOR MAIN SCREENS */
+/* 🔹 WRAPPER */
 function WithDemoNav(Component) {
     return function Wrapped(props) {
         return (
@@ -58,7 +66,6 @@ export default function App() {
     const [isLoading, setIsLoading] = useState(true);
     const [initialRoute, setInitialRoute] = useState('Onboarding');
 
-    //токен
     useEffect(() => {
         const checkToken = async () => {
             try {
@@ -77,7 +84,7 @@ export default function App() {
 
     if (isLoading) {
         return (
-            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+            <View style={styles.loader}>
                 <ActivityIndicator size="large" color="#000" />
             </View>
         );
@@ -92,24 +99,12 @@ export default function App() {
                 screenOptions={{ headerShown: false }}
             >
                 {/* ONBOARDING */}
-                <Stack.Screen
-                    name="Onboarding"
-                    component={OnboardingScreen}
-                />
+                <Stack.Screen name="Onboarding" component={OnboardingScreen} />
 
                 {/* AUTH */}
-                <Stack.Screen
-                    name="AuthChoice"
-                    component={AuthChoiceScreen}
-                />
-                <Stack.Screen
-                    name="Login"
-                    component={LoginScreen}
-                />
-                <Stack.Screen
-                    name="Register"
-                    component={RegisterScreen}
-                />
+                <Stack.Screen name="AuthChoice" component={AuthChoiceScreen} />
+                <Stack.Screen name="Login" component={LoginScreen} />
+                <Stack.Screen name="Register" component={RegisterScreen} />
 
                 {/* MAIN */}
                 <Stack.Screen
@@ -132,18 +127,21 @@ export default function App() {
                     name="AlbumDetail"
                     component={WithDemoNav(AlbumDetailScreen)}
                 />
-
-                {/* 👇 Додав екран Profile */}
                 <Stack.Screen
                     name="Profile"
                     component={WithDemoNav(ProfileScreen)}
+                />
+
+                {/* 👇 PLAYER (БЕЗ bottom nav) */}
+                <Stack.Screen
+                    name="Player"
+                    component={PlayerScreen}
                 />
             </Stack.Navigator>
         </NavigationContainer>
     );
 }
 
-/* STYLES */
 const styles = StyleSheet.create({
     demoNav: {
         height: 56,
@@ -154,10 +152,14 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         backgroundColor: '#fff'
     },
-
     demoLink: {
         fontSize: 14,
         fontWeight: '600',
         color: '#000'
+    },
+    loader: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center'
     }
 });

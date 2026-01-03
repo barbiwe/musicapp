@@ -16,7 +16,7 @@ import {
     getTracks,
     getTrackCoverUrl,
     getStreamUrl,
-    logoutUser // 👇 Додав функцію виходу
+    logoutUser
 } from '../api/api';
 
 export default function TrackListScreen({ navigation }) {
@@ -29,6 +29,8 @@ export default function TrackListScreen({ navigation }) {
         useCallback(() => {
             loadTracks();
             return () => {
+                // Коли виходимо з екрану, вивантажуємо звук,
+                // щоб не грало два треки одночасно, коли відкриється PlayerScreen
                 if (sound) {
                     sound.unloadAsync();
                 }
@@ -75,7 +77,7 @@ export default function TrackListScreen({ navigation }) {
             });
 
         } catch (e) {
-            console.error("Play Error:", e);
+            console.error(e);
             Alert.alert('Error', 'Cannot play track');
         }
     };
@@ -83,30 +85,40 @@ export default function TrackListScreen({ navigation }) {
     const renderItem = ({ item }) => {
         const trackId = item.id || item._id;
         const isPlaying = playingTrackId === trackId;
-
-        // 👇 Використовуємо нову функцію, яка бачить і великі, і маленькі літери
         const coverUri = getTrackCoverUrl(item);
 
         return (
             <TouchableOpacity
-                onPress={() => playTrack(item)}
                 style={styles.row}
+                onPress={() => playTrack(item)}
+                // --- ВАЖЛИВА ЗМІНА ТУТ ---
+                // Передаємо не тільки track, а й playlist (весь масив tracks)
+                onLongPress={() => {
+                    // Зупиняємо звук у списку перед переходом у плеєр, щоб не було накладки
+                    if (sound) sound.unloadAsync();
+                    setPlayingTrackId(null);
+
+                    navigation.navigate('Player', {
+                        track: item,
+                        playlist: tracks // <--- Ось це заповнить чергу
+                    });
+                }}
             >
                 {coverUri ? (
-                    <Image
-                        source={{ uri: coverUri }}
-                        style={styles.cover}
-                    />
+                    <Image source={{ uri: coverUri }} style={styles.cover} />
                 ) : (
                     <View style={styles.cover} />
                 )}
 
                 <View style={styles.info}>
-                    <Text style={styles.title} numberOfLines={1}>{item.title}</Text>
-                    <Text style={styles.artist} numberOfLines={1}>{item.artist}</Text>
+                    <Text style={styles.title} numberOfLines={1}>
+                        {item.title}
+                    </Text>
+                    <Text style={styles.artist} numberOfLines={1}>
+                        {item.artist}
+                    </Text>
                 </View>
 
-                {/* 👇 Твій текст, жодних іконок */}
                 <Text style={styles.playText}>
                     {isPlaying ? 'Stop' : 'Play'}
                 </Text>
@@ -125,8 +137,8 @@ export default function TrackListScreen({ navigation }) {
                         if (sound) {
                             await sound.unloadAsync();
                         }
-                        await logoutUser(); // 👇 Видаляємо токен
-                        navigation.replace('AuthChoice'); // Повертаємось на вибір
+                        await logoutUser();
+                        navigation.replace('AuthChoice');
                     }}
                 />
             </View>
@@ -136,10 +148,14 @@ export default function TrackListScreen({ navigation }) {
             ) : (
                 <FlatList
                     data={tracks}
-                    keyExtractor={(item) => item.id || item._id || Math.random().toString()}
+                    keyExtractor={(item) =>
+                        item.id || item._id || Math.random().toString()
+                    }
                     renderItem={renderItem}
                     ListEmptyComponent={
-                        <Text style={styles.emptyText}>No tracks found</Text>
+                        <Text style={styles.emptyText}>
+                            No tracks found
+                        </Text>
                     }
                 />
             )}

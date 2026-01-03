@@ -5,24 +5,16 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="4dc7471c-7e11-428f-9b6d-dd157181614d" name="Changes" comment="">
-      <change afterPath="$PROJECT_DIR$/screens/AuthChoiceScreen.js" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/screens/OnboardingScreen.js" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/screens/ProfileScreen.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/dataSources.local.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/dataSources.local.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/dataSources.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/dataSources.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/screens/PlayerScreen.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/dataSources/03ae8305-69b9-4ef9-870e-29c716519885.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/dataSources/03ae8305-69b9-4ef9-870e-29c716519885.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/dataSources/c22d2d14-8829-4cb5-a971-2ab3cdfb42af.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/dataSources/c22d2d14-8829-4cb5-a971-2ab3cdfb42af.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/dataSources/c22d2d14-8829-4cb5-a971-2ab3cdfb42af/storage_v2/_src_/database/mussicdb.IEncMg/schema/public.abK9xQ.meta" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/dataSources/c22d2d14-8829-4cb5-a971-2ab3cdfb42af/storage_v2/_src_/database/mussicdb.IEncMg/schema/public.abK9xQ.meta" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/App.js" beforeDir="false" afterPath="$PROJECT_DIR$/App.js" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/api/api.js" beforeDir="false" afterPath="$PROJECT_DIR$/api/api.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app.json" beforeDir="false" afterPath="$PROJECT_DIR$/app.json" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/package-lock.json" beforeDir="false" afterPath="$PROJECT_DIR$/package-lock.json" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/package.json" beforeDir="false" afterPath="$PROJECT_DIR$/package.json" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/screens/AlbumDetailScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/AlbumDetailScreen.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/screens/AlbumListScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/AlbumListScreen.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/screens/CreateAlbumScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/CreateAlbumScreen.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/screens/HomeScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/HomeScreen.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/screens/LoginScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/LoginScreen.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/screens/MusicScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/MusicScreen.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/screens/ProfileScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/ProfileScreen.js" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/screens/TrackListScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/TrackListScreen.js" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
@@ -92,7 +84,7 @@
       <workItem from="1764926094772" duration="20720000" />
       <workItem from="1765112999021" duration="23066000" />
       <workItem from="1765921137890" duration="33901000" />
-      <workItem from="1766753091543" duration="13039000" />
+      <workItem from="1766753091543" duration="42544000" />
     </task>
     <servers />
   </component>
