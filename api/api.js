@@ -7,6 +7,8 @@ import 'core-js/stable/atob';
    BASE CONFIG
 ========================= */
 
+//ipconfig getifaddr en0
+
 const API_URL = 'http://172.32.172.67:8080';
 
 const api = axios.create({

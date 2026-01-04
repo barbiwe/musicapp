@@ -325,8 +325,7 @@ export default function PlayerScreen({ navigation, route }) {
                     onPress={() => navigation.goBack()}
                     hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
                 >
-                    {/* Кнопка Back */}
-                    {renderIcon('previous.png', 'Back', { width: 24, height: 24 }, '#000000')}
+                    {renderIcon('arrow-left.png', 'Back', { width: 24, height: 24 }, '#000000')}
                 </TouchableOpacity>
 
                 <View style={{ flex: 1 }} />
@@ -336,7 +335,6 @@ export default function PlayerScreen({ navigation, route }) {
                     hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
                     onPress={handleLikeToggle}
                 >
-                    {/* Кнопка Like: added.png (заповнене) або add to another playlist.png (пусте) */}
                     {isLiked
                         ? renderIcon('added.png', 'Lik', { width: 24, height: 24 }, '#000000')
                         : renderIcon('add to another playlist.png', 'Lik', { width: 24, height: 24 }, '#000000')
@@ -433,13 +431,12 @@ export default function PlayerScreen({ navigation, route }) {
                         {/* Play/Pause: Тут передаємо #FFFFFF (БІЛИЙ), бо фон чорний */}
                         {isPlaying
                             ? renderIcon('pause.png', '||', { width: 32, height: 32 }, '#FFFFFF')
-                            : renderIcon('play next.png', '>', { width: 32, height: 32 }, '#FFFFFF')
+                            : renderIcon('play.png', '>', { width: 32, height: 32 }, '#FFFFFF')
                         }
                     </TouchableOpacity>
                 </View>
 
                 <TouchableOpacity hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                    {/* Repeat: Використовуємо 'previous-1.png' */}
                     {renderIcon('previous-1.png', 'Rep', { width: 24, height: 24 }, '#000000')}
                 </TouchableOpacity>
             </View>
@@ -457,34 +454,6 @@ export default function PlayerScreen({ navigation, route }) {
                 </TouchableOpacity>
             </View>
 
-            {/* --- MODAL 1: MENU --- */}
-            <Modal
-                animationType="slide"
-                transparent={true}
-                visible={modalVisible}
-                onRequestClose={() => setModalVisible(false)}
-            >
-                <TouchableWithoutFeedback onPress={() => setModalVisible(false)}>
-                    <View style={styles.modalOverlay}>
-                        <TouchableWithoutFeedback>
-                            <View style={styles.modalContent}>
-                                <View style={styles.modalIndicator} />
-                                <View style={styles.modalTopActions}>
-                                    <TopAction label="Download" />
-                                    <TopAction label="Share" />
-                                    <TopAction label="Play next" />
-                                </View>
-                                <ScrollView style={styles.modalScroll} showsVerticalScrollIndicator={false}>
-                                    <MenuItem label="Add to another playlist" />
-                                    <MenuItem label="Add to queue" />
-                                    <MenuItem label="Cancel queue" />
-                                    <MenuItem label="View album" />
-                                </ScrollView>
-                            </View>
-                        </TouchableWithoutFeedback>
-                    </View>
-                </TouchableWithoutFeedback>
-            </Modal>
 
             {/* --- MODAL 2: QUEUE (Real Data) --- */}
             <Modal
