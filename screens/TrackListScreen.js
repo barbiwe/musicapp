@@ -87,20 +87,20 @@ export default function TrackListScreen({ navigation }) {
         const isPlaying = playingTrackId === trackId;
         const coverUri = getTrackCoverUrl(item);
 
+        // --- 👇 ВАЖЛИВО: Отримуємо ім'я безпечно 👇 ---
+        // Якщо item.artist це об'єкт - беремо .name. Якщо null - пишемо заглушку.
+        const artistName = item.artist?.name || 'Unknown Artist';
+
         return (
             <TouchableOpacity
                 style={styles.row}
                 onPress={() => playTrack(item)}
-                // --- ВАЖЛИВА ЗМІНА ТУТ ---
-                // Передаємо не тільки track, а й playlist (весь масив tracks)
                 onLongPress={() => {
-                    // Зупиняємо звук у списку перед переходом у плеєр, щоб не було накладки
                     if (sound) sound.unloadAsync();
                     setPlayingTrackId(null);
 
                     navigation.navigate('Player', {
                         track: item,
-                        playlist: tracks // <--- Ось це заповнить чергу
                     });
                 }}
             >
@@ -114,8 +114,9 @@ export default function TrackListScreen({ navigation }) {
                     <Text style={styles.title} numberOfLines={1}>
                         {item.title}
                     </Text>
+                    {/* 👇 ТУТ БУЛА ПОМИЛКА, ТЕПЕР ВИПРАВЛЕНО 👇 */}
                     <Text style={styles.artist} numberOfLines={1}>
-                        {item.artist}
+                        {artistName}
                     </Text>
                 </View>
 
@@ -160,7 +161,7 @@ export default function TrackListScreen({ navigation }) {
                 />
             )}
 
-            <View style={{ marginTop: 10 }}>
+            <View style={{ marginBottom: 100 }}>
                 <Button
                     title="Upload track"
                     onPress={() => navigation.navigate('Upload')}

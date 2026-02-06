@@ -13,6 +13,7 @@ import {
 
 import * as WebBrowser from 'expo-web-browser';
 import * as Google from 'expo-auth-session/providers/google';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // 👇 Імпортуємо готові функції з твого api.js
 import { loginUser, googleLogin } from '../api/api';
@@ -55,15 +56,23 @@ export default function LoginScreen({ navigation }) {
     ========================= */
     const handleBackendGoogleLogin = async (token) => {
         setLoading(true);
-        // Викликаємо функцію з api.js
         const result = await googleLogin(token);
         setLoading(false);
 
         if (result?.error) {
-            // Показуємо помилку, якщо сервер не прийняв
             setError(typeof result.error === 'string' ? result.error : 'Google login failed');
         } else {
-            // Успіх! Переходимо до треків
+            // 👇 ДОДАЙ ЦЕ 👇
+            try {
+                // Переконайся, що result містить userId або id.
+                // Зазвичай це result.userId або result.id або result.user.id
+                const uid = result.userId || result.id;
+                if (uid) {
+                    await AsyncStorage.setItem('userId', uid.toString());
+                }
+            } catch(e) { console.log(e); }
+            // 👆 ДОСЮДИ 👆
+
             navigation.replace('Tracks');
         }
     };
@@ -87,6 +96,13 @@ export default function LoginScreen({ navigation }) {
             setError('Invalid email or password');
             return;
         }
+
+        try {
+            const uid = result.userId || result.id;
+            if (uid) {
+                await AsyncStorage.setItem('userId', uid.toString());
+            }
+        } catch(e) { console.log(e); }
 
         navigation.replace('Tracks');
     };

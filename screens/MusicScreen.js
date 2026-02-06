@@ -9,30 +9,61 @@ import {
     ActivityIndicator,
     TouchableOpacity,
     Modal,
-    FlatList
+    FlatList,
+    SafeAreaView,
+    ScrollView // Додав ScrollView, бо форма стала довгою
 } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
-import { uploadTrack, getAlbums } from '../api/api';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { uploadTrack, getAlbums, getGenres } from '../api/api';
 
 export default function MusicScreen({ navigation }) {
     const [title, setTitle] = useState('');
+    // 👇 1. Додав стейт для тексту пісні
+    const [lyrics, setLyrics] = useState('');
+
     const [file, setFile] = useState(null);
     const [cover, setCover] = useState(null);
 
+    // --- ALBUMS STATE ---
     const [albums, setAlbums] = useState([]);
     const [selectedAlbum, setSelectedAlbum] = useState(null);
-    const [isModalVisible, setModalVisible] = useState(false);
+    const [isAlbumModalVisible, setAlbumModalVisible] = useState(false);
 
+    // --- GENRES STATE ---
+    const [genres, setGenres] = useState([]);
+    const [selectedGenreIds, setSelectedGenreIds] = useState([]);
+    const [isGenreModalVisible, setGenreModalVisible] = useState(false);
+
+    const [artistId, setArtistId] = useState(null);
     const [loading, setLoading] = useState(false);
 
     useEffect(() => {
-        fetchAlbums();
+        fetchData();
+        fetchUserId();
     }, []);
 
-    const fetchAlbums = async () => {
-        const data = await getAlbums();
-        setAlbums(Array.isArray(data) ? data : []);
+    const fetchUserId = async () => {
+        try {
+            const id = await AsyncStorage.getItem('userId');
+            if (id) {
+                setArtistId(id);
+            } else {
+                Alert.alert('Увага', 'Не вдалося знайти ваш ID. Спробуйте перелогінитись.');
+            }
+        } catch (error) {
+            console.error('Failed to load user ID', error);
+        }
+    };
+
+    const fetchData = async () => {
+        const [albumsData, genresData] = await Promise.all([
+            getAlbums(),
+            getGenres()
+        ]);
+        setAlbums(Array.isArray(albumsData) ? albumsData : []);
+        setGenres(Array.isArray(genresData) ? genresData : []);
     };
 
     const pickAudio = async () => {
@@ -41,7 +72,6 @@ export default function MusicScreen({ navigation }) {
                 type: 'audio/*',
                 copyToCacheDirectory: true
             });
-
             if (!result.canceled && result.assets) {
                 setFile(result.assets[0]);
             }
@@ -57,33 +87,50 @@ export default function MusicScreen({ navigation }) {
             aspect: [1, 1],
             quality: 0.7
         });
-
         if (!result.canceled) {
             setCover(result.assets[0]);
         }
     };
 
+    const toggleGenre = (id) => {
+        if (selectedGenreIds.includes(id)) {
+            setSelectedGenreIds(selectedGenreIds.filter(gId => gId !== id));
+        } else {
+            setSelectedGenreIds([...selectedGenreIds, id]);
+        }
+    };
+
     const handleUpload = async () => {
+        if (!artistId) {
+            Alert.alert('Помилка', 'Не знайдено ID виконавця.');
+            return;
+        }
         if (!file || !title) {
             Alert.alert('Помилка', 'Заповніть назву та виберіть файл');
             return;
         }
-
         if (!cover) {
-            Alert.alert('Помилка', 'Виберіть обкладинку (обов\'язково)');
+            Alert.alert('Помилка', 'Виберіть обкладинку (вимога сервера)');
+            return;
+        }
+        if (selectedGenreIds.length === 0) {
+            Alert.alert('Помилка', 'Виберіть хоча б один жанр');
             return;
         }
 
         setLoading(true);
 
-        const albumId = selectedAlbum ? (selectedAlbum.id || selectedAlbum._id || selectedAlbum.Id) : null;
+        const albumId = selectedAlbum ? (selectedAlbum.id || selectedAlbum._id) : null;
 
+        // 👇 2. Передаємо lyrics у функцію
         const result = await uploadTrack(
             file,
             title,
-            "",
+            artistId,
             albumId,
-            cover
+            cover,
+            selectedGenreIds,
+            lyrics
         );
 
         setLoading(false);
@@ -92,141 +139,205 @@ export default function MusicScreen({ navigation }) {
             Alert.alert('Помилка', typeof result.error === 'string' ? result.error : 'Не вдалося завантажити трек');
         } else {
             Alert.alert('Успіх', 'Трек успішно завантажено');
-
             setTitle('');
+            setLyrics(''); // Очищаємо поле тексту
             setFile(null);
             setCover(null);
             setSelectedAlbum(null);
-
+            setSelectedGenreIds([]);
             navigation.navigate('Tracks');
         }
     };
 
     return (
-        <View style={styles.container}>
-            <Text style={styles.header}>Upload track</Text>
+        <SafeAreaView style={styles.container}>
+            <ScrollView contentContainerStyle={styles.scrollContent}>
+                <Text style={styles.header}>Upload track</Text>
 
-            <TextInput
-                placeholder="Track title"
-                value={title}
-                onChangeText={setTitle}
-                style={styles.input}
-            />
-
-
-            <TouchableOpacity
-                style={styles.selector}
-                onPress={() => setModalVisible(true)}
-            >
-                <Text>
-                    {selectedAlbum
-                        ? `Album: ${selectedAlbum.title}`
-                        : 'Select album (optional)'}
-                </Text>
-            </TouchableOpacity>
-
-            <View style={styles.row}>
-                <Button
-                    title={file ? `File: ${file.name}` : 'Select audio'}
-                    onPress={pickAudio}
+                <TextInput
+                    placeholder="Track title"
+                    value={title}
+                    onChangeText={setTitle}
+                    style={styles.input}
+                    placeholderTextColor="#999"
                 />
-                <View style={{ width: 10 }} />
-                <Button
-                    title={cover ? 'Cover selected' : 'Select cover'}
-                    onPress={pickCover}
+
+                {/* 👇 3. Поле для тексту пісні */}
+                <TextInput
+                    placeholder="Lyrics (optional)"
+                    value={lyrics}
+                    onChangeText={setLyrics}
+                    style={[styles.input, styles.textArea]}
+                    placeholderTextColor="#999"
+                    multiline={true}
+                    numberOfLines={4}
                 />
-            </View>
 
-            {loading ? (
-                <ActivityIndicator size="large" />
-            ) : (
-                <Button title="Upload" onPress={handleUpload} />
-            )}
+                {/* ALBUM SELECTOR */}
+                <TouchableOpacity
+                    style={styles.selector}
+                    onPress={() => setAlbumModalVisible(true)}
+                >
+                    <Text style={styles.selectorText}>
+                        {selectedAlbum
+                            ? `💿 Album: ${selectedAlbum.title}`
+                            : 'Select album (optional)'}
+                    </Text>
+                </TouchableOpacity>
 
-            <View style={styles.footer}>
-                <Button title="Create album" onPress={() => navigation.navigate('CreateAlbum')} />
-                <View style={{ marginTop: 10 }}>
-                    <Button title="Back to Tracks" onPress={() => navigation.navigate('Tracks')} />
+                {/* GENRE SELECTOR */}
+                <TouchableOpacity
+                    style={styles.selector}
+                    onPress={() => setGenreModalVisible(true)}
+                >
+                    <Text style={styles.selectorText}>
+                        {selectedGenreIds.length > 0
+                            ? `🎵 Genres: ${selectedGenreIds.length} selected`
+                            : 'Select genres (required)'}
+                    </Text>
+                </TouchableOpacity>
+
+                <View style={styles.row}>
+                    <Button
+                        title={file ? `File: ${file.name}` : 'Select audio'}
+                        onPress={pickAudio}
+                    />
+                    <View style={{ width: 10 }} />
+                    <Button
+                        title={cover ? 'Cover selected' : 'Select cover'}
+                        onPress={pickCover}
+                    />
                 </View>
-            </View>
 
-            {/* MODAL ALBUMS */}
-            <Modal visible={isModalVisible} transparent animationType="slide">
+                {loading ? (
+                    <ActivityIndicator size="large" color="#000" />
+                ) : (
+                    <Button title="Upload Track" onPress={handleUpload} />
+                )}
+
+                <View style={styles.footer}>
+                    <Button title="Create album" onPress={() => navigation.navigate('CreateAlbum')} />
+                    <View style={{ marginTop: 10 }}>
+                        <Button title="Back to Tracks" onPress={() => navigation.navigate('Tracks')} />
+                    </View>
+                </View>
+            </ScrollView>
+
+            {/* --- MODAL ALBUMS --- */}
+            <Modal visible={isAlbumModalVisible} transparent animationType="slide">
                 <View style={styles.modalOverlay}>
                     <View style={styles.modalContent}>
-                        <Text style={styles.modalTitle}>Albums</Text>
-
+                        <Text style={styles.modalTitle}>Select Album</Text>
                         <FlatList
                             data={albums}
-                            keyExtractor={(item) => (item.id || item._id || Math.random()).toString()}
+                            keyExtractor={(item) => (item.id || item._id).toString()}
                             renderItem={({ item }) => (
                                 <TouchableOpacity
-                                    style={styles.albumItem}
+                                    style={styles.listItem}
                                     onPress={() => {
                                         setSelectedAlbum(item);
-                                        setModalVisible(false);
+                                        setAlbumModalVisible(false);
                                     }}
                                 >
-                                    <Text>
-                                        {item.title}
-                                    </Text>
+                                    <Text>{item.title}</Text>
                                 </TouchableOpacity>
                             )}
-                            ListEmptyComponent={
-                                <Text style={{ textAlign: 'center', marginTop: 20 }}>
-                                    No albums found
-                                </Text>
-                            }
                         />
-
-                        <Button
-                            title="Close"
-                            onPress={() => {
-                                setModalVisible(false);
-                            }}
-                        />
+                        <Button title="Close" onPress={() => setAlbumModalVisible(false)} />
                     </View>
                 </View>
             </Modal>
-        </View>
+
+            {/* --- MODAL GENRES --- */}
+            <Modal visible={isGenreModalVisible} transparent animationType="slide">
+                <View style={styles.modalOverlay}>
+                    <View style={styles.modalContent}>
+                        <Text style={styles.modalTitle}>Select Genres</Text>
+                        <Text style={{textAlign:'center', marginBottom:10, color:'#666'}}>
+                            Selected: {selectedGenreIds.length}
+                        </Text>
+
+                        <FlatList
+                            data={genres}
+                            keyExtractor={(item) => (item.id || item._id).toString()}
+                            renderItem={({ item }) => {
+                                const isSelected = selectedGenreIds.includes(item.id || item._id);
+                                return (
+                                    <TouchableOpacity
+                                        style={[
+                                            styles.listItem,
+                                            isSelected && styles.listItemActive
+                                        ]}
+                                        onPress={() => toggleGenre(item.id || item._id)}
+                                    >
+                                        <Text style={isSelected ? {color:'#fff', fontWeight:'bold'} : {color:'#000'}}>
+                                            {item.name}
+                                        </Text>
+                                        {isSelected && <Text style={{color:'#fff'}}>✓</Text>}
+                                    </TouchableOpacity>
+                                );
+                            }}
+                        />
+                        <Button title="Done" onPress={() => setGenreModalVisible(false)} />
+                    </View>
+                </View>
+            </Modal>
+
+        </SafeAreaView>
     );
 }
 
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        padding: 20,
         backgroundColor: '#fff',
-        justifyContent: 'center'
+    },
+    scrollContent: {
+        padding: 20,
+        paddingBottom: 50
     },
     header: {
-        fontSize: 20,
-        fontWeight: '600',
-        marginBottom: 15,
+        fontSize: 24,
+        fontWeight: 'bold',
+        marginBottom: 20,
         textAlign: 'center'
     },
     input: {
         borderWidth: 1,
-        borderColor: '#ccc',
-        padding: 10,
-        marginBottom: 10,
-        borderRadius: 5
+        borderColor: '#ddd',
+        padding: 12,
+        marginBottom: 12,
+        borderRadius: 8,
+        fontSize: 16,
+        backgroundColor: '#fafafa'
+    },
+    textArea: {
+        height: 100, // Висота для поля тексту
+        textAlignVertical: 'top', // Щоб текст починався зверху (для Android)
     },
     selector: {
-        padding: 10,
+        padding: 12,
         borderWidth: 1,
-        borderColor: '#ccc',
+        borderColor: '#ddd',
         marginBottom: 15,
-        borderRadius: 5,
-        backgroundColor: '#f9f9f9'
+        borderRadius: 8,
+        backgroundColor: '#f0f0f0'
+    },
+    selectorText: {
+        fontSize: 16,
+        color: '#333'
     },
     row: {
         flexDirection: 'row',
-        marginBottom: 15,
-        justifyContent: 'space-between'
+        marginBottom: 20,
+        justifyContent: 'space-between',
+        alignItems: 'center'
     },
     footer: {
-        marginTop: 20
+        marginTop: 30,
+        paddingTop: 20,
+        borderTopWidth: 1,
+        borderTopColor: '#eee'
     },
     modalOverlay: {
         flex: 1,
@@ -235,21 +346,32 @@ const styles = StyleSheet.create({
         alignItems: 'center'
     },
     modalContent: {
-        width: '80%',
-        maxHeight: '60%',
+        width: '85%',
+        maxHeight: '70%',
         backgroundColor: '#fff',
         padding: 20,
-        borderRadius: 10
+        borderRadius: 12,
+        elevation: 5,
     },
     modalTitle: {
-        fontSize: 18,
-        fontWeight: '700',
-        marginBottom: 10,
+        fontSize: 20,
+        fontWeight: 'bold',
+        marginBottom: 15,
         textAlign: 'center'
     },
-    albumItem: {
-        paddingVertical: 15,
+    listItem: {
+        paddingVertical: 12,
+        paddingHorizontal: 10,
         borderBottomWidth: 1,
-        borderBottomColor: '#eee'
+        borderBottomColor: '#eee',
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center'
+    },
+    listItemActive: {
+        backgroundColor: '#007AFF',
+        borderRadius: 6,
+        borderBottomWidth: 0,
+        marginBottom: 2
     }
 });

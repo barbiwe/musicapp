@@ -1,121 +1,199 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import {
     View,
     Text,
     StyleSheet,
     TouchableOpacity,
     Dimensions,
-    SafeAreaView,
-    Platform
+    Platform,
+    ImageBackground,
+    Animated,
+    StatusBar
 } from 'react-native';
+// 👇 1. Не забудь імпортувати scale
+import { scale } from '../api/api';
 
 const { width, height } = Dimensions.get('window');
-const BUTTON_HEIGHT = Platform.OS === 'ios' ? 56 : 52;
+
+// --- ЛОГІКА РОЗМІРІВ (FIXED & SCALED) ---
+// Встановлюємо фіксовані розміри через scale (базовий дизайн, наприклад, під iPhone 11)
+const CARD_WIDTH = scale(254);
+const CARD_HEIGHT = scale(291); // Робимо квадрат
+const SPACING = scale(10);      // Відступ між картками
+
+// Повний розмір одного кроку скролу (картка + відступи з обох боків)
+const ITEM_SIZE = CARD_WIDTH + (SPACING * 2);
+
+// Пустишка, щоб перша картка стала рівно по центру екрану
+const SPACER_ITEM_SIZE = (width - ITEM_SIZE) / 2;
+
+const DATA = [
+    { key: 'left-spacer' },
+    { key: '1', color: '#300C0A' },
+    { key: '2', color: '#300C0A' },
+    { key: '3', color: '#300C0A' },
+    { key: 'right-spacer' },
+];
 
 export default function OnboardingScreen({ navigation }) {
-    return (
-        <SafeAreaView style={styles.container}>
-            {/* PREVIEW BLOCKS */}
-            {/*<View style={styles.previewWrapper}>*/}
-            {/*    <View style={[styles.previewCard, styles.left]} />*/}
-            {/*    <View style={styles.previewCardMain} />*/}
-            {/*    <View style={[styles.previewCard, styles.right]} />*/}
-            {/*</View>*/}
+    const scrollX = useRef(new Animated.Value(0)).current;
 
-            {/* TEXT */}
-            <View style={styles.textWrapper}>
-                <Text style={styles.title}>
-                    Listen to{'\n'}music you love
-                </Text>
+    const renderItem = ({ item, index }) => {
+        // Рендеримо пустишки по боках
+        if (!item.color) {
+            return <View style={{ width: SPACER_ITEM_SIZE }} />;
+        }
 
-                <Text style={styles.subtitle}>
-                    Discover new artists and{'\n'}
-                    playlists made for you
-                </Text>
+        const inputRange = [
+            (index - 2) * ITEM_SIZE,
+            (index - 1) * ITEM_SIZE,
+            index * ITEM_SIZE,
+        ];
+
+        const scaleValue = scrollX.interpolate({
+            inputRange,
+            outputRange: [0.9, 1, 0.9], // Центр = 1, збоку = 0.9
+            extrapolate: 'clamp',
+        });
+
+        const opacity = scrollX.interpolate({
+            inputRange,
+            outputRange: [0.6, 1, 0.6],
+            extrapolate: 'clamp',
+        });
+
+        return (
+            // Контейнер, який займає повний крок (картка + відступи)
+            <View style={{ width: ITEM_SIZE, alignItems: 'center', justifyContent: 'center' }}>
+                <Animated.View
+                    style={[
+                        styles.cardContainer,
+                        {
+                            backgroundColor: item.color,
+                            transform: [{ scale: scaleValue }],
+                        }
+                    ]}
+                />
             </View>
+        );
+    };
 
-            {/* BUTTON */}
-            <TouchableOpacity
-                style={styles.button}
-                onPress={() => navigation.navigate('AuthChoice')}
+    return (
+        <View style={styles.mainContainer}>
+            <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
+
+            <ImageBackground
+                source={require('../assets/background.png')}
+                style={styles.backgroundImage}
+                resizeMode="cover"
             >
-                <Text style={styles.buttonText}>Get started</Text>
-            </TouchableOpacity>
-        </SafeAreaView>
+                <View style={styles.contentContainer}>
+
+                    {/* КАРУСЕЛЬ */}
+                    <View style={styles.carouselWrapper}>
+                        <Animated.FlatList
+                            data={DATA}
+                            keyExtractor={(item) => item.key}
+                            horizontal
+                            showsHorizontalScrollIndicator={false}
+                            contentContainerStyle={{ alignItems: 'center' }}
+                            snapToInterval={ITEM_SIZE}
+                            decelerationRate="fast"
+                            bounces={false}
+                            renderToHardwareTextureAndroid
+                            onScroll={Animated.event(
+                                [{ nativeEvent: { contentOffset: { x: scrollX } } }],
+                                { useNativeDriver: true }
+                            )}
+                            scrollEventThrottle={16}
+                            renderItem={renderItem}
+                        />
+                    </View>
+
+                    {/* ТЕКСТ І КНОПКА */}
+                    <View style={styles.bottomSection}>
+                        <Text style={styles.title}>
+                            Listen to{'\n'}music you love
+                        </Text>
+
+                        <Text style={styles.subtitle}>
+                            Discover new artists and{'\n'}
+                            playlists made for you
+                        </Text>
+
+                        <TouchableOpacity
+                            style={styles.button}
+                            onPress={() => navigation.navigate('AuthChoice')}
+                            activeOpacity={0.8}
+                        >
+                            <Text style={styles.buttonText}>Get started</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            </ImageBackground>
+        </View>
     );
 }
 
-
 const styles = StyleSheet.create({
-    container: {
+    mainContainer: {
         flex: 1,
-        backgroundColor: '#fff',
-        paddingBottom: 32
+        backgroundColor: '#300C0A',
     },
-
-    // previewWrapper: {
-    //     marginTop: height * 0.1,
-    //     height: height * 0.38,
-    //     alignItems: 'center',
-    //     justifyContent: 'center'
-    // },
-    //
-    // previewCardMain: {
-    //     width: width * 0.66,
-    //     height: width * 0.66,
-    //     backgroundColor: '#E0E0E0',
-    //     borderRadius: 28,
-    //     position: 'absolute'
-    // },
-    //
-    // previewCard: {
-    //     width: width * 0.56,
-    //     height: width * 0.56,
-    //     backgroundColor: '#E0E0E0',
-    //     borderRadius: 28,
-    //     position: 'absolute',
-    //     opacity: 0.9
-    // },
-
-    left: { left: -width * 0.18 },
-    right: { right: -width * 0.18 },
-
-    textWrapper: {
+    backgroundImage: {
+        flex: 1,
+        width: width,
+        height: height,
+    },
+    contentContainer: {
+        flex: 1,
+        justifyContent: 'space-between',
+        paddingBottom: scale(50),
+    },
+    carouselWrapper: {
+        marginTop: height * 0.15,
+        height: CARD_HEIGHT + scale(40),
         alignItems: 'center',
-        paddingHorizontal: 24,
-        marginTop: height * 0.03
+        justifyContent: 'center',
     },
-
+    cardContainer: {
+        width: CARD_WIDTH,
+        height: CARD_HEIGHT,
+        borderRadius: scale(30),
+        backgroundColor: '#300C0A',
+    },
+    bottomSection: {
+        alignItems: 'center',
+        paddingHorizontal: scale(16),
+    },
     title: {
-        fontSize: width * 0.085,
-        fontWeight: '800',
+        fontSize: scale(36),
         textAlign: 'center',
-        lineHeight: width * 0.1,
-        marginTop: 460,
-        marginBottom: 12
+        color: '#F5D8CB',
+        marginBottom: scale(16),
+        fontFamily: 'Unbounded-Bold',
     },
-
     subtitle: {
-        fontSize: width * 0.045,
-        color: '#9E9E9E',
+        fontSize: scale(16),
+        color: '#F5D8CB',
         textAlign: 'center',
-        lineHeight: width * 0.06
+        lineHeight: scale(24),
+        marginBottom: scale(40),
+        fontFamily: 'Poppins-Regular',
     },
-
     button: {
-        marginTop: 'auto',
-        marginBottom: 60,
-        marginHorizontal: 24,
-        height: BUTTON_HEIGHT,
-        backgroundColor: '#000',
-        borderRadius: BUTTON_HEIGHT / 2,
+        width: scale(343),
+        height: scale(48),
+        backgroundColor: '#F5D8CB',
+        borderRadius: scale(24),
         alignItems: 'center',
-        justifyContent: 'center'
+        justifyContent: 'center',
+        marginBottom: scale(20),
     },
-
     buttonText: {
-        color: '#fff',
-        fontSize: 14,
-        fontWeight: '600'
+        color: '#300C0A',
+        fontSize: scale(16),
+        fontWeight: '600',
+        fontFamily: 'Unbounded-Regular',
     }
 });

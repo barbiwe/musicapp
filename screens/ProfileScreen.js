@@ -9,7 +9,8 @@ import {
     ActivityIndicator,
     Alert,
     ScrollView,
-    Button
+    Button,
+    RefreshControl
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -19,8 +20,8 @@ import * as ImagePicker from 'expo-image-picker';
 import {
     getMyTracks,
     getMyAlbums,
-    getTracks,       // 👈 Додано: треба завантажити всі треки для пошуку по ID
-    getLikedTracks,  // 👈 Додано: отримуємо ID лайкнутих
+    getTracks,
+    getLikedTracks,
     getTrackCoverUrl,
     getStreamUrl,
     getAlbumCoverUrl,
@@ -32,8 +33,9 @@ import {
 export default function ProfileScreen({ navigation }) {
     const [myTracks, setMyTracks] = useState([]);
     const [myAlbums, setMyAlbums] = useState([]);
-    const [likedTracks, setLikedTracks] = useState([]); // 👈 Стейт для лайкнутих
+    const [likedTracks, setLikedTracks] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
     const [username, setUsername] = useState('User');
     const [avatarUri, setAvatarUri] = useState(null);
 
@@ -51,8 +53,12 @@ export default function ProfileScreen({ navigation }) {
     );
 
     const loadProfileData = async () => {
-        setLoading(true);
+        if (!refreshing) setLoading(true);
+
         try {
+            console.log("--- Loading Profile Data ---");
+
+            // 0. User Info
             const storedName = await AsyncStorage.getItem('username');
             if (storedName) setUsername(storedName);
 
@@ -69,24 +75,32 @@ export default function ProfileScreen({ navigation }) {
             const albumsData = await getMyAlbums();
             setMyAlbums(Array.isArray(albumsData) ? albumsData : []);
 
-            // 3. Лайкнуті треки (Отримуємо IDs -> Шукаємо повні дані)
-            const likedIds = await getLikedTracks(); // Повертає масив ID ['id1', 'id2']
-            const allTracks = await getTracks(); // Повертає всі треки (щоб взяти назву, автора і т.д.)
+            // 3. Лайкнуті треки
+            const likedIds = await getLikedTracks();
+            const allTracks = await getTracks();
 
             if (Array.isArray(likedIds) && Array.isArray(allTracks)) {
-                const filteredLiked = allTracks.filter(track =>
-                    likedIds.includes(track.id || track._id)
-                );
+                const filteredLiked = allTracks.filter(track => {
+                    const tId = track.id || track._id || track.Id;
+                    return likedIds.map(String).includes(String(tId));
+                });
                 setLikedTracks(filteredLiked);
             } else {
                 setLikedTracks([]);
             }
 
         } catch (e) {
-            console.log(e);
+            console.error("Profile Load Error:", e);
+            Alert.alert("Error", "Could not load profile data");
         } finally {
             setLoading(false);
+            setRefreshing(false);
         }
+    };
+
+    const onRefresh = () => {
+        setRefreshing(true);
+        loadProfileData();
     };
 
     const pickAvatar = async () => {
@@ -96,16 +110,8 @@ export default function ProfileScreen({ navigation }) {
             return;
         }
 
-        // Універсальний фікс для версій Expo
-        let mediaTypes;
-        if (ImagePicker.MediaTypeOptions) {
-            mediaTypes = ImagePicker.MediaTypeOptions.Images;
-        } else {
-            mediaTypes = ImagePicker.MediaType.Images;
-        }
-
         const result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: mediaTypes,
+            mediaTypes: ImagePicker.MediaTypeOptions.Images,
             allowsEditing: true,
             aspect: [1, 1],
             quality: 0.7,
@@ -115,11 +121,15 @@ export default function ProfileScreen({ navigation }) {
             const asset = result.assets[0];
             setAvatarUri(asset.uri);
 
+            console.log("Uploading avatar:", asset.uri);
             const res = await changeAvatar(asset.uri);
+
             if (res.error) {
-                Alert.alert('Error', typeof res.error === 'string' ? res.error : 'Avatar upload failed');
+                console.error("Avatar upload error:", res.error);
+                Alert.alert('Error', 'Avatar upload failed. Check server logs.');
             } else {
                 Alert.alert('Success', 'Avatar updated');
+                loadProfileData();
             }
         }
     };
@@ -160,6 +170,7 @@ export default function ProfileScreen({ navigation }) {
         }
     };
 
+    // Рендер айтемів
     const renderAlbumItem = ({ item }) => {
         const albumId = item.id || item._id || item.Id;
         const coverUrl = getAlbumCoverUrl(albumId);
@@ -192,8 +203,10 @@ export default function ProfileScreen({ navigation }) {
                 )}
                 <View style={styles.trackInfo}>
                     <Text style={styles.trackTitle} numberOfLines={1}>{item.title}</Text>
+
+                    {/* 👇 ВИПРАВЛЕННЯ ТУТ: Безпечно дістаємо ім'я з об'єкта 👇 */}
                     <Text style={styles.trackArtist} numberOfLines={1}>
-                        {item.artist || username}
+                        {item.artist?.name || item.artist || username}
                     </Text>
                 </View>
                 <Text style={styles.playText}>{isPlaying ? 'Stop' : 'Play'}</Text>
@@ -209,17 +222,24 @@ export default function ProfileScreen({ navigation }) {
             </View>
 
             {loading ? (
-                <ActivityIndicator size="large" style={{ marginTop: 50 }} />
+                <ActivityIndicator size="large" style={{ marginTop: 50 }} color="#000" />
             ) : (
-                <ScrollView contentContainerStyle={styles.scrollContent}>
-
+                <ScrollView
+                    contentContainerStyle={styles.scrollContent}
+                    refreshControl={
+                        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+                    }
+                >
+                    {/* User Info & Avatar */}
                     <View style={styles.userInfo}>
                         <TouchableOpacity onPress={pickAvatar} style={styles.avatarContainer}>
                             {avatarUri ? (
                                 <Image source={{ uri: avatarUri }} style={styles.avatarImage} />
                             ) : (
                                 <View style={styles.avatarPlaceholder}>
-                                    <Text style={styles.avatarText}>{username.charAt(0).toUpperCase()}</Text>
+                                    <Text style={styles.avatarText}>
+                                        {username ? username.charAt(0).toUpperCase() : 'U'}
+                                    </Text>
                                 </View>
                             )}
                             <View style={styles.editIconBadge}>
@@ -230,6 +250,7 @@ export default function ProfileScreen({ navigation }) {
                         <Text style={styles.usernameText}>{username}</Text>
                     </View>
 
+                    {/* My Albums */}
                     <View style={styles.section}>
                         <Text style={styles.sectionTitle}>My Albums</Text>
                         {myAlbums.length === 0 ? (
@@ -245,27 +266,28 @@ export default function ProfileScreen({ navigation }) {
                         )}
                     </View>
 
+                    {/* My Tracks */}
                     <View style={styles.section}>
                         <Text style={styles.sectionTitle}>My Tracks</Text>
                         {myTracks.length === 0 ? (
                             <Text style={styles.emptyText}>No tracks uploaded.</Text>
                         ) : (
                             myTracks.map((item, index) => (
-                                <View key={index}>
+                                <View key={item.id || item._id || index}>
                                     {renderTrackItem({ item })}
                                 </View>
                             ))
                         )}
                     </View>
 
-                    {/* 👇 НОВА СЕКЦІЯ: LIKED TRACKS */}
+                    {/* Liked Tracks */}
                     <View style={styles.section}>
                         <Text style={styles.sectionTitle}>Liked Tracks</Text>
                         {likedTracks.length === 0 ? (
                             <Text style={styles.emptyText}>No liked tracks yet.</Text>
                         ) : (
                             likedTracks.map((item, index) => (
-                                <View key={index}>
+                                <View key={item.id || item._id || index}>
                                     {renderTrackItem({ item })}
                                 </View>
                             ))

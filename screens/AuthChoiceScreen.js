@@ -7,32 +7,48 @@ import {
     ScrollView,
     Platform,
     Alert,
-    ActivityIndicator
+    ActivityIndicator,
+    Image,
+    StatusBar
 } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient'; // 👇 Для градієнта
 
 import * as WebBrowser from "expo-web-browser";
 import * as Google from "expo-auth-session/providers/google";
 
-// 👇 Імпортуємо функцію логіну з API
-import { googleLogin } from "../api/api";
+// 👇 Імпортуємо scale та getIcons
+import { googleLogin, scale, getIcons } from "../api/api";
 
 WebBrowser.maybeCompleteAuthSession();
 
-const BUTTON_HEIGHT = Platform.OS === 'ios' ? 56 : 52;
-
 export default function AuthChoiceScreen({ navigation }) {
     const [loading, setLoading] = useState(false);
+    const [icons, setIcons] = useState({}); // 👇 Стейт для іконок
 
     /* =========================
        GOOGLE AUTH CONFIG
     ========================= */
     const [request, response, promptAsync] = Google.useIdTokenAuthRequest({
-        // 👇 Ті самі ID, що ми налаштували раніше
         iosClientId: '651816373430-s2bjgg2rh5pjga66kuevbt3u8e6e56e6.apps.googleusercontent.com',
         clientId: '651816373430-hjii65stgn3ei6q1lrfs4e0dm298j9gn.apps.googleusercontent.com',
         redirectUri: 'com.googleusercontent.apps.651816373430-s2bjgg2rh5pjga66kuevbt3u8e6e56e6:/oauth2redirect/google'
     });
 
+    // 1. Завантажуємо іконки при старті
+    useEffect(() => {
+        loadIconsData();
+    }, []);
+
+    const loadIconsData = async () => {
+        try {
+            const iconsMap = await getIcons();
+            setIcons(iconsMap || {});
+        } catch (e) {
+            console.log("Error loading icons:", e);
+        }
+    };
+
+    // 2. Обробка відповіді Google
     useEffect(() => {
         if (response?.type === "success") {
             const { id_token } = response.params;
@@ -44,168 +60,223 @@ export default function AuthChoiceScreen({ navigation }) {
 
     const handleBackendGoogleLogin = async (token) => {
         setLoading(true);
-        // Відправляємо токен на твій бекенд
         const result = await googleLogin(token);
         setLoading(false);
 
         if (result?.error) {
             Alert.alert("Login Failed", typeof result.error === 'string' ? result.error : "Google login failed");
         } else {
-            // Успішний вхід -> йдемо до треків
             navigation.replace("Tracks");
         }
     };
 
+    // 3. Хелпер для рендеру іконок
+    const renderIcon = (iconName, fallbackText, style, tintColor) => {
+        if (icons[iconName]) {
+            const imageStyle = [style];
+            if (tintColor) imageStyle.push({ tintColor: tintColor });
+            return <Image source={{ uri: icons[iconName] }} style={imageStyle} resizeMode="contain" />;
+        }
+        // Фолбек, якщо іконки немає
+        return <Text style={{ color: tintColor || '#F5D8CB', fontWeight: 'bold' }}>{fallbackText}</Text>;
+    };
+
     return (
-        <ScrollView contentContainerStyle={styles.container}>
-            {/* TITLE */}
-            <View style={styles.textBlock}>
-                <Text style={styles.title}>Ready to{'\n'}listen?</Text>
-                <Text style={styles.subtitle}>
-                    Millions of tracks are waiting
-                </Text>
-            </View>
 
-            {/* BUTTONS */}
-            <View style={styles.buttonsBlock}>
+        <LinearGradient
+            colors={['#AC654F', '#883426', '#190707',]}
+            locations={[0, 0.2, 0.5,]}
+            start={{ x: 1, y: 0 }}
+            end={{ x: 0.5, y: 1 }}
+
+            style={styles.gradient}
+        >
+            <StatusBar barStyle="light-content" />
+
+            <ScrollView
+                contentContainerStyle={styles.container}
+                showsVerticalScrollIndicator={false}
+                bounces={false}
+                overScrollMode="never">
+            >
+                {/* BACK BUTTON */}
                 <TouchableOpacity
-                    style={styles.primaryButton}
-                    onPress={() => navigation.navigate('Register')}
-                    disabled={loading}
+                    style={styles.backButton}
+                    onPress={() => navigation.goBack()}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                 >
-                    <Text style={styles.primaryText}>Sign Up</Text>
+                    {renderIcon('arrow-left.png', '<', { width: scale(24), height: scale(24) }, '#F5D8CB')}
                 </TouchableOpacity>
 
-                <TouchableOpacity
-                    style={styles.outlineButton}
-                    onPress={() => navigation.navigate('Login')}
-                    disabled={loading}
-                >
-                    <Text style={styles.outlineText}>Sign In</Text>
-                </TouchableOpacity>
-            </View>
+                {/* TITLE */}
+                <View style={styles.textBlock}>
+                    <Text style={styles.title}>Ready to{'\n'}listen?</Text>
+                    <Text style={styles.subtitle}>
+                        Millions of tracks are waiting
+                    </Text>
+                </View>
 
-            {/* SOCIAL */}
-            <View style={styles.socialBlock}>
-                <Text style={styles.or}>or continue with</Text>
-
-                <View style={styles.socialRow}>
-                    {/* GOOGLE BUTTON */}
+                {/* BUTTONS */}
+                <View style={styles.buttonsBlock}>
                     <TouchableOpacity
-                        style={styles.socialButton}
-                        disabled={!request || loading}
-                        onPress={() => {
-                            if (request) promptAsync();
-                        }}
+                        style={styles.primaryButton}
+                        onPress={() => navigation.navigate('Register')}
+                        disabled={loading}
+                        activeOpacity={0.8}
                     >
-                        {loading ? (
-                            <ActivityIndicator color="#000" size="small" />
-                        ) : (
-                            <Text style={styles.socialText}>G</Text>
-                        )}
+                        <Text style={styles.primaryText}>Sign Up</Text>
                     </TouchableOpacity>
 
-                    {/* APPLE / FACEBOOK PLACEHOLDER */}
-                    <TouchableOpacity style={styles.socialButton}>
-                        <Text style={styles.socialText}> </Text>
+                    <TouchableOpacity
+                        style={styles.outlineButton}
+                        onPress={() => navigation.navigate('Login')}
+                        disabled={loading}
+                        activeOpacity={0.8}
+                    >
+                        <Text style={styles.outlineText}>Sign In</Text>
                     </TouchableOpacity>
                 </View>
-            </View>
-        </ScrollView>
+
+                {/* SOCIAL */}
+                <View style={styles.socialBlock}>
+                    <Text style={styles.or}>or continue with</Text>
+
+                    <View style={styles.socialRow}>
+                        {/* GOOGLE BUTTON */}
+                        <TouchableOpacity
+                            style={styles.socialButton}
+                            disabled={!request || loading}
+                            onPress={() => {
+                                if (request) promptAsync();
+                            }}
+                        >
+                            {loading ? (
+                                <ActivityIndicator color="#F5D8CB" size="small" />
+                            ) : (
+                                // Припускаємо, що іконка називається 'google.png'
+                                renderIcon('google.png', 'G', { width: scale(24), height: scale(24) }, '#F5D8CB')
+                            )}
+                        </TouchableOpacity>
+
+                        {/* DISCORD BUTTON (Placeholder logic) */}
+                        <TouchableOpacity
+                            style={styles.socialButton}
+                            onPress={() => Alert.alert("Discord", "Coming soon!")}
+                        >
+                            {/* Припускаємо, що іконка називається 'discord.png' */}
+                            {renderIcon('discord.png', 'D', { width: scale(24), height: scale(24) }, '#F5D8CB')}
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            </ScrollView>
+        </LinearGradient>
     );
 }
 
-
 const styles = StyleSheet.create({
+    gradient: {
+        flex: 1,
+    },
     container: {
         flexGrow: 1,
-        backgroundColor: '#fff',
-        paddingHorizontal: 24
+        paddingHorizontal: scale(16),
+        paddingTop: Platform.OS === 'ios' ? scale(60) : scale(40),
+        paddingBottom: scale(40),
+    },
+
+    backButton: {
+        alignSelf: 'flex-start',
+        marginBottom: scale(20),
     },
 
     /* TEXT */
     textBlock: {
-        marginTop: 220,
-        alignItems: 'center'
+        marginTop: scale(100), // Відступ зверху
+        alignItems: 'center',
+        marginBottom: scale(60),
     },
 
     title: {
-        fontSize: 48,
-        fontWeight: '800',
+        fontSize: scale(48),
+        fontFamily: 'Unbounded-SemiBold',
+        color: '#F5D8CB',
         textAlign: 'center',
-        lineHeight: 46,
-        marginBottom: 12
+        lineHeight: scale(44),
+        marginBottom: scale(16)
     },
 
     subtitle: {
-        fontSize: 16,
-        color: '#9A9A9A',
+        fontSize: scale(16),
+        fontFamily: 'Poppins-Regular',
+        color: '#F5D8CB',
         textAlign: 'center'
     },
 
     /* BUTTONS */
     buttonsBlock: {
-        marginTop: 48
+        width: '100%',
+        alignItems: 'center',
     },
 
     primaryButton: {
-        height: BUTTON_HEIGHT,
-        backgroundColor: '#000',
-        borderRadius: BUTTON_HEIGHT / 2,
+        width: scale(343),
+        height: scale(48),
+        backgroundColor: '#F5D8CB',
+        borderRadius: scale(24),
         alignItems: 'center',
         justifyContent: 'center',
-        marginBottom: 16
+        marginBottom: scale(16)
     },
 
     primaryText: {
-        color: '#fff',
-        fontSize: 16,
-        fontWeight: '600'
+        color: '#300C0A', // Темний текст на світлій кнопці
+        fontSize: scale(14),
+        fontFamily: 'Unbounded-Regular'
     },
 
     outlineButton: {
-        height: BUTTON_HEIGHT,
-        borderRadius: BUTTON_HEIGHT / 2,
+        width: scale(343),
+        height: scale(48),
+        borderRadius: scale(24),
         borderWidth: 1,
-        borderColor: '#000',
+        borderColor: '#F5D8CB',
         alignItems: 'center',
-        justifyContent: 'center'
+        justifyContent: 'center',
+        backgroundColor: 'transparent'
     },
 
     outlineText: {
-        fontSize: 16,
-        fontWeight: '600',
-        color: '#000'
+        fontSize: scale(14),
+        fontFamily: 'Unbounded-Regular',
+        color: '#F5D8CB'
     },
 
     /* SOCIAL */
     socialBlock: {
-        marginTop: 48,
+        marginTop: scale(48),
         alignItems: 'center'
     },
 
     or: {
-        color: '#000',
-        marginBottom: 20
+        color: '#F5D8CB',
+        marginBottom: scale(20),
+        fontFamily: 'Unbounded-Regular',
+        fontSize: scale(14)
     },
 
     socialRow: {
         flexDirection: 'row',
-        gap: 20
+        gap: scale(20)
     },
 
     socialButton: {
-        width: 48,
-        height: 48,
-        borderRadius: 24,
+        width: scale(48),
+        height: scale(48),
+        borderRadius: scale(24),
         borderWidth: 1,
-        borderColor: '#000',
+        borderColor: '#F5D8CB',
         alignItems: 'center',
-        justifyContent: 'center'
+        justifyContent: 'center',
+        backgroundColor: 'transparent'
     },
-
-    socialText: {
-        fontSize: 18,
-        fontWeight: '700'
-    }
 });

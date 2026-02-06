@@ -5,17 +5,18 @@ import {
     StyleSheet,
     FlatList,
     TouchableOpacity,
-    Image
+    Image,
+    ActivityIndicator,
+    RefreshControl // Додав "потягнути, щоб оновити"
 } from 'react-native';
-// Додав хук для оновлення списку при поверненні назад
 import { useFocusEffect } from '@react-navigation/native';
+// 👇 Використовуємо getAlbums (всі), а не getMyAlbums
 import { getAlbums, getAlbumCoverUrl } from '../api/api';
 
 export default function AlbumListScreen({ navigation }) {
     const [albums, setAlbums] = useState([]);
+    const [loading, setLoading] = useState(false);
 
-    // Використовуємо useFocusEffect замість useEffect,
-    // щоб список оновлювався, коли ми повертаємось після створення альбому
     useFocusEffect(
         useCallback(() => {
             loadAlbums();
@@ -23,8 +24,21 @@ export default function AlbumListScreen({ navigation }) {
     );
 
     const loadAlbums = async () => {
-        const data = await getAlbums();
-        setAlbums(Array.isArray(data) ? data : []);
+        setLoading(true);
+        try {
+
+            const data = await getAlbums();
+
+
+            if (Array.isArray(data)) {
+                setAlbums(data);
+            } else {
+                setAlbums([]);
+            }
+        } catch (e) {
+        } finally {
+            setLoading(false);
+        }
     };
 
     const openAlbum = (albumId) => {
@@ -33,10 +47,11 @@ export default function AlbumListScreen({ navigation }) {
     };
 
     const renderItem = ({ item }) => {
-        // Mongo може повертати Id, id або _id. Беремо те, що є.
+        // Отримуємо ID (враховуємо різні варіанти з беку)
         const albumId = item.id || item.Id || item._id;
 
-        const coverUri = item.coverFileId
+        // Отримуємо обкладинку
+        const coverUri = (item.coverFileId || item.CoverFileId)
             ? getAlbumCoverUrl(albumId)
             : null;
 
@@ -49,16 +64,19 @@ export default function AlbumListScreen({ navigation }) {
                     <Image
                         source={{ uri: coverUri }}
                         style={styles.cover}
+                        resizeMode="cover"
                     />
                 ) : (
-                    <View style={styles.cover} />
+                    <View style={styles.coverPlaceholder}>
+                        <Text style={styles.placeholderText}>No Cover</Text>
+                    </View>
                 )}
 
                 <Text style={styles.title} numberOfLines={1}>
-                    {item.title}
+                    {item.title || item.Title || 'Untitled'}
                 </Text>
                 <Text style={styles.artist} numberOfLines={1}>
-                    {item.artist}
+                    {item.artist || item.Artist || 'Unknown Artist'}
                 </Text>
             </TouchableOpacity>
         );
@@ -66,11 +84,8 @@ export default function AlbumListScreen({ navigation }) {
 
     return (
         <View style={styles.container}>
-            {/* Додав контейнер для заголовка та кнопки + */}
             <View style={styles.headerContainer}>
-                <Text style={styles.header}>Albums</Text>
-
-                {/* Кнопка додавання, якої не вистачало для навігації */}
+                <Text style={styles.header}>All Albums</Text>
                 <TouchableOpacity
                     style={styles.addButton}
                     onPress={() => navigation.navigate('CreateAlbum')}
@@ -79,15 +94,26 @@ export default function AlbumListScreen({ navigation }) {
                 </TouchableOpacity>
             </View>
 
-            <FlatList
-                data={albums}
-                numColumns={2}
-                keyExtractor={(item) => item.id || item.Id || item._id}
-                renderItem={renderItem}
-                ListEmptyComponent={
-                    <Text style={styles.emptyText}>No albums</Text>
-                }
-            />
+            {loading && albums.length === 0 ? (
+                <ActivityIndicator size="large" color="#000" style={{ marginTop: 20 }} />
+            ) : (
+                <FlatList
+                    data={albums}
+                    numColumns={2}
+                    keyExtractor={(item) => item.id || item.Id || item._id || Math.random().toString()}
+                    renderItem={renderItem}
+                    contentContainerStyle={{ paddingBottom: 20 }}
+                    refreshControl={
+                        <RefreshControl refreshing={loading} onRefresh={loadAlbums} />
+                    }
+                    ListEmptyComponent={
+                        <Text style={styles.emptyText}>
+                            No albums found.{"\n"}
+                            Create one to test!
+                        </Text>
+                    }
+                />
+            )}
         </View>
     );
 }
@@ -99,7 +125,6 @@ const styles = StyleSheet.create({
         paddingTop: 60,
         backgroundColor: '#fff'
     },
-    // Оновив стилі заголовка, щоб додати кнопку "+" в один рядок
     headerContainer: {
         flexDirection: 'row',
         justifyContent: 'center',
@@ -125,13 +150,30 @@ const styles = StyleSheet.create({
     albumItem: {
         flex: 1,
         margin: 10,
-        alignItems: 'center'
+        alignItems: 'center',
+        maxWidth: '45%'
     },
     cover: {
-        width: 120,
-        height: 120,
+        width: 140,
+        height: 140,
+        borderRadius: 8,
         marginBottom: 8,
         backgroundColor: '#ddd'
+    },
+    coverPlaceholder: {
+        width: 140,
+        height: 140,
+        borderRadius: 8,
+        marginBottom: 8,
+        backgroundColor: '#eee',
+        justifyContent: 'center',
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: '#ccc'
+    },
+    placeholderText: {
+        color: '#888',
+        fontSize: 12
     },
     title: {
         fontSize: 14,
@@ -146,6 +188,7 @@ const styles = StyleSheet.create({
     emptyText: {
         textAlign: 'center',
         marginTop: 40,
-        color: '#777'
+        color: '#777',
+        lineHeight: 24
     }
 });

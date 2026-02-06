@@ -16,7 +16,6 @@ import { createAlbum } from '../api/api';
 
 export default function CreateAlbumScreen({ navigation }) {
     const [title, setTitle] = useState('');
-    // const [artist, setArtist] = useState(''); // ❌ Видалено
     const [cover, setCover] = useState(null);
     const [loading, setLoading] = useState(false);
 
@@ -33,6 +32,7 @@ export default function CreateAlbumScreen({ navigation }) {
         }
     };
 
+    // 👇 ТУТ БУЛА ПОМИЛКА: Додано слово 'async'
     const handleCreate = async () => {
         if (!title) {
             Alert.alert('Error', 'Enter album title');
@@ -41,7 +41,8 @@ export default function CreateAlbumScreen({ navigation }) {
 
         setLoading(true);
 
-        const result = await createAlbum(title, "", cover);
+        // Передаємо (title, cover) — без зайвих аргументів
+        const result = await createAlbum(title, cover);
 
         setLoading(false);
 
@@ -59,20 +60,12 @@ export default function CreateAlbumScreen({ navigation }) {
         <ScrollView contentContainerStyle={styles.container}>
             <Text style={styles.header}>Create Album</Text>
 
-            <TouchableOpacity
-                onPress={pickImage}
-                style={styles.imagePicker}
-            >
+            <TouchableOpacity onPress={pickImage} style={styles.imagePicker}>
                 {cover ? (
-                    <Image
-                        source={{ uri: cover.uri }}
-                        style={styles.image}
-                    />
+                    <Image source={{ uri: cover.uri }} style={styles.image} />
                 ) : (
                     <View style={styles.placeholder}>
-                        <Text style={styles.placeholderText}>
-                            Select cover
-                        </Text>
+                        <Text style={styles.placeholderText}>Select cover</Text>
                     </View>
                 )}
             </TouchableOpacity>
@@ -110,7 +103,8 @@ const styles = StyleSheet.create({
     header: {
         fontSize: 20,
         fontWeight: '600',
-        marginBottom: 20
+        marginBottom: 20,
+        marginTop: 40
     },
     imagePicker: {
         marginBottom: 20
@@ -118,7 +112,8 @@ const styles = StyleSheet.create({
     image: {
         width: 150,
         height: 150,
-        backgroundColor: '#ddd'
+        backgroundColor: '#ddd',
+        borderRadius: 10
     },
     placeholder: {
         width: 150,
@@ -127,7 +122,8 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center',
         borderWidth: 1,
-        borderColor: '#ccc'
+        borderColor: '#ccc',
+        borderRadius: 10
     },
     placeholderText: {
         color: '#666'
@@ -142,7 +138,8 @@ const styles = StyleSheet.create({
         borderWidth: 1,
         borderColor: '#ccc',
         padding: 10,
-        marginBottom: 15
+        marginBottom: 15,
+        borderRadius: 5
     },
     button: {
         width: '90%',

@@ -1,0 +1,317 @@
+import React, { useEffect, useState } from 'react';
+import {
+    View,
+    Text,
+    StyleSheet,
+    ScrollView,
+    Image,
+    TouchableOpacity,
+    Dimensions,
+    StatusBar,
+    ActivityIndicator
+} from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
+import {
+    getIcons,
+    getTrackCoverUrl,
+    scale,
+    getAlbumDetails
+} from '../api/api';
+
+const { height } = Dimensions.get('window');
+
+export default function TrackInfoScreen({ navigation, route }) {
+    // Отримуємо трек з параметрів навігації
+    const { track } = route.params || {};
+
+    console.log("TRACK DATA FROM BACKEND:", JSON.stringify(track, null, 2));
+
+    const [loading, setLoading] = useState(true);
+    const [icons, setIcons] = useState({});
+
+    const [albumName, setAlbumName] = useState('Single');
+
+    useEffect(() => {
+        loadData();
+    }, []);
+
+    const loadData = async () => {
+        try {
+            const iconsRes = await getIcons();
+            setIcons(iconsRes || {});
+
+            // 👇 ЛОГІКА ОТРИМАННЯ НАЗВИ АЛЬБОМУ
+            if (track?.album?.title) {
+                // Якщо назва вже прийшла разом з треком
+                setAlbumName(track.album.title);
+            } else if (track?.albumId) {
+                // Якщо є тільки ID, робимо запит
+                const albumData = await getAlbumDetails(track.albumId);
+                if (albumData && albumData.title) {
+                    setAlbumName(albumData.title);
+                }
+            }
+
+        } catch (e) {
+            console.log('TrackInfo load error', e);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // Хелпер для іконок
+    const renderIcon = (iconName, style, tintColor) => {
+        if (icons[iconName]) {
+            const imageStyle = [style];
+            if (tintColor) imageStyle.push({ tintColor: tintColor });
+            return <Image source={{ uri: icons[iconName] }} style={imageStyle} resizeMode="contain" />;
+        }
+        return <View style={style} />;
+    };
+
+    // Хелпер для форматування дати (з createdAt або поточної дати)
+    const formatDate = (dateString) => {
+        if (!dateString) return 'Unknown Date';
+        const date = new Date(dateString);
+        // Формат: "Sep 2022"
+        return date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+    };
+
+    if (loading) {
+        return (
+            <View style={[styles.container, styles.center]}>
+                <ActivityIndicator size="large" color="#F5D8CB" />
+            </View>
+        );
+    }
+
+    const coverUrl = getTrackCoverUrl(track);
+    const releaseDate = formatDate(track?.uploadedAt);
+
+    return (
+        <View style={styles.container}>
+            <StatusBar barStyle="light-content" />
+
+            <ScrollView
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={{ flexGrow: 1 }}
+                bounces={false}
+                overScrollMode="never"
+            >
+                <LinearGradient
+                    colors={['#AC654F', '#883426', '#190707',]}
+                    locations={[0, 0.2, 0.5,]}
+                    start={{ x: 1, y: 0 }}
+                    end={{ x: 0.5, y: 1 }}
+                    style={[styles.gradient, { paddingBottom: 100 }]}
+                >
+                    {/* --- HEADER (BACK BUTTON) --- */}
+                    <View style={styles.header}>
+                        <TouchableOpacity
+                            onPress={() => navigation.goBack()}
+                            hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
+                        >
+                            {renderIcon('arrow-left.png', { width: 24, height: 24 }, '#F5D8CB')}
+                        </TouchableOpacity>
+                    </View>
+
+                    {/* --- BIG VINYL RECORD --- */}
+                    <View style={styles.vinylSection}>
+                        <View style={styles.bigVinylContainer}>
+                            {/* 1. Обкладинка (всередині) */}
+                            {coverUrl ? (
+                                <Image
+                                    source={{ uri: coverUrl }}
+                                    style={styles.bigInnerCover}
+                                    resizeMode="cover"
+                                />
+                            ) : (
+                                <View style={[styles.bigInnerCover, { backgroundColor: '#333' }]} />
+                            )}
+
+                            {/* 2. Пластинка (зверху) */}
+                            <View style={styles.bigVinylOverlay}>
+                                {renderIcon('plastinka.png', { width: scale(200), height: scale(200) }, null)}
+                            </View>
+                        </View>
+                    </View>
+
+                    {/* --- TITLE & ARTIST --- */}
+                    <View style={styles.titleSection}>
+                        <Text style={styles.trackTitleText}>{track?.title || 'Unknown Title'}</Text>
+                        <Text style={styles.artistNameText}>{track?.artist?.name || track?.artist || 'Unknown Artist'}</Text>
+                    </View>
+
+                    {/* --- INFO ROW (Album | Date) --- */}
+                    <View style={styles.infoRow}>
+                        <Text style={styles.infoLabel}>Album: </Text>
+                        <Text style={styles.infoValue}>{albumName}</Text>
+                        <Text style={styles.divider}> | </Text>
+                        <Text style={styles.infoLabel}>Date: </Text>
+                        <Text style={styles.infoValue}>{releaseDate}</Text>
+                    </View>
+
+                    {/* --- STATIC DETAILS (PLACEHOLDERS) --- */}
+                    <View style={styles.detailsContainer}>
+
+                        {/* Genre */}
+                        <View style={styles.detailBlock}>
+                            <Text style={styles.detailTitle}>Genre:</Text>
+                            <Text style={styles.detailText}>Pop, Synth-pop</Text>
+                            <View style={styles.separator} />
+                        </View>
+
+                        {/* Songwriters */}
+                        <View style={styles.detailBlock}>
+                            <Text style={styles.detailTitle}>Songwriters:</Text>
+                            <View style={styles.bulletList}>
+                                <Text style={styles.detailText}>• {track?.artist?.name || 'Artist Name'}</Text>
+                                <Text style={styles.detailText}>• Unknown Writer</Text>
+                            </View>
+                            <View style={styles.separator} />
+                        </View>
+
+                        {/* Producers */}
+                        <View style={styles.detailBlock}>
+                            <Text style={styles.detailTitle}>Producers:</Text>
+                            <View style={styles.bulletList}>
+                                <Text style={styles.detailText}>• Unknown Producer</Text>
+                            </View>
+                            <View style={styles.separator} />
+                        </View>
+
+                        {/* Label */}
+                        <View style={styles.detailBlock}>
+                            <Text style={styles.detailTitle}>Label:</Text>
+                            <View style={styles.bulletList}>
+                                <Text style={styles.detailText}>• Independent</Text>
+                            </View>
+                            <View style={styles.separator} />
+                        </View>
+
+                    </View>
+
+                </LinearGradient>
+            </ScrollView>
+        </View>
+    );
+}
+
+const styles = StyleSheet.create({
+    container: {
+        flex: 1,
+        backgroundColor: '#190707',
+    },
+    center: {
+        justifyContent: 'center',
+        alignItems: 'center'
+    },
+    gradient: {
+        minHeight: height,
+        paddingHorizontal: scale(20),
+    },
+
+    // Header
+    header: {
+        marginTop: scale(60), // Відступ для статус бару
+        marginBottom: scale(20),
+        alignItems: 'flex-start',
+    },
+
+    // Vinyl Styles (Big)
+    vinylSection: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: scale(52),
+    },
+    bigVinylContainer: {
+        width: scale(105),
+        height: scale(105),
+        justifyContent: 'center',
+        alignItems: 'center',
+        position: 'relative',
+    },
+    bigInnerCover: {
+        width: scale(45.58),
+        height: scale(45.58),
+        borderRadius: scale(55),
+        position: 'absolute',
+        zIndex: 2,
+    },
+    bigVinylOverlay: {
+        width: '100%',
+        height: '100%',
+        zIndex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+
+    // Title Section
+    titleSection: {
+        alignItems: 'center',
+        marginBottom: scale(20),
+    },
+    trackTitleText: {
+        color: '#F5D8CB',
+        fontSize: scale(24),
+        fontFamily: 'Unbounded-SemiBold',
+        textAlign: 'center',
+        marginBottom: scale(12),
+        textTransform: 'uppercase',
+    },
+    artistNameText: {
+        color: '#F5D8CB',
+        fontSize: scale(14),
+        fontFamily: 'Poppins-Regular',
+        textAlign: 'center',
+    },
+
+    // Info Row (Album | Date)
+    infoRow: {
+        flexDirection: 'row',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: scale(40),
+    },
+    infoLabel: {
+        color: '#F5D8CB',
+        fontSize: scale(14),
+        fontFamily: 'Unbounded-Regular',
+    },
+    infoValue: {
+        color: '#F5D8CB',
+        fontSize: scale(14),
+        fontFamily: 'Poppins-Regular',
+    },
+    divider: {
+        color: '#F5D8CB',
+        fontSize: scale(14),
+        marginHorizontal: scale(10),
+    },
+
+    // Details Container
+    detailsContainer: {
+        width: '100%',
+        paddingBottom: scale(50),
+    },
+    detailBlock: {
+        marginBottom: scale(20),
+    },
+    detailTitle: {
+        color: '#F5D8CB',
+        fontSize: scale(16),
+        fontFamily: 'Unbounded-Regular',
+        marginBottom: scale(10),
+    },
+    detailText: {
+        color: '#F5D8CB',
+        fontSize: scale(14),
+        fontFamily: 'Poppins-Regular',
+        marginBottom: scale(4),
+    },
+    separator: {
+        height: 1,
+        backgroundColor: '#F5D8CB',
+        marginTop: scale(15),
+    },
+});
