@@ -14,14 +14,65 @@ import {
     StatusBar
 } from "react-native";
 import { LinearGradient } from 'expo-linear-gradient';
-
+import { SvgUri, SvgXml } from 'react-native-svg';
 import * as WebBrowser from "expo-web-browser";
 import * as Google from "expo-auth-session/providers/google";
-
 // 👇 Імпорти API та утиліт
 import { registerUser, googleLogin, scale, getIcons } from "../api/api";
 
 WebBrowser.maybeCompleteAuthSession();
+
+const svgCache = {};
+// 👇 Цей компонент завантажує SVG, чистить, фарбує і КЕШУЄ результат
+const ColoredSvg = ({ uri, width, height, color }) => {
+    const cacheKey = `${uri}_${color || 'original'}`;
+    const [xml, setXml] = useState(svgCache[cacheKey] || null);
+
+    useEffect(() => {
+        let isMounted = true;
+
+        // 1. Якщо у нас вже є правильна картинка в кеші — беремо її і виходимо
+        if (svgCache[cacheKey]) {
+            setXml(svgCache[cacheKey]);
+            return;
+        }
+
+        // 2. Якщо в кеші немає — вантажимо
+        if (uri) {
+            fetch(uri)
+                .then(response => response.text())
+                .then(svgContent => {
+                    if (isMounted) {
+                        let cleanXml = svgContent.replace(/fill=['"]none['"]/gi, '###NONE###');
+
+                        if (color) {
+                            cleanXml = cleanXml.replace(/fill=['"][^'"]*['"]/g, `fill="${color}"`);
+                            cleanXml = cleanXml.replace(/stroke=['"][^'"]*['"]/g, `stroke="${color}"`);
+                        }
+
+                        cleanXml = cleanXml.replace(/###NONE###/g, 'fill="none"');
+
+                        // Зберігаємо в кеш
+                        svgCache[cacheKey] = cleanXml;
+                        setXml(cleanXml);
+                    }
+                })
+                .catch(err => console.log("SVG Error:", err));
+        }
+
+        return () => { isMounted = false; };
+    }, [cacheKey]); // 🔥 Головне: реагуємо на зміну ключа, а не ігноруємо її
+
+    if (!xml) return <View style={{ width, height }} />;
+
+    return (
+        <SvgXml
+            xml={xml}
+            width={width}
+            height={height}
+        />
+    );
+};
 
 export default function RegisterScreen({ navigation }) {
     const [username, setUsername] = useState("");
@@ -75,7 +126,7 @@ export default function RegisterScreen({ navigation }) {
         if (result?.error) {
             Alert.alert("Error", typeof result.error === 'string' ? result.error : 'Google registration failed');
         } else {
-            navigation.replace("Tracks");
+            navigation.replace('MainTabs');
         }
     };
 
@@ -93,24 +144,55 @@ export default function RegisterScreen({ navigation }) {
         if (res?.error) {
             Alert.alert("Error", typeof res.error === 'string' ? res.error : "Registration failed");
         } else {
-            navigation.replace("Tracks");
+            navigation.replace('MainTabs');
         }
     };
 
-    // Рендер іконки
-    const renderIcon = (iconName, fallbackText, style, tintColor) => {
-        if (icons[iconName]) {
+    const renderIcon = (iconName, fallbackText, style, tintColor = '#000000') => {
+        const iconUrl = icons[iconName];
+
+        if (iconUrl) {
+            const isSvg = iconName.toLowerCase().endsWith('.svg') || iconUrl.toLowerCase().endsWith('.svg');
+
+            if (isSvg) {
+                const flatStyle = StyleSheet.flatten(style);
+                const width = flatStyle?.width || 24;
+                const height = flatStyle?.height || 24;
+
+                // ❌ МИ ПРИБРАЛИ ПЕРЕВІРКУ if (!tintColor)
+                // Тепер ми ЗАВЖДИ використовуємо ColoredSvg, бо тільки він має КЕШ.
+
+                return (
+                    <ColoredSvg
+                        uri={iconUrl}
+                        width={width}
+                        height={height}
+                        color={tintColor} // Якщо null, ColoredSvg просто не буде фарбувати
+                    />
+                );
+            }
+
+            // PNG (стара логіка)
             const imageStyle = [style];
-            if (tintColor) imageStyle.push({ tintColor: tintColor });
-            return <Image source={{ uri: icons[iconName] }} style={imageStyle} resizeMode="contain" />;
-        }
-        return <Text style={{ color: tintColor || '#F5D8CB', fontSize: scale(12) }}>{fallbackText}</Text>;
-    };
+            if (tintColor) {
+                imageStyle.push({ tintColor: tintColor });
+            }
 
+            return (
+                <Image
+                    source={{ uri: iconUrl }}
+                    style={imageStyle}
+                    resizeMode="contain"
+                />
+            );
+        }
+
+        return <Text style={[styles.headerText, { fontSize: 14, color: tintColor || '#F5D8CB' }]}>{fallbackText}</Text>;
+    };
     return (
         <LinearGradient
-            colors={['#AC654F', '#883426', '#190707',]}
-            locations={[0, 0.2, 0.5,]}
+            colors={['#9A4B39', '#80291E', '#190707']}
+            locations={[0, 0.2, 0.59]}
             start={{ x: 1, y: 0 }}
             end={{ x: 0.5, y: 1 }}
             style={styles.gradient}
@@ -134,7 +216,7 @@ export default function RegisterScreen({ navigation }) {
                         onPress={() => navigation.goBack()}
                         hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                     >
-                        {renderIcon('arrow-left.png', '<', { width: scale(24), height: scale(24) }, '#F5D8CB')}
+                        {renderIcon('arrow-left.svg', '<', { width: scale(24), height: scale(24) }, '#F5D8CB')}
                     </TouchableOpacity>
 
                     {/* HEADER */}
@@ -148,7 +230,7 @@ export default function RegisterScreen({ navigation }) {
                         {/* USERNAME */}
                         <View style={styles.inputWrapper}>
                             <View style={styles.iconCircle}>
-                                {renderIcon('user.png', 'U', { width: scale(20), height: scale(20) }, '#F5D8CB')}
+                                {renderIcon('user.svg', 'U', { width: scale(20), height: scale(20) }, '#F5D8CB')}
                             </View>
                             <TextInput
                                 placeholder="Name"
@@ -162,7 +244,7 @@ export default function RegisterScreen({ navigation }) {
                         {/* EMAIL */}
                         <View style={styles.inputWrapper}>
                             <View style={styles.iconCircle}>
-                                {renderIcon('email.png', '@', { width: scale(24), height: scale(24) }, '#F5D8CB')}
+                                {renderIcon('email.svg', '@', { width: scale(24), height: scale(24) }, '#F5D8CB')}
                             </View>
                             <TextInput
                                 placeholder="Email"
@@ -181,7 +263,7 @@ export default function RegisterScreen({ navigation }) {
                             (password.length > 0 && password.length < 8) ? { borderColor: '#F5D8CB' } : {}
                         ]}>
                             <View style={styles.iconCircle}>
-                                {renderIcon('password.png', '*', { width: scale(24), height: scale(24) }, '#F5D8CB')}
+                                {renderIcon('password.svg', '*', { width: scale(24), height: scale(24) }, '#F5D8CB')}
                             </View>
 
                             <TextInput
@@ -239,7 +321,7 @@ export default function RegisterScreen({ navigation }) {
                             }}
                             disabled={!request}
                         >
-                            {renderIcon('google.png', 'G', { width: scale(24), height: scale(24) }, '#F5D8CB')}
+                            {renderIcon('google.svg', 'G', { width: scale(24), height: scale(24) }, '#F5D8CB')}
                         </TouchableOpacity>
 
                         {/* DISCORD BUTTON */}
@@ -247,7 +329,7 @@ export default function RegisterScreen({ navigation }) {
                             style={styles.socialButton}
                             onPress={() => Alert.alert("Discord", "Coming soon")}
                         >
-                            {renderIcon('discord.png', 'D', { width: scale(24), height: scale(24) }, '#F5D8CB')}
+                            {renderIcon('discord.svg', 'D', { width: scale(24), height: scale(24) }, '#F5D8CB')}
                         </TouchableOpacity>
                     </View>
 

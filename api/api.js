@@ -2,47 +2,27 @@ import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { jwtDecode } from 'jwt-decode';
 import 'core-js/stable/atob';
-import { Dimensions } from 'react-native';
+import { Dimensions, Image } from 'react-native';
 
-/**
- * @typedef {Object} Artist
- * @property {string} id
- * @property {string} name
- */
+const API_URL = 'http://localhost:8080';
+const iconsPrefetchCache = new Set();
+let iconsMapCache = null;
+let iconsMapRequest = null;
+const svgXmlCache = {};
+const svgXmlRequestCache = {};
 
-/**
- * @typedef {Object} Track
- * @property {string} id
- * @property {string} title
- * @property {string} [lyrics]       // Нове поле
- * @property {string} [artistName]   // Нове поле (рядок)
- * @property {Artist} [artist]       // Об'єкт артиста
- * @property {string} fileId
- * @property {string} [coverFileId]
- * @property {string} status
- * @property {string[]} [genres]     // Масив рядків ['Pop', 'Rock']
- * @property {string} uploadedAt
- */
-
-/* =========================
-   BASE CONFIG
-========================= */
-
-//ipconfig getifaddr en0
-
-const API_URL = 'http://192.168.68.103:8080';
-
-const api = axios.create({
+export const api = axios.create({
     baseURL: API_URL,
     timeout: 30000,
 });
 
-// 👇 МАГІЯ ТУТ: Це автоматично додає токен до кожного запиту
+// 👇 ЄДИНИЙ І ПРАВИЛЬНИЙ INTERCEPTOR
 api.interceptors.request.use(
     async (config) => {
-        const token = await AsyncStorage.getItem('token'); // Ліземо в пам'ять
+        // Ми використовуємо ключ 'userToken' всюди
+        const token = await AsyncStorage.getItem('userToken');
         if (token) {
-            config.headers.Authorization = `Bearer ${token}`; // Вставляємо токен
+            config.headers.Authorization = `Bearer ${token}`;
         }
         return config;
     },
@@ -51,40 +31,25 @@ api.interceptors.request.use(
     }
 );
 
-// 👇 ДРУГА МАГІЯ: Якщо токен протух (401), ми це побачимо
+// 👇 ОБРОБКА ВТРАТИ АВТОРИЗАЦІЇ (401)
 api.interceptors.response.use(
     (response) => response,
     async (error) => {
         if (error.response && error.response.status === 401) {
-            console.log("🔒 TOKEN EXPIRED or INVALID. Logging out...");
-            // Тут можна очистити токен, щоб викинуло на логін
-            await AsyncStorage.removeItem('token');
-            await AsyncStorage.removeItem('userId');
-            // На жаль, звідси важко зробити навігацію,
-            // але при наступному перезапуску юзера викине.
+            console.log("🔒 TOKEN EXPIRED. Logging out...");
+            // Чистимо правильні ключі
+            await AsyncStorage.multiRemove(['userToken', 'userId', 'username']);
         }
         return Promise.reject(error);
     }
 );
 
-
-// Автоматично підставляємо JWT
-api.interceptors.request.use(async (config) => {
-    const token = await AsyncStorage.getItem('userToken');
-    if (token) {
-        config.headers.Authorization = `Bearer ${token}`;
-    }
-    return config;
-});
-
 /* =========================
    HELPERS
 ========================= */
-
 const saveUserIdFromToken = async (token) => {
     try {
         const decoded = jwtDecode(token);
-
         const userId =
             decoded['http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier'] ||
             decoded.sub ||
@@ -98,11 +63,9 @@ const saveUserIdFromToken = async (token) => {
     }
 };
 
-//adapation
 const { width } = Dimensions.get('window');
 const guidelineBaseWidth = 375;
 export const scale = (size) => (width / guidelineBaseWidth) * size;
-
 /* =========================
    AUTH
 ========================= */
@@ -243,22 +206,121 @@ export const getRadioQueue = async (seedTrackId) => {
 ========================= */
 
 export const getIcons = async () => {
-    try {
-        // Отримуємо список всіх іконок з бекенду
-        const res = await api.get('/api/Icon/all');
-        const iconsMap = {};
+    if (iconsMapCache) return iconsMapCache;
+    if (iconsMapRequest) return iconsMapRequest;
 
-        // Перетворюємо масив у зручний об'єкт: { "play.png": "http://.../files/id" }
-        if (Array.isArray(res.data)) {
-            res.data.forEach(icon => {
-                iconsMap[icon.fileName] = `${API_URL}${icon.url}`;
-            });
+    iconsMapRequest = (async () => {
+        try {
+            const res = await api.get('/api/Icon/all');
+            const iconsMap = {};
+
+            if (Array.isArray(res.data)) {
+                res.data.forEach(icon => {
+                    iconsMap[icon.fileName] = `${API_URL}${icon.url}`;
+                });
+            }
+
+            iconsMapCache = iconsMap;
+            return iconsMapCache;
+        } catch (e) {
+            console.error("Get icons error:", e);
+            return {};
+        } finally {
+            iconsMapRequest = null;
         }
-        return iconsMap;
-    } catch (e) {
-        console.error("Get icons error:", e);
-        return {};
+    })();
+
+    return iconsMapRequest;
+};
+
+const getSvgCacheKey = (uri, color) => `${uri}_${color || 'original'}`;
+
+const paintSvgXml = (svgContent, color) => {
+    let cleanXml = svgContent.replace(/fill=['"]none['"]/gi, '###NONE###');
+
+    if (color) {
+        cleanXml = cleanXml.replace(/fill=['"][^'"]*['"]/g, `fill="${color}"`);
+        cleanXml = cleanXml.replace(/stroke=['"][^'"]*['"]/g, `stroke="${color}"`);
     }
+
+    return cleanXml.replace(/###NONE###/g, 'fill="none"');
+};
+
+export const peekColoredSvgXml = (uri, color) => {
+    if (!uri) return null;
+    return svgXmlCache[getSvgCacheKey(uri, color)] || null;
+};
+
+export const getColoredSvgXml = async (uri, color) => {
+    if (!uri) return null;
+    const cacheKey = getSvgCacheKey(uri, color);
+
+    if (svgXmlCache[cacheKey]) return svgXmlCache[cacheKey];
+    if (svgXmlRequestCache[cacheKey]) return svgXmlRequestCache[cacheKey];
+
+    svgXmlRequestCache[cacheKey] = fetch(uri)
+        .then((response) => response.text())
+        .then((svgContent) => {
+            const processed = paintSvgXml(svgContent, color);
+            svgXmlCache[cacheKey] = processed;
+            return processed;
+        })
+        .finally(() => {
+            delete svgXmlRequestCache[cacheKey];
+        });
+
+    return svgXmlRequestCache[cacheKey];
+};
+
+export const warmPlayerAssets = async () => {
+    const icons = await getIcons();
+
+    const playerSvgAssets = [
+        ['background.svg', null],
+        ['vinyl.svg', null],
+        ['arrow-left.svg', '#F5D8CB'],
+        ['more.svg', '#F5D8CB'],
+        ['added.svg', '#F5D8CB'],
+        ['add to another playlist.svg', '#F5D8CB'],
+        ['shuffle.svg', '#F5D8CB'],
+        ['previous.svg', '#F5D8CB'],
+        ['next.svg', '#F5D8CB'],
+        ['pause.svg', '#300C0A'],
+        ['play.svg', '#300C0A'],
+        ['previous-1.svg', '#F5D8CB'],
+        ['play next.svg', '#F5D8CB'],
+        ['download.svg', '#F5D8CB'],
+        ['share.svg', '#F5D8CB'],
+        ['add to queue.svg', '#F5D8CB'],
+        ['cancel queue.svg', '#F5D8CB'],
+        ['album.svg', '#F5D8CB'],
+        ['song information.svg', '#F5D8CB'],
+        ['artist.svg', '#F5D8CB'],
+        ['radio.svg', '#F5D8CB'],
+    ];
+
+    await Promise.allSettled(
+        playerSvgAssets.map(([name, color]) => {
+            const uri = icons[name];
+            if (!uri) return Promise.resolve();
+            return getColoredSvgXml(uri, color);
+        })
+    );
+
+    Object.values(icons).forEach((uri) => {
+        if (!uri || iconsPrefetchCache.has(uri)) return;
+        iconsPrefetchCache.add(uri);
+        Image.prefetch(uri).catch(() => {
+            iconsPrefetchCache.delete(uri);
+        });
+    });
+
+    return icons;
+};
+
+export const clearIconsCache = () => {
+    iconsMapCache = null;
+    iconsMapRequest = null;
 };
 
 /* =========================

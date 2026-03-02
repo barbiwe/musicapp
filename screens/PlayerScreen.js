@@ -4,6 +4,7 @@ import {
     Text,
     StyleSheet,
     TouchableOpacity,
+    FlatList,
     Platform,
     Animated,
     Easing,
@@ -14,12 +15,14 @@ import {
     TouchableWithoutFeedback,
     Image,
     ImageBackground,
-    StatusBar
+    StatusBar,
 } from 'react-native';
 import { Audio } from 'expo-av';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
+import { SvgUri, SvgXml } from 'react-native-svg';
+import { usePlayerStore } from '../store/usePlayerStore';
 import {
     getStreamUrl,
     likeTrack,
@@ -28,207 +31,317 @@ import {
     getIcons,
     getTrackCoverUrl,
     markTrackAsPlayed,
-    getRadioQueue
+    getRadioQueue,
+    getRecommendations,
+    getTracks,
+    getUserAvatarUrl,
+    getColoredSvgXml,
+    peekColoredSvgXml,
 } from '../api/api';
 
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('screen');
 
-let globalSound = null;
-let globalTrackId = null;
+
+// 0. ГЛОБАЛЬНИЙ КЕШ (Щоб не вантажити одне й те саме 100 разів)
+const imagePrefetchCache = new Set();
+let iconsMapCache = null;
+
+const prefetchImageOnce = (uri) => {
+    if (!uri || imagePrefetchCache.has(uri)) return;
+    imagePrefetchCache.add(uri);
+    Image.prefetch(uri).catch(() => {
+        imagePrefetchCache.delete(uri);
+    });
+};
+
+// 👇 Цей компонент завантажує SVG, чистить, фарбує і КЕШУЄ результат
+const ColoredSvg = ({ uri, width, height, color }) => {
+    const [xml, setXml] = useState(peekColoredSvgXml(uri, color));
+
+    useEffect(() => {
+        let isMounted = true;
+
+        if (uri) {
+            getColoredSvgXml(uri, color)
+                .then((cachedXml) => {
+                    if (isMounted) setXml(cachedXml);
+                })
+                .catch(err => console.log("SVG Error:", err));
+        } else {
+            setXml(null);
+        }
+
+        return () => { isMounted = false; };
+    }, [uri, color]);
+
+    if (!xml) return <View style={{ width, height }} />;
+
+    return (
+        <SvgXml
+            xml={xml}
+            width={width}
+            height={height}
+        />
+    );
+};
+
+
+// 👇 ОНОВЛЕНИЙ QueueItem (приймає isLiked та onLike)
+const QueueItem = React.memo(({ item, currentTrack, isPlaying, playFromQueue, handlePlayPause, renderIcon, isLiked, onLike, hidePlayButton = false }) => {
+    const isCurrent = (item.id || item._id) === (currentTrack.id || currentTrack._id);
+    const itemCoverUrl = getTrackCoverUrl(item);
+
+    return (
+        <TouchableOpacity
+            style={styles.queueItemContainer}
+            onPress={() => playFromQueue(item)}
+        >
+            <View style={styles.vinylContainer}>
+                {itemCoverUrl ? (
+                    <Image source={{ uri: itemCoverUrl, cache: 'force-cache' }} style={styles.innerCover} resizeMode="cover" />
+                ) : (
+                    <View style={[styles.innerCover, { backgroundColor: '#2A1414', justifyContent: 'center', alignItems: 'center' }]}>
+                        {renderIcon('VOX.svg', '♪', { width: 14, height: 14 }, '#FFFFFF')}
+                    </View>
+                )}
+                <View style={styles.vinylOverlayWrapper}>
+                    {renderIcon('vinyl.svg', '', { width: 50, height: 50 }, null)}
+                </View>
+            </View>
+
+            <View style={styles.queueInfo}>
+                <Text style={[styles.queueTitle, isCurrent && styles.queueTitleActive]} numberOfLines={1}>
+                    {item.title || 'No Title'}
+                </Text>
+                <Text style={styles.queueArtist} numberOfLines={1}>
+                    {item.artist?.name || 'Unknown'}
+                </Text>
+            </View>
+
+            <View style={styles.queueActions}>
+                {isCurrent && !hidePlayButton && (
+                    <TouchableOpacity style={styles.miniPlayButton} onPress={handlePlayPause} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                        {renderIcon(isPlaying ? 'pause.svg' : 'play.svg', '', { width: 12, height: 12 }, '#300C0A')}
+                    </TouchableOpacity>
+                )}
+
+                {/* 👇 КНОПКА ЛАЙКУ */}
+                <TouchableOpacity
+                    style={styles.heartButton}
+                    onPress={() => onLike(item)}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
+                    {isLiked
+                        ? renderIcon('added.svg', '♥', { width: 24, height: 24 }, '#F5D8CB') // Заповнене (або галочка, як у хедері)
+                        : renderIcon('add.svg', '♡', { width: 24, height: 24 }, '#F5D8CB') // Пусте
+                    }
+                </TouchableOpacity>
+            </View>
+        </TouchableOpacity>
+    );
+});
 
 export default function PlayerScreen({ navigation, route }) {
-    // Get track and playlist
-    const { track: initialTrack, playlist = [] } = route.params || {};
+    // 1. НАЙПЕРШЕ — ТЯГНЕМО ГЛОБАЛЬНИЙ СТОР
+    const {
+        currentTrack, isPlaying, position, duration, queue, currentIndex,
+        togglePlay, playNext, playPrev, seekTo, setQueue, addToQueue, clearQueue, setTrack
+    } = usePlayerStore();
 
-    // --- STATE ---
-    const [currentTrack, setCurrentTrack] = useState(initialTrack || {});
-    const [isLiked, setIsLiked] = useState(false);
+    if (!currentTrack) return null;
 
-    const [queue, setQueue] = useState(initialTrack ? [initialTrack] : []);
+    // 2. ДІСТАЄМО ІНФУ САМЕ З ГЛОБАЛЬНОГО СТОРУ
+    const trackTitle = currentTrack?.title || 'No Title';
+    const trackArtist = currentTrack?.artist?.name || currentTrack?.artistName || 'Unknown Artist';
+    const coverUrl = getTrackCoverUrl(currentTrack);
 
-    // --- ICON STATE ---
+    // 3. ВСІ ІНШІ СТЕЙТИ
     const [icons, setIcons] = useState({});
-
-    // --- MODAL STATES ---
+    const [recommendations, setRecommendations] = useState([]);
+    const [relatedArtists, setRelatedArtists] = useState([]);
+    const [notification, setNotification] = useState(null);
+    const notifAnim = useRef(new Animated.Value(200)).current;
     const [modalVisible, setModalVisible] = useState(false);
     const [queueVisible, setQueueVisible] = useState(false);
-
-    // --- AUDIO STATE ---
-    const [sound, setSound] = useState(null);
-    const [isPlaying, setIsPlaying] = useState(false);
-    const [duration, setDuration] = useState(0);
-    const [position, setPosition] = useState(0);
-
-    // --- SEEKING STATE ---
+    const [relatedVisible, setRelatedVisible] = useState(false);
     const isSeeking = useRef(false);
-    const trackRecorded = useRef(false);
     const [progressBarWidth, setProgressBarWidth] = useState(0);
-
-    // --- MARQUEE STATE ---
     const [textWidth, setTextWidth] = useState(0);
     const [containerWidth, setContainerWidth] = useState(0);
     const animatedValue = useRef(new Animated.Value(0)).current;
+    const [likedTrackIds, setLikedTrackIds] = useState([]);
 
-    const trackTitle = currentTrack?.title || 'No Title';
-    const trackArtist = currentTrack?.artist?.name || 'Unknown Artist';
-
-    const coverUrl = getTrackCoverUrl(currentTrack);
+    // 4. СИНХРОНІЗАЦІЯ (Якщо відкрили з іншого екрану)
+    useEffect(() => {
+        if (route.params?.track) {
+            const paramTrack = route.params.track;
+            if (!currentTrack || (currentTrack.id || currentTrack._id) !== (paramTrack.id || paramTrack._id)) {
+                setTrack(paramTrack);
+            }
+        }
+    }, [route.params?.track]);
 
     // 0. ЗАВАНТАЖЕННЯ ІКОНОК
     useEffect(() => {
         loadIconsData();
     }, []);
 
+    useEffect(() => {
+        prefetchImageOnce(coverUrl);
+    }, [coverUrl]);
+
+    useEffect(() => {
+        // Прогріваємо найближчі обкладинки в черзі, щоб у модалці відкривались без затримки
+        const upcomingTracks = queue.slice(currentIndex, currentIndex + 8);
+        upcomingTracks.forEach((track) => prefetchImageOnce(getTrackCoverUrl(track)));
+    }, [queue, currentIndex]);
+
     const loadIconsData = async () => {
+        if (iconsMapCache) {
+            setIcons(iconsMapCache);
+            return;
+        }
+
         try {
             const iconsMap = await getIcons();
-            setIcons(iconsMap);
+            iconsMapCache = iconsMap || {};
+            setIcons(iconsMapCache);
         } catch (e) {
             console.log("Error loading icons:", e);
         }
     };
 
-    // 0.1 CHECK LIKE STATUS
-    useEffect(() => {
-        checkLikeStatus();
-    }, [currentTrack]);
 
-    const checkLikeStatus = async () => {
-        if (!currentTrack) return;
+
+    //recomendations
+
+    useEffect(() => {
+        if (relatedVisible) {
+            loadRelatedData();
+        }
+    }, [relatedVisible]);
+
+
+    const loadRelatedData = async () => {
         const trackId = currentTrack.id || currentTrack._id;
         if (!trackId) return;
 
         try {
-            const likedTrackIds = await getLikedTracks();
-            if (Array.isArray(likedTrackIds)) {
-                const isTrackLiked = likedTrackIds.includes(trackId);
-                setIsLiked(isTrackLiked);
-            } else {
-                setIsLiked(false);
-            }
-        } catch (error) {
-            console.log("Error checking like status:", error);
-        }
-    };
+            // 1. "You may also like"
+            // 🔥 БЕРЕМО БІЛЬШЕ (10 штук), щоб було що підставляти, коли видаляємо
+            const recs = await getRecommendations();
+            const formattedRecs = (recs || []).map(r => ({
+                ...r, // 👈 СПОЧАТКУ розгортаємо об'єкт із сервера
+                id: r.trackId, // 👈 ПОТІМ задаємо ID (щоб він точно був правильним)
+                title: r.title,
+                artist: { name: r.artistName || 'Unknown' },
+                coverFileId: r.coverFileId,
+                fileId: r.fileId,
+            }));
+            setRecommendations(formattedRecs.slice(0, 10));
+            formattedRecs.slice(0, 10).forEach((track) => prefetchImageOnce(getTrackCoverUrl(track)));
 
-    // 1. LOAD AUDIO
-    // Виносимо логіку оновлення статусу в окрему функцію, щоб використовувати її двічі
-    const onPlaybackStatusUpdate = (status) => {
-        if (status.isLoaded) {
-            setDuration(status.durationMillis || 0);
-            if (!isSeeking.current) {
-                setPosition(status.positionMillis || 0);
-            }
-            setIsPlaying(status.isPlaying);
-
-            // 👇 ЛОГІКА ІСТОРІЇ: Якщо грає > 10 секунд і ще не записано
-            if (status.isPlaying && status.positionMillis > 10000 && !trackRecorded.current) {
-                const trackId = currentTrack.id || currentTrack._id;
-                if (trackId) {
-                    markTrackAsPlayed(trackId, status.positionMillis / 1000);
-                    trackRecorded.current = true; // Ставимо галочку, що відправили
+            // 2. "Related artists" (Мокаємо: беремо 4 з усіх треків)
+            const allTracks = await getTracks();
+            const map = new Map();
+            allTracks.forEach(t => {
+                const aName = t.artistName || t.artist?.name;
+                const aId = t.ownerId; // Використовуємо ownerId як ID артиста
+                if (aId && !map.has(aId) && aName) {
+                    map.set(aId, { id: aId, name: aName });
                 }
-            }
-
-            if (status.didJustFinish) {
-                handleNext();
-            }
-        }
-    };
-
-    useEffect(() => {
-        trackRecorded.current = false;
-        loadAudio();
-        // 👇 ВАЖЛИВО: Ми прибрали unloadAsync() з cleanup.
-        // Тепер музика не зупиняється при виході з екрану, але
-        // логіка loadAudio гарантує, що не буде накладання звуків.
-        return () => {
-            // Очищаємо слухача подій при розмонтуванні екрану,
-            // щоб не оновлювати стейт неіснуючого компонента
-            if (globalSound) {
-                globalSound.setOnPlaybackStatusUpdate(null);
-            }
-        };
-    }, [currentTrack]);
-
-    const loadAudio = async () => {
-        if (!currentTrack) return;
-        const trackId = currentTrack.id || currentTrack._id;
-        if (!trackId) return;
-
-        try {
-            // СЦЕНАРІЙ А: Ми відкрили той самий трек, що вже грає глобально
-            if (globalSound && globalTrackId === trackId) {
-                // Прив'язуємо локальний стейт до глобального звуку
-                setSound(globalSound);
-                const status = await globalSound.getStatusAsync();
-                setIsPlaying(status.isPlaying);
-                // Підписуємося на оновлення прогрес-бару для цього екрану
-                globalSound.setOnPlaybackStatusUpdate(onPlaybackStatusUpdate);
-                return;
-            }
-
-            // СЦЕНАРІЙ Б: Ми відкрили новий трек. Треба зупинити старий.
-            if (globalSound) {
-                await globalSound.unloadAsync();
-                globalSound = null;
-                globalTrackId = null;
-            }
-
-            // Завантажуємо новий трек
-            const uri = getStreamUrl(trackId);
-            const { sound: newSound } = await Audio.Sound.createAsync(
-                { uri: uri },
-                { shouldPlay: true },
-                onPlaybackStatusUpdate // Одразу передаємо колбек
-            );
-
-            // Оновлюємо глобальні змінні
-            globalSound = newSound;
-            globalTrackId = trackId;
-
-            // Оновлюємо локальний стейт
-            setSound(newSound);
-            setIsPlaying(true);
+            });
+            setRelatedArtists([...map.values()].slice(0, 4));
 
         } catch (e) {
-            console.error("Audio Load Error:", e);
-            Alert.alert("Error", "Could not play this track");
+            console.log("Error loading related:", e);
         }
     };
 
-    // 2. PLAY / PAUSE
-    const handlePlayPause = async () => {
-        if (!sound) return;
-        if (isPlaying) {
-            await sound.pauseAsync();
+    const handleRecommendationPlay = (track) => {
+        const trackId = track.id || track._id;
+        const history = queue.slice(0, currentIndex + 1);
+        const cleaned = history.filter(t => (t.id || t._id) !== trackId);
+        const newQueue = [...cleaned, track];
+
+        setQueue(newQueue, newQueue.length - 1); // 👈 Встановлюємо глобально
+
+        setRecommendations(prev => prev.filter(t => (t.id || t._id) !== trackId));
+    };
+
+
+    const getAvatar = (userId) => `${getUserAvatarUrl(userId)}?t=${new Date().getTime()}`;
+
+
+    //LIKE STATUS
+    useEffect(() => {
+        loadLikedIds();
+    }, []);
+
+    const loadLikedIds = async () => {
+        try {
+            const ids = await getLikedTracks();
+            if (Array.isArray(ids)) {
+                setLikedTrackIds(ids);
+            }
+        } catch (e) {
+            console.log("Error loading liked IDs:", e);
+        }
+    };
+
+    // 2. Функція перемикання лайка для будь-якого треку в списку
+    const handleItemLikeToggle = async (track) => {
+        const trackId = track.id || track._id;
+        const isCurrentlyLiked = likedTrackIds.includes(trackId);
+
+        // Оптимістичне оновлення (миттєво змінюємо UI)
+        let newIds;
+        if (isCurrentlyLiked) {
+            newIds = likedTrackIds.filter(id => id !== trackId);
         } else {
-            await sound.playAsync();
+            newIds = [...likedTrackIds, trackId];
+        }
+        setLikedTrackIds(newIds);
+
+        // Відправляємо запит на сервер
+        try {
+            if (isCurrentlyLiked) {
+                await unlikeTrack(trackId);
+            } else {
+                await likeTrack(trackId);
+            }
+        } catch (error) {
+            console.log("Like error:", error);
+            // Якщо помилка - повертаємо назад (можна додати, якщо треба)
         }
     };
 
-    // 3. NEXT / PREV
-    const handleNext = () => {
-        if (!queue.length) return; // 👈 playlist -> queue
-        const currentIndex = queue.findIndex(t => (t.id || t._id) === (currentTrack.id || currentTrack._id)); // 👈 playlist -> queue
-        if (currentIndex < queue.length - 1) { // 👈 playlist -> queue
-            setCurrentTrack(queue[currentIndex + 1]); // 👈 playlist -> queue
-        } else {
-            setIsPlaying(false);
-        }
-    };
+     //NOTIFICATIONS
+    // 👇 ОНОВЛЕНА ФУНКЦІЯ (Анімація знизу)
+    const showNotification = (message, actionLabel = null, action = null) => {
+        setNotification({ message, actionLabel, action });
 
-    const handlePrev = () => {
-        if (!queue.length) return; // 👈 playlist -> queue
-        const currentIndex = queue.findIndex(t => (t.id || t._id) === (currentTrack.id || currentTrack._id)); // 👈 playlist -> queue
-        if (currentIndex > 0) {
-            setCurrentTrack(queue[currentIndex - 1]); // 👈 playlist -> queue
-        }
-    };
-
-    const playFromQueue = (track) => {
-        setCurrentTrack(track);
+        Animated.sequence([
+            // 1. Виїжджає знизу (до позиції 0 - це "рідна" позиція, задана в стилях)
+            Animated.timing(notifAnim, {
+                toValue: 0,
+                duration: 400,
+                easing: Easing.out(Easing.back(1.5)),
+                useNativeDriver: true,
+            }),
+            // 2. Висить 3 секунди
+            Animated.delay(3000),
+            // 3. Ховається назад вниз
+            Animated.timing(notifAnim, {
+                toValue: 200,
+                duration: 300,
+                easing: Easing.in(Easing.cubic),
+                useNativeDriver: true,
+            })
+        ]).start(() => {
+            setNotification(null);
+        });
     };
 
     // 4. SEEKING
@@ -242,21 +355,26 @@ export default function PlayerScreen({ navigation, route }) {
 
     const handleGrant = (e) => {
         isSeeking.current = true;
-        const seekPos = calculateSeekPosition(e);
-        setPosition(seekPos);
+        usePlayerStore.setState({ position: calculateSeekPosition(e) });
     };
 
     const handleMove = (e) => {
-        const seekPos = calculateSeekPosition(e);
-        setPosition(seekPos);
+        usePlayerStore.setState({ position: calculateSeekPosition(e) });
     };
 
     const handleRelease = async (e) => {
-        if (!sound) return;
         const seekPos = calculateSeekPosition(e);
-        setPosition(seekPos);
-        await sound.setPositionAsync(seekPos);
+        await seekTo(seekPos);
         isSeeking.current = false;
+    };
+
+
+    const handlePlayNext = () => {
+        closeModal();
+        const newQueue = [...queue];
+        newQueue.splice(currentIndex + 1, 0, currentTrack);
+        setQueue(newQueue, currentIndex); // 👈 Оновлюємо глобально
+        showNotification('This song will play next');
     };
 
     const handleStartRadio = async () => {
@@ -289,14 +407,11 @@ export default function PlayerScreen({ navigation, route }) {
             }));
 
             // Створюємо нову чергу: Поточний трек + Радіо
-            const newQueue = [currentTrack, ...formattedQueue];
-
-            console.log("📻 Updating queue. New size:", newQueue.length);
-            setQueue(newQueue);
+            setQueue([currentTrack, ...formattedQueue], 0);
 
             // 👇 ВІДКРИЙ ЧЕРГУ АВТОМАТИЧНО, ЩОБ ПОБАЧИТИ ЗМІНИ
             setTimeout(() => {
-                setQueueVisible(true);
+                openModal('queue');
             }, 500);
 
             Alert.alert("Radio Started", `Added ${radioTracks.length} tracks!`);
@@ -308,27 +423,110 @@ export default function PlayerScreen({ navigation, route }) {
     };
 
 
-    // 5. LIKE / UNLIKE HANDLER
-    const handleLikeToggle = async () => {
-        const trackId = currentTrack.id || currentTrack._id;
-        if (!trackId) return;
-
-        try {
-            if (isLiked) {
-                await unlikeTrack(trackId);
-                setIsLiked(false);
-            } else {
-                await likeTrack(trackId);
-                setIsLiked(true);
-            }
-        } catch (error) {
-            console.error("Like toggle error:", error);
-        }
-    };
 
     const handleViewInfo = () => {
         setModalVisible(false);
         navigation.navigate('SongInfo', { track: currentTrack });
+    };
+
+
+    // --- Modals animations---
+    // Початкова позиція шторки — за межами екрану знизу
+    const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
+
+    const openModal = (type) => {
+        if (type === 'menu') setModalVisible(true);
+        if (type === 'queue') setQueueVisible(true);
+        if (type === 'related') setRelatedVisible(true);
+
+        Animated.timing(slideAnim, {
+            toValue: 0,
+            duration: 300,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+        }).start();
+    };
+
+    // 👇 ВИПРАВЛЕНО: Прибираємо рекурсію в start callback
+    const closeModal = () => {
+        Animated.timing(slideAnim, {
+            toValue: SCREEN_HEIGHT,
+            duration: 250,
+            easing: Easing.in(Easing.cubic),
+            useNativeDriver: true,
+        }).start(() => {
+            setModalVisible(false);
+            setQueueVisible(false);
+            setRelatedVisible(false);
+        });
+    };
+
+
+
+    // --- MENU ACTIONS ---
+
+    const handleViewArtist = () => {
+        closeModal();
+        // Перевіряємо, чи є дані артиста
+        const artistData = currentTrack.artist || {};
+        // Іноді ID артиста лежить в ownerId, якщо це трек
+        const artistId = artistData.id || artistData._id || currentTrack.ownerId;
+
+        if (artistId) {
+            navigation.navigate('ArtistProfile', {
+                artist: {
+                    ...artistData,
+                    id: artistId,
+                    name: artistData.name || currentTrack.artistName || 'Unknown'
+                }
+            });
+        } else {
+            Alert.alert("Info", "Artist information is missing");
+        }
+    };
+
+    const handleViewAlbum = () => {
+        closeModal()
+
+        console.log("🔍 TRACK DATA:", currentTrack); // Дивимось в консоль, що прийшло
+
+        // Перевіряємо всі можливі варіанти, як бекенд може назвати це поле
+        const albumId =
+            currentTrack.albumId ||       // Стандарт
+            currentTrack.AlbumId ||       // C# PascalCase
+            currentTrack.album?.id ||     // Вкладений об'єкт
+            currentTrack.album?._id;      // MongoDB стиль
+
+        console.log("💿 FOUND ALBUM ID:", albumId);
+
+        // Перевірка на валідність ID (щоб не було null або нулів)
+        if (albumId && albumId !== '00000000-0000-0000-0000-000000000000') {
+            navigation.navigate('AlbumDetail', { id: albumId });
+        } else {
+            Alert.alert("Info", "This track appears to be a single (No Album info found)");
+        }
+    };
+    const handleAddToQueue = () => {
+        closeModal();
+        addToQueue(currentTrack); // 👈 З Zustand
+        showNotification('Added to queue', 'View', () => openModal('queue'));
+    };
+
+    const handleClearQueue = () => {
+        closeModal();
+        clearQueue(); // 👈 З Zustand
+        Alert.alert("Queue", "Queue cleared");
+    };
+
+    const handleDownload = () => {
+        // Логіка скачування...
+        showNotification('Downloading...', 'View', () => console.log('View Downloads'));
+    };
+
+    const handleAddToPlaylist = () => {
+        closeModal();
+        // Тут поки заглушка, або навігація на екран вибору плейлиста, якщо він є
+        Alert.alert("Playlist", "Function coming soon!");
     };
 
     const formatTime = (millis) => {
@@ -362,12 +560,29 @@ export default function PlayerScreen({ navigation, route }) {
         }
     }, [textWidth, containerWidth, trackTitle]);
 
-// 👇 ОНОВЛЕНА ФУНКЦІЯ
     const renderIcon = (iconName, fallbackText, style, tintColor = '#000000') => {
-        // Перевіряємо, чи є посилання на іконку
-        if (icons[iconName]) {
-            // Якщо tintColor передано (не null і не undefined), додаємо його до стилів.
-            // Якщо tintColor === null, ми його НЕ додаємо, і картинка лишається кольоровою.
+        const iconUrl = icons[iconName];
+
+        if (iconUrl) {
+            // ... (тут твій код перевірки svg/png залишається без змін) ...
+            const isSvg = iconName.toLowerCase().endsWith('.svg') || iconUrl.toLowerCase().endsWith('.svg');
+
+            if (isSvg) {
+                const flatStyle = StyleSheet.flatten(style);
+                const width = flatStyle?.width || 24;
+                const height = flatStyle?.height || 24;
+
+                return (
+                    <ColoredSvg
+                        key={iconName} // Важливо для оновлення
+                        uri={iconUrl}
+                        width={width}
+                        height={height}
+                        color={tintColor}
+                    />
+                );
+            }
+            // ... (код для PNG залишається) ...
             const imageStyle = [style];
             if (tintColor) {
                 imageStyle.push({ tintColor: tintColor });
@@ -375,14 +590,15 @@ export default function PlayerScreen({ navigation, route }) {
 
             return (
                 <Image
-                    source={{ uri: icons[iconName] }}
+                    source={{ uri: iconUrl }}
                     style={imageStyle}
                     resizeMode="contain"
                 />
             );
         }
-        // Фолбек, якщо іконки немає
-        return <Text style={[styles.headerText, { fontSize: 14, color: tintColor || '#F5D8CB' }]}>{fallbackText}</Text>;
+
+        const flatStyle = StyleSheet.flatten(style);
+        return <View style={{ width: flatStyle?.width || 24, height: flatStyle?.height || 24 }} />;
     };
     // --- HELPER COMPONENTS ---
     const TopAction = ({ label, iconName }) => (
@@ -406,81 +622,6 @@ export default function PlayerScreen({ navigation, route }) {
         </TouchableOpacity>
     );
 
-// --- QUEUE ITEM ---
-        const QueueItem = ({ item }) => {
-            const isCurrent = (item.id || item._id) === (currentTrack.id || currentTrack._id);
-            const itemCoverUrl = getTrackCoverUrl(item);
-
-            return (
-                <TouchableOpacity
-                    style={styles.queueItemContainer}
-                    onPress={() => playFromQueue(item)}
-                >
-                    {/* ВІНІЛОВИЙ БЛОК */}
-                    <View style={styles.vinylContainer}>
-
-                        {/* 1. ЛОГІКА ОБКЛАДИНКИ: */}
-                        {/* Якщо є URL — показуємо картинку. Якщо ні — твою іконку через renderIcon */}
-                        {itemCoverUrl ? (
-                            <Image
-                                source={{ uri: itemCoverUrl }}
-                                style={styles.innerCover}
-                                resizeMode="cover"
-                            />
-                        ) : (
-                            // ФОЛБЕК (ЗАГЛУШКА)
-                            <View style={[styles.innerCover, { backgroundColor: '#2A1414', justifyContent: 'center', alignItems: 'center' }]}>
-                                {renderIcon('VOX.png', '♪', { width: 14, height: 14 }, '#FFFFFF')}
-                            </View>
-                        )}
-
-                        {/* 2. Платівка (Верхній шар) */}
-                        <View style={styles.vinylOverlayWrapper}>
-                            {renderIcon('plastinka.png', '', { width: 50, height: 50 }, null)}
-                        </View>
-                    </View>
-
-                    {/* ТЕКСТОВА ЧАСТИНА */}
-                    <View style={styles.queueInfo}>
-                        <Text
-                            style={[
-                                styles.queueTitle,
-                                isCurrent && styles.queueTitleActive
-                            ]}
-                            numberOfLines={1}
-                        >
-                            {item.title || 'No Title'}
-                        </Text>
-                        <Text style={styles.queueArtist} numberOfLines={1}>
-                            {item.artist?.name || 'Unknown'}
-                        </Text>
-                    </View>
-
-                    {/* ПРАВА ЧАСТИНА (Кнопки) */}
-                    <View style={styles.queueActions}>
-                        {isCurrent && (
-                            <TouchableOpacity
-                                style={styles.miniPlayButton}
-                                onPress={handlePlayPause}
-                                hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}
-                            >
-                                {renderIcon(
-                                    isPlaying ? 'pause.png' : 'play.png',
-                                    '',
-                                    { width: 12, height: 12 },
-                                    '#300C0A'
-                                )}
-                            </TouchableOpacity>
-                        )}
-
-                        <TouchableOpacity style={styles.heartButton}>
-                            {renderIcon('hurt.png', '♡', { width: 35, height: 35 }, '#F5D8CB')}
-                        </TouchableOpacity>
-                    </View>
-                </TouchableOpacity>
-            );
-        };
-
 
     return (
         <View style={styles.container}>
@@ -492,13 +633,15 @@ export default function PlayerScreen({ navigation, route }) {
             />
 
             {/* 1. ФОН (Абсолютне позиціювання) */}
-            {/* Це зображення ігнорує всі відступи і займає весь фізичний екран */}
-            {icons['background.png'] ? (
-                <Image
-                    source={{ uri: icons['playerbg.png'] }}
-                    style={styles.fixedBackground}
-                    resizeMode="cover"
-                />
+            {icons['background.svg'] ? (
+                <View style={styles.fixedBackground}>
+                    <ColoredSvg
+                        uri={icons['background.svg']}
+                        width={SCREEN_WIDTH}
+                        height={SCREEN_HEIGHT}
+                        color={null}
+                    />
+                </View>
             ) : null}
 
             {/* Затемнення поверх картинки */}
@@ -514,7 +657,7 @@ export default function PlayerScreen({ navigation, route }) {
                         onPress={() => navigation.goBack()}
                         hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
                     >
-                        {renderIcon('arrow-left.png', 'Back', { width: 24, height: 24 }, '#F5D8CB')}
+                        {renderIcon('arrow-left.svg', 'Back', { width: 24, height: 24 }, '#F5D8CB')}
                     </TouchableOpacity>
 
                     <View style={{ flex: 1 }} />
@@ -522,27 +665,39 @@ export default function PlayerScreen({ navigation, route }) {
                     <TouchableOpacity
                         style={{ marginRight: 20 }}
                         hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
-                        onPress={handleLikeToggle}
+                        // Використовуємо універсальну функцію
+                        onPress={() => handleItemLikeToggle(currentTrack)}
                     >
-                        {isLiked
-                            ? renderIcon('added.png', 'Lik', { width: 24, height: 24 }, '#F5D8CB')
-                            : renderIcon('add to another playlist.png', 'Lik', { width: 24, height: 24 }, '#F5D8CB')
+                        {/* Перевіряємо наявність в масиві */}
+                        {likedTrackIds.includes(currentTrack.id || currentTrack._id)
+                            ? renderIcon('added.svg', 'Lik', { width: 24, height: 24 }, '#F5D8CB')
+                            : renderIcon('add to another playlist.svg', 'Lik', { width: 24, height: 24 }, '#F5D8CB')
                         }
                     </TouchableOpacity>
                     <TouchableOpacity
                         hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
-                        onPress={() => setModalVisible(true)}
+                        onPress={() => openModal('menu')}
                     >
-                        {renderIcon('more.png', '•••', { width: 24, height: 24 }, '#F5D8CB')}
+                        {renderIcon('more.svg', '•••', { width: 24, height: 24 }, '#F5D8CB')}
                     </TouchableOpacity>
                 </View>
 
                 {/* ALBUM COVER (CENTER) */}
                 <View style={styles.albumCoverPlaceholder}>
-                    {renderIcon('plastinka.png', 'No Vinyl', styles.vinylBackground, null)}
+                    {/* 1. Шар Вінілу (Фон) */}
+                    <View style={styles.mainVinylLayer}>
+                        {renderIcon(
+                            'vinyl.svg',
+                            'No Vinyl',
+                            { width: SCREEN_WIDTH * 0.8, height: SCREEN_WIDTH * 0.8 }, // Передаємо тільки розміри
+                            null
+                        )}
+                    </View>
+
+                    {/* 2. Шар Обкладинки (Центр) */}
                     {coverUrl ? (
                         <Image
-                            source={{ uri: coverUrl }}
+                            source={{ uri: coverUrl, cache: 'force-cache' }}
                             style={styles.albumCoverImage}
                         />
                     ) : null}
@@ -602,32 +757,29 @@ export default function PlayerScreen({ navigation, route }) {
 
                 {/* CONTROLS */}
                 <View style={styles.controlsSection}>
+                    {/* Shuffle Button (Ліва кнопка) */}
                     <TouchableOpacity hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                        {renderIcon('shuffle.png', 'Mix', { width: 24, height: 24 }, '#F5D8CB')}
+                        {renderIcon('shuffle.svg', 'Mix', { width: 24, height: 24 }, '#F5D8CB')}
                     </TouchableOpacity>
 
-                    {/* CAPSULE CONTROLS with LIQUID GLASS */}
+                    {/* CAPSULE CONTROLS with LIQUID GLASS (Центральна пігулка) */}
                     <View style={styles.mainControlsWrapper}>
+                        {/* Зовнішній градієнт, що імітує світло (Light -45°) */}
                         <LinearGradient
-                            colors={[
-                                'rgba(255, 255, 255, 0.0)',  // BL: Прозорий
-                                'rgba(255, 255, 255, 0.0)',  // Center: Білий блік
-                                'rgba(255, 255, 255, 0.0)',
-                                'rgba(255, 255, 255, 0.0)'   // TR: Прозорий
-                            ]}
-                            locations={[0, 0.3, 0.7, 1]}
-                            start={{ x: 0, y: 1 }}
-                            end={{ x: 1, y: 0 }}
+                            colors={['rgba(255, 255, 255, 0.15)', 'rgba(255, 255, 255, 0.1)', 'rgba(255, 255, 255, 0.05)']}
+                            locations={[0, 0.2, 1]}
+                            start={{ x: 0.5, y: 0 }}
+                            end={{ x: 0.5, y: 1 }}
                             style={{
                                 width: '100%',
                                 height: 60,
                                 borderRadius: 30,
-                                padding: 1.2, // Товщина рамки
+                                padding: 1.5,
                             }}
                         >
                             <BlurView
-                                intensity={20}
-                                tint="dark"
+                                intensity={15}
+                                tint="light"
                                 style={styles.controlsCapsule}
                             >
                                 {/* Кольоровий шар (Sandwich method) */}
@@ -636,159 +788,330 @@ export default function PlayerScreen({ navigation, route }) {
                                     { backgroundColor: 'rgba(48, 12, 10, 0.1)' }
                                 ]} />
 
-                                {/* Вміст пігулки (Кнопки) */}
+                                {/* Вміст пігулки (Кнопки Prev/Next) */}
                                 <View style={styles.controlsContent}>
-                                    <TouchableOpacity onPress={handlePrev} hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}>
-                                        {renderIcon('previous.png', 'Prev', { width: 28, height: 28 }, '#F5D8CB')}
+                                    <TouchableOpacity onPress={playPrev} hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}>
+                                        {renderIcon('previous.svg', 'Prev', { width: 28, height: 28 }, '#F5D8CB')}
                                     </TouchableOpacity>
 
                                     {/* Пусте місце по центру для кнопки Play */}
                                     <View style={{ width: 60 }} />
 
-                                    <TouchableOpacity onPress={handleNext} hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}>
-                                        {renderIcon('next.png', 'Next', { width: 28, height: 28 }, '#F5D8CB')}
+                                    <TouchableOpacity onPress={playNext} hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}>
+                                        {renderIcon('next.svg', 'Next', { width: 28, height: 28 }, '#F5D8CB')}
                                     </TouchableOpacity>
                                 </View>
                             </BlurView>
                         </LinearGradient>
 
-                        {/* PLAY BUTTON  */}
+                        {/* PLAY BUTTON (Лежить поверх пігулки) */}
                         <TouchableOpacity
                             style={styles.playCircle}
                             activeOpacity={0.8}
-                            onPress={handlePlayPause}
+                            onPress={togglePlay}
                         >
                             {isPlaying
-                                ? renderIcon('pause.png', '||', { width: 32, height: 32 }, '#300C0A')
-                                : renderIcon('play.png', '>', { width: 32, height: 32 }, '#300C0A')
+                                ? renderIcon('pause.svg', '||', { width: 32, height: 32 }, '#300C0A')
+                                : renderIcon('play.svg', '>', { width: 32, height: 32 }, '#300C0A')
                             }
                         </TouchableOpacity>
                     </View>
 
+                    {/* Repeat Button (Права кнопка) */}
                     <TouchableOpacity hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                        {renderIcon('previous-1.png', 'Rep', { width: 24, height: 24 }, '#F5D8CB')}
+                        {renderIcon('previous-1.svg', 'Rep', { width: 24, height: 24 }, '#F5D8CB')}
                     </TouchableOpacity>
                 </View>
 
                 {/* FOOTER */}
                 <View style={styles.footer}>
-                    <TouchableOpacity onPress={() => setQueueVisible(true)}>
+                    <TouchableOpacity onPress={() => openModal('queue')}>
                         <Text style={styles.footerTab}>Queue</Text>
                     </TouchableOpacity>
                     <TouchableOpacity>
                         <Text style={styles.footerTab}>Lyrics</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity>
+                    <TouchableOpacity onPress={() => openModal('related')}>
                         <Text style={styles.footerTab}>Related</Text>
                     </TouchableOpacity>
                 </View>
             </View>
 
-            {/* --- MENU MODAL (Liquid Glass) --- */}
+            {/* --- NOTIFICATION PILL --- */}
+            <Animated.View style={[styles.notificationPill, { transform: [{ translateY: notifAnim }] }]}>
+                <Text style={styles.notificationText}>
+                    {notification?.message}
+                </Text>
+
+                {/* Якщо є кнопка дії (View) */}
+                {notification?.actionLabel && (
+                    <TouchableOpacity onPress={notification.action}>
+                        <Text style={styles.notificationAction}>
+                            {notification.actionLabel}
+                        </Text>
+                    </TouchableOpacity>
+                )}
+            </Animated.View>
+
+            {/* --- MENU MODAL (Новий стиль) --- */}
             <Modal
-                animationType="slide"
+                animationType="fade"
                 transparent={true}
                 visible={modalVisible}
-                onRequestClose={() => setModalVisible(false)}
+                onRequestClose={closeModal}
             >
-                <TouchableWithoutFeedback onPress={() => setModalVisible(false)}>
+                <TouchableWithoutFeedback onPress={closeModal}>
                     <View style={styles.modalOverlay}>
                         <TouchableWithoutFeedback>
-                            {/* 1. Градієнтна рамка (акцент на верхню частину) */}
-                            <LinearGradient
-                                colors={['rgba(48, 12, 10, 0.7)', 'rgba(48, 12, 10, 0.7)', 'rgba(48, 12, 10, 0.7)']}
-                                locations={[0, 0.2, 1]}
-                                start={{ x: 0.5, y: 0 }} // Верх
-                                end={{ x: 0.5, y: 1 }}   // Низ
-                                style={styles.modalWrapperGradient}
+                            <Animated.View
+                                style={[
+                                    styles.modalSheetWrapper,
+                                    { height: SCREEN_HEIGHT * 0.7,
+                                        transform: [{ translateY: slideAnim }] }
+                                ]}
                             >
-                                {/* 2. BlurView + Колір */}
-                                <BlurView intensity={30} tint="dark" style={styles.modalGlassContainer}>
-                                    {/* Кольоровий шар */}
-                                    <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(48, 12, 10, 0.7)' }]} />
+                                <LinearGradient
+                                    colors={['rgba(255, 255, 255, 0.15)', 'rgba(255, 255, 255, 0.1)', 'rgba(255, 255, 255, 0.05)']}
+                                    locations={[0, 0.2, 1]}
+                                    start={{ x: 0.5, y: 0 }}
+                                    end={{ x: 0.5, y: 1 }}
+                                    style={styles.modalBorderGradient}
+                                >
+                                    <BlurView intensity={40} tint="dark" style={styles.modalGlassContainer}>
+                                        <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(30, 10, 8, 0.85)' }]} />
 
-                                    {/* 3. Контент (колишній modalContent) */}
-                                    <View style={styles.modalInnerContent}>
-                                        <View style={styles.modalIndicator} />
-                                        <View style={styles.modalTopActions}>
-                                            <TopAction label="Download" iconName="download.png" />
-                                            <TopAction label="Share" iconName="share.png" />
-                                            <TopAction label="Play next" iconName="play next.png" />
+                                        {/* ВМІСТ МЕНЮ */}
+                                        <View style={styles.modalInnerContent}>
+                                            <View style={styles.modalIndicator} />
+
+                                            <View style={styles.modalTopActions}>
+                                                <TouchableOpacity onPress={handleDownload}>
+                                                    <TopAction label="Download" iconName="download.svg" />
+                                                </TouchableOpacity>
+
+                                                <TouchableOpacity onPress={() => console.log('Share')}>
+                                                    <TopAction label="Share" iconName="share.svg" />
+                                                </TouchableOpacity>
+
+                                                <TouchableOpacity onPress={handlePlayNext}>
+                                                    <TopAction label="Play next" iconName="play next.svg" />
+                                                </TouchableOpacity>
+                                            </View>
+
+                                            <ScrollView style={styles.modalScroll} showsVerticalScrollIndicator={false}>
+                                                <MenuItem
+                                                    label="Add to another playlist"
+                                                    iconName="add to another playlist.svg"
+                                                    onPress={handleAddToPlaylist}
+                                                />
+                                                <MenuItem
+                                                    label="Add to queue"
+                                                    iconName="add to queue.svg"
+                                                    onPress={handleAddToQueue}
+                                                />
+                                                <MenuItem
+                                                    label="Cancel queue"
+                                                    iconName="cancel queue.svg"
+                                                    onPress={handleClearQueue}
+                                                />
+                                                <MenuItem
+                                                    label="View album"
+                                                    iconName="album.svg"
+                                                    onPress={handleViewAlbum}
+                                                />
+                                                <MenuItem
+                                                    label="View song information"
+                                                    iconName="song information.svg"
+                                                    onPress={handleViewInfo}
+                                                />
+                                                <MenuItem
+                                                    label="View the artist"
+                                                    iconName="artist.svg"
+                                                    onPress={handleViewArtist}
+                                                />
+                                                <MenuItem
+                                                    label="Go to radio based on song"
+                                                    iconName="radio.svg"
+                                                    onPress={handleStartRadio}
+                                                />
+                                            </ScrollView>
                                         </View>
-                                        <ScrollView style={styles.modalScroll} showsVerticalScrollIndicator={false}>
-                                            <MenuItem label="Add to another playlist" iconName="add to another playlist.png" />
-                                            <MenuItem label="Add to queue" iconName="add to queue.png" />
-                                            <MenuItem label="Cancel queue" iconName="cancel queue.png" />
-                                            <MenuItem label="View album" iconName="album.png" />
-                                            <MenuItem
-                                                label="View song information"
-                                                iconName="song information.png"
-                                                onPress={handleViewInfo}
-                                            />
-                                            <MenuItem label="View the artist" iconName="artist.png" />
-                                            <MenuItem
-                                                label="Go to radio based on song"
-                                                iconName="radio.png"
-                                                onPress={handleStartRadio}
-                                            />
-                                        </ScrollView>
-                                    </View>
-                                </BlurView>
-                            </LinearGradient>
+                                    </BlurView>
+                                </LinearGradient>
+                            </Animated.View>
                         </TouchableWithoutFeedback>
                     </View>
                 </TouchableWithoutFeedback>
             </Modal>
 
-            {/* --- QUEUE MODAL (Liquid Glass) --- */}
+            {/* --- QUEUE MODAL --- */}
             <Modal
-                animationType="slide"
+                animationType="fade"
                 transparent={true}
                 visible={queueVisible}
-                onRequestClose={() => setQueueVisible(false)}
+                onRequestClose={closeModal}
             >
-                <TouchableWithoutFeedback onPress={() => setQueueVisible(false)}>
+                <TouchableWithoutFeedback onPress={closeModal}>
                     <View style={styles.modalOverlay}>
                         <TouchableWithoutFeedback>
-                            {/* 1. Градієнтна рамка */}
-                            <LinearGradient
-                                colors={['rgba(48, 12, 10, 0.7)', 'rgba(48, 12, 10, 0.7)', 'rgba(48, 12, 10, 0.7)']}
-                                locations={[0, 0.2, 1]}
-                                start={{ x: 0.5, y: 0 }}
-                                end={{ x: 0.5, y: 1 }}
-                                style={styles.modalWrapperGradient}
+                            <Animated.View
+                                style={[
+                                    styles.modalSheetWrapper,
+                                    {
+                                        height: SCREEN_HEIGHT * 0.7,
+                                        transform: [{ translateY: slideAnim }]
+                                    }
+                                ]}
                             >
-                                {/* 2. BlurView + Колір */}
-                                <BlurView intensity={30} tint="dark" style={styles.modalGlassContainer}>
-                                    {/* Кольоровий шар */}
-                                    <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(48, 12, 10, 0.7)' }]} />
+                                <LinearGradient
+                                    colors={['rgba(255, 255, 255, 0.15)', 'rgba(255, 255, 255, 0.1)', 'rgba(255, 255, 255, 0.05)']}
+                                    locations={[0, 0.2, 1]}
+                                    start={{ x: 0.5, y: 0 }}
+                                    end={{ x: 0.5, y: 1 }}
+                                    style={styles.modalBorderGradient}
+                                >
+                                    <BlurView intensity={40} tint="dark" style={styles.modalGlassContainer}>
+                                        <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(30, 10, 8, 0.85)' }]} />
 
-                                    {/* 3. Контент (колишній queueModalContent) */}
-                                    <View style={styles.queueInnerContent}>
-                                        <View style={styles.queueHeader}>
-                                            <Text style={styles.queueHeaderTitle}>Queue</Text>
-                                        </View>
-                                        <ScrollView
-                                            style={styles.modalScroll}
-                                            contentContainerStyle={{ paddingBottom: 40 }}
-                                            showsVerticalScrollIndicator={false}
-                                        >
-                                            {queue.length > 0 ? (
-                                                queue.map((item, index) => (  // ✅ Використовуємо queue
-                                                    <View key={item.id || item._id || index}>
-                                                        <QueueItem item={item} />
-                                                        {index < queue.length - 1 && ( // ✅ Використовуємо queue
-                                                            <View style={styles.queueSeparator} />
-                                                        )}
+                                        {/* ВМІСТ ЧЕРГИ (ВИПРАВЛЕНО) */}
+                                        <View style={styles.queueInnerContent}>
+                                            <View style={[styles.modalIndicator, { alignSelf: 'center', marginTop: 10 }]} />
+                                            <View style={styles.queueHeader}>
+                                                <Text style={styles.queueHeaderTitle}>Queue</Text>
+                                            </View>
+
+                                            {/* 👇 ОНОВЛЕНИЙ FLATLIST БЕЗ ПОМИЛОК */}
+                                            <FlatList
+                                                data={queue}
+                                                keyExtractor={(item) => item.id || item._id}
+
+                                                renderItem={({ item, index }) => (
+                                                    <View>
+                                                        <QueueItem
+                                                            item={item}
+                                                            currentTrack={currentTrack}
+                                                            isPlaying={isPlaying}
+                                                            playFromQueue={(track) => { const i = queue.findIndex(t => t.id === track.id); if(i !== -1) setQueue(queue, i); }}
+                                                            handlePlayPause={togglePlay}
+                                                            renderIcon={renderIcon}
+
+                                                            // 👇 НОВІ ПРОПСИ
+                                                            isLiked={likedTrackIds.includes(item.id || item._id)}
+                                                            onLike={handleItemLikeToggle}
+                                                        />
+                                                        <View style={styles.queueSeparator} />
                                                     </View>
-                                                ))
-                                            ) : (
-                                                <Text style={styles.emptyQueueText}>No tracks in queue</Text>
-                                            )}
-                                        </ScrollView>
-                                    </View>
-                                </BlurView>
-                            </LinearGradient>
+                                                )}
+                                                contentContainerStyle={{ paddingBottom: 40 }}
+                                                showsVerticalScrollIndicator={false}
+                                                initialNumToRender={10}
+                                                maxToRenderPerBatch={10}
+                                                windowSize={5}
+                                                removeClippedSubviews={true}
+                                                // 👇 Правильний спосіб показати текст, якщо пусто
+                                                ListEmptyComponent={
+                                                    <Text style={styles.emptyQueueText}>No tracks in queue</Text>
+                                                }
+                                            />
+                                        </View>
+                                    </BlurView>
+                                </LinearGradient>
+                            </Animated.View>
+                        </TouchableWithoutFeedback>
+                    </View>
+                </TouchableWithoutFeedback>
+            </Modal>
+            {/* --- RELATED MODAL (NEW) --- */}
+            <Modal
+                animationType="fade"
+                transparent={true}
+                visible={relatedVisible}
+                onRequestClose={closeModal}
+            >
+                <TouchableWithoutFeedback onPress={closeModal}>
+                    <View style={styles.modalOverlay}>
+                        <TouchableWithoutFeedback>
+                            <Animated.View
+                                style={[
+                                    styles.modalSheetWrapper,
+                                    {
+                                        height: SCREEN_HEIGHT * 0.7, // Висота як у Queue
+                                        transform: [{ translateY: slideAnim }]
+                                    }
+                                ]}
+                            >
+                                <LinearGradient
+                                    colors={['rgba(255, 255, 255, 0.15)', 'rgba(255, 255, 255, 0.1)', 'rgba(255, 255, 255, 0.05)']}
+                                    locations={[0, 0.2, 1]}
+                                    start={{ x: 0.5, y: 0 }}
+                                    end={{ x: 0.5, y: 1 }}
+                                    style={styles.modalBorderGradient}
+                                >
+                                    <BlurView intensity={40} tint="dark" style={styles.modalGlassContainer}>
+                                        <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(30, 10, 8, 0.85)' }]} />
+
+                                        {/* ВМІСТ RELATED */}
+                                        <View style={styles.queueInnerContent}>
+                                            <View style={[styles.modalIndicator, { alignSelf: 'center', marginTop: 10 }]} />
+
+                                            <View style={styles.queueHeader}>
+                                                <Text style={styles.queueHeaderTitle}>Related</Text>
+                                            </View>
+
+                                            <ScrollView
+                                                style={{ width: '100%' }}
+                                                showsVerticalScrollIndicator={false}
+                                                contentContainerStyle={{ paddingBottom: 40 }}
+                                            >
+                                                <Text style={styles.sectionTitle}>You may also like</Text>
+                                                <View>
+                                                    {recommendations.slice(0, 3).map((item, index) => (
+                                                        <View key={`${item.id}-${index}`}>
+                                                            <QueueItem
+                                                                item={item}
+                                                                currentTrack={currentTrack}
+                                                                isPlaying={false}
+                                                                playFromQueue={handleRecommendationPlay}
+                                                                handlePlayPause={() => handleRecommendationPlay(item)}
+                                                                renderIcon={renderIcon}
+                                                                hidePlayButton={true}
+
+                                                                // 👇 НОВІ ПРОПСИ
+                                                                isLiked={likedTrackIds.includes(item.id)}
+                                                                onLike={handleItemLikeToggle}
+                                                            />
+                                                            {index < 2 && <View style={styles.queueSeparator} />}
+                                                        </View>
+                                                    ))}
+                                                </View>
+
+                                                {/* SECTION 2: Related artists */}
+                                                <Text style={[styles.sectionTitle, { marginTop: 30 }]}>Related artists</Text>
+                                                <View style={styles.artistsRow}>
+                                                    {relatedArtists.map((artist, index) => (
+                                                        <TouchableOpacity
+                                                            key={artist.id || index}
+                                                            style={styles.artistItem}
+                                                            onPress={() => {
+                                                                closeModal();
+                                                                navigation.navigate('ArtistProfile', { artist });
+                                                            }}
+                                                        >
+                                                            <Image
+                                                                source={{ uri: getAvatar(artist.id) }}
+                                                                style={styles.artistAvatar}
+                                                            />
+                                                            <Text style={styles.artistName} numberOfLines={1}>
+                                                                {artist.name}
+                                                            </Text>
+                                                        </TouchableOpacity>
+                                                    ))}
+                                                </View>
+                                            </ScrollView>
+                                        </View>
+                                    </BlurView>
+                                </LinearGradient>
+                            </Animated.View>
                         </TouchableWithoutFeedback>
                     </View>
                 </TouchableWithoutFeedback>
@@ -799,7 +1122,7 @@ export default function PlayerScreen({ navigation, route }) {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#300C0A',
+        backgroundColor: '#160607',
     },
 
     fixedBackground: {
@@ -810,7 +1133,6 @@ const styles = StyleSheet.create({
         height: SCREEN_HEIGHT, // Жорстко прив'язуємо до розміру екрану
         resizeMode: 'cover',   // Розтягуємо зі збереженням пропорцій
         zIndex: 0,
-        // transform: [{ scale: 1.27 }]
     },
 
     contentContainer: {
@@ -833,26 +1155,35 @@ const styles = StyleSheet.create({
         fontWeight: '600',
         color: '#F5D8CB',
     },
+    /* --- ГОЛОВНИЙ ВІНІЛ (ВИПРАВЛЕНО) --- */
+
+    // Головний контейнер (квадрат по центру екрану)
     albumCoverPlaceholder: {
         width: SCREEN_WIDTH * 0.8,
         height: SCREEN_WIDTH * 0.8,
         justifyContent: 'center',
         alignItems: 'center',
-        position: 'relative',
     },
 
-    vinylBackground: {
+    // Обгортка для SVG вінілу (змушуємо його бути фоном)
+    mainVinylLayer: {
+        position: 'absolute', // Абсолют
+        top: 0,
+        left: 0,
         width: '100%',
         height: '100%',
-        position: 'absolute',
-        zIndex: 1,
+        zIndex: 1, // Нижній шар
+        justifyContent: 'center',
+        alignItems: 'center',
     },
 
+    // Обкладинка (Яблуко по центру)
     albumCoverImage: {
         width: '55%',
         height: '55%',
-        borderRadius: 1000,
-        zIndex: 2,
+        borderRadius: 1000, // Кругла
+        zIndex: 2,          // Верхній шар (щоб лежала НА вінілі)
+        // position: 'absolute' тут не потрібен, бо Flexbox батька вже тримає її в центрі
     },
     textBlock: {
         alignItems: 'center',
@@ -999,20 +1330,31 @@ const styles = StyleSheet.create({
     /* --- MODAL COMMON --- */
     modalOverlay: {
         flex: 1,
+        backgroundColor: 'rgba(0, 0, 0, 0.3)', // Затемнення фону (Fade)
         justifyContent: 'flex-end',
     },
-    modalWrapperGradient: {
-        borderTopLeftRadius: 30,
-        borderTopRightRadius: 30,
-        paddingTop: 1.2,         // Рамка зверху
-        paddingHorizontal: 1.2,  // Рамка збоку
-        // Знизу рамка не потрібна, бо воно виходить за екран
+    modalSheetWrapper: {
+        width: '100%',
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: -10 },
+        shadowOpacity: 0.3,
+        shadowRadius: 20,
+        elevation: 15,
+    },
+    modalBorderGradient: {
+        borderTopLeftRadius: 40,
+        borderTopRightRadius: 40,
+        paddingTop: 1.5,
+        paddingHorizontal: 1.5,
+        paddingBottom: 0,
+        flex: 1, // Важливо, щоб градієнт розтягувався
     },
     modalGlassContainer: {
-        borderTopLeftRadius: 30,
-        borderTopRightRadius: 30,
+        borderTopLeftRadius: 40,
+        borderTopRightRadius: 40,
         overflow: 'hidden',
-        height: SCREEN_HEIGHT * 0.75, // Висота переїхала сюди
+        width: '100%',
+        flex: 1, // Важливо для контенту
     },
     modalScroll: {
         width: '100%',
@@ -1020,16 +1362,16 @@ const styles = StyleSheet.create({
 
     /* --- MENU MODAL --- */
     modalInnerContent: {
-        flex: 1,
-        paddingTop: 20,
         paddingHorizontal: 20,
+        paddingTop: 16,
         alignItems: 'center',
+        paddingBottom: 40, // Відступ знизу
     },
     modalIndicator: {
         width: 40,
-        height: 5,
-        backgroundColor: 'rgba(48, 12, 10, 0.7)',
-        borderRadius: 2.5,
+        height: 4,
+        backgroundColor: 'rgba(245, 216, 203, 0.2)',
+        borderRadius: 2,
         marginBottom: 20,
     },
     modalTopActions: {
@@ -1088,8 +1430,7 @@ const styles = StyleSheet.create({
     /* --- QUEUE MODAL --- */
     queueInnerContent: {
         flex: 1,
-        paddingTop: 25,
-        paddingHorizontal: 20,
+        paddingHorizontal: 25,
     },
     queueHeader: {
         alignItems: 'center',
@@ -1118,29 +1459,67 @@ const styles = StyleSheet.create({
     },
     queueSeparator: {
         height: 1,
-        backgroundColor: '#DFDFDF', // Твій колір #F5D8CB з прозорістю
+        backgroundColor: '#DFDFDF',
         width: '100%',
+    },
+
+    /* --- RELATED MODAL STYLES --- */
+    sectionTitle: {
+        fontSize: 18,
+        fontFamily: 'Unbounded-SemiBold',
+        color: '#F5D8CB',
+        marginBottom: 12,
+        marginTop: 10,
+    },
+    artistsRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        marginBottom: 20,
+    },
+    artistItem: {
+        alignItems: 'center',
+        width: '23%', // 4 елементи в ряд
+    },
+    artistAvatar: {
+        width: 64,
+        height: 64,
+        borderRadius: 32, // Круглі
+        backgroundColor: '#2A1414',
+        marginBottom: 8,
+    },
+    artistName: {
+        fontSize: 12,
+        fontFamily: 'Poppins-Regular',
+        color: '#F5D8CB',
+        textAlign: 'center',
     },
 
     /* Вінілова іконка */
     vinylContainer: {
         width: 58,
         height: 58,
-        justifyContent: 'center',
-        alignItems: 'center',
-        position: 'relative',
+        justifyContent: 'center', // Центрує вміст по вертикалі
+        alignItems: 'center',     // Центрує вміст по горизонталі
+        // position: 'relative',  // Можна залишити, але для flexbox це не обов'язково
     },
     innerCover: {
-        width: 25.18,       // Трохи менше за платівку, щоб влазило в центр
+        width: 25.18,
         height: 25.18,
         borderRadius: 14,
-        position: 'absolute',
-        zIndex: 1,       // Шар 1
+        // ❌ position: 'absolute' <-- ПРИБИРАЄМО ЦЕ!
+        // Нехай обкладинка стоїть у центрі "чесним" способом через Flexbox батька.
+        zIndex: 2,
     },
-    vinylOverlay: {
-        width: '100%',
-        height: '100%',
-        zIndex: 2,       // Шар 2 (зверху)
+    // 👇 ЦЬОГО СТИЛЮ НЕ ВИСТАЧАЛО
+    vinylOverlayWrapper: {
+        position: 'absolute', // Абсолютно поверх обкладинки
+        top: 0,
+        left: 0,
+        width: '100%',  // 🔥 ПОВЕРТАЄМО РОЗМІРИ, щоб блок зайняв весь квадрат 58x58
+        height: '100%', // 🔥 ПОВЕРТАЄМО РОЗМІРИ
+        justifyContent: 'center', // Центруємо саму іконку вінілу (50px) всередині цього блоку (58px)
+        alignItems: 'center',
+        zIndex: 0,
     },
 
     /* Текст */
@@ -1180,4 +1559,39 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center',
     },
-});
+    /* --- NOTIFICATION STYLES --- */
+    /* --- NOTIFICATION STYLES (ОНОВЛЕНО) --- */
+    notificationPill: {
+        position: 'absolute',
+        // 👇 ЗМІНЕНО: Замість top використовуємо bottom
+        bottom: Platform.OS === 'ios' ? 50 : 30, // Відступ від низу
+        alignSelf: 'center',
+        width: '90%',
+        backgroundColor: '#F5D8CB',
+        borderRadius: 30,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingHorizontal: 20,
+        paddingVertical: 16,
+        zIndex: 9999,
+        // Тінь
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.25,
+        shadowRadius: 8,
+        elevation: 10,
+    },
+    notificationText: {
+        fontSize: 12,
+        fontFamily: 'Poppins-Regular',
+        color: '#300C0A',
+        flex: 1,
+    },
+    notificationAction: {
+        fontSize: 12,
+        fontFamily: 'Poppins-SemiBold',
+        color: '#300C0A',
+        marginLeft: 10,
+    },
+})

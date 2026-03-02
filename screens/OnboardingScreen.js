@@ -10,7 +10,7 @@ import {
     Animated,
     StatusBar
 } from 'react-native';
-// 👇 1. Не забудь імпортувати scale
+import { SvgUri, SvgXml } from 'react-native-svg';
 import { scale } from '../api/api';
 
 const { width, height } = Dimensions.get('window');
@@ -34,6 +34,57 @@ const DATA = [
     { key: '3', color: '#300C0A' },
     { key: 'right-spacer' },
 ];
+const svgCache = {};
+// 👇 Цей компонент завантажує SVG, чистить, фарбує і КЕШУЄ результат
+const ColoredSvg = ({ uri, width, height, color }) => {
+    const cacheKey = `${uri}_${color || 'original'}`;
+    const [xml, setXml] = useState(svgCache[cacheKey] || null);
+
+    useEffect(() => {
+        let isMounted = true;
+
+        // 1. Якщо у нас вже є правильна картинка в кеші — беремо її і виходимо
+        if (svgCache[cacheKey]) {
+            setXml(svgCache[cacheKey]);
+            return;
+        }
+
+        // 2. Якщо в кеші немає — вантажимо
+        if (uri) {
+            fetch(uri)
+                .then(response => response.text())
+                .then(svgContent => {
+                    if (isMounted) {
+                        let cleanXml = svgContent.replace(/fill=['"]none['"]/gi, '###NONE###');
+
+                        if (color) {
+                            cleanXml = cleanXml.replace(/fill=['"][^'"]*['"]/g, `fill="${color}"`);
+                            cleanXml = cleanXml.replace(/stroke=['"][^'"]*['"]/g, `stroke="${color}"`);
+                        }
+
+                        cleanXml = cleanXml.replace(/###NONE###/g, 'fill="none"');
+
+                        // Зберігаємо в кеш
+                        svgCache[cacheKey] = cleanXml;
+                        setXml(cleanXml);
+                    }
+                })
+                .catch(err => console.log("SVG Error:", err));
+        }
+
+        return () => { isMounted = false; };
+    }, [cacheKey]); // 🔥 Головне: реагуємо на зміну ключа, а не ігноруємо її
+
+    if (!xml) return <View style={{ width, height }} />;
+
+    return (
+        <SvgXml
+            xml={xml}
+            width={width}
+            height={height}
+        />
+    );
+};
 
 export default function OnboardingScreen({ navigation }) {
     const scrollX = useRef(new Animated.Value(0)).current;

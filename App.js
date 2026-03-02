@@ -15,10 +15,12 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { BlurView } from 'expo-blur';
 import * as SplashScreen from 'expo-splash-screen';
 import { useFonts } from 'expo-font';
+import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+
 
 SplashScreen.preventAutoHideAsync();
 
-import { getIcons, scale } from './api/api';
+import { getIcons, scale, warmPlayerAssets } from './api/api';
 
 /* SCREENS */
 import OnboardingScreen from './screens/OnboardingScreen';
@@ -35,20 +37,27 @@ import PlayerScreen from './screens/PlayerScreen';
 import DiscoverScreen from './screens/DiscoverScreen.js';
 import ArtistProfileScreen from './screens/ArtistProfileScreen';
 import SongInfoScreen from './screens/SongInfoScreen';
+import LibraryScreen from './screens/LibraryScreen';
+import ContentAndDisplayScreen from './screens/ContentAndDisplayScreen';
+import PrivacyAndCommunityScreen from './screens/PrivacyAndCommunityScreen';
+import QualityOfMediaFilesScreen from './screens/QualityOfMediaFilesScreen';
+import StatisticsScreen from './screens/StatisticsScreen';
+import AboutUsScreen from './screens/AboutUsScreen';
+import ProScreen from './screens/ProScreen';
+import ChoosePodcastScreen from './screens/ChoosePodcastScreen';
+import ChooseArtistScreen from './screens/ChooseArtistScreen';
+
+// MINI PLAYER
+
+import MiniPlayer from './components/MiniPlayer';
 
 const Stack = createNativeStackNavigator();
-const { width } = Dimensions.get('window');
+const Tab = createBottomTabNavigator(); // 👇 Створюємо Таби
 
-/* 🔹 LIQUID GLASS NAVIGATION 🔹 */
-function GlassTabBar({ navigation }) {
-    // Стейт для іконок
+/* 🔹 LIQUID GLASS NAVIGATION (Оновлене меню) 🔹 */
+function GlassTabBar({ state, descriptors, navigation }) {
     const [icons, setIcons] = useState({});
 
-    // Отримуємо поточний роут
-    const routes = useNavigationState(state => state?.routes);
-    const currentRoute = routes ? routes[routes.length - 1].name : 'Home';
-
-    // Завантажуємо іконки при старті меню
     useEffect(() => {
         loadIcons();
     }, []);
@@ -62,66 +71,91 @@ function GlassTabBar({ navigation }) {
         }
     };
 
-    // Функція рендеру іконки (як в Плеєрі)
-    const renderIcon = (iconName, tintColor) => {
-        if (icons[iconName]) {
-            return (
-                <Image
-                    source={{ uri: icons[iconName] }}
-                    style={{ width: 24, height: 24, tintColor: tintColor }}
-                    resizeMode="contain"
-                />
-            );
-        }
-        // Заглушка, якщо іконка ще не завантажилась
-        return <View style={{ width: 24, height: 24 }} />;
-    };
-
-    const TabButton = ({ routeName, label, iconName }) => {
-        const isActive = currentRoute === routeName;
-        // Активна - біла, неактивна - напівпрозора біла
-        const color = isActive ? '#FFFFFF' : 'rgba(255, 255, 255, 0.5)';
-
-        return (
-            <TouchableOpacity
-                style={styles.tabButton}
-                onPress={() => navigation.navigate(routeName)}
-                activeOpacity={0.7}
-            >
-                {/* Використовуємо нашу функцію renderIcon */}
-                {renderIcon(iconName, color)}
-
-                <Text style={[styles.tabLabel, { color }]}>{label}</Text>
-            </TouchableOpacity>
-        );
-    };
-
     return (
-        <View style={styles.glassContainer}>
-            <BlurView intensity={40} tint="dark" style={styles.blurContainer}>
+        <View style={styles.glassWrapper}>
+            <View style={styles.glassContainer}>
+                <BlurView intensity={40} tint="dark" style={styles.blurContainer}>
+                    {state.routes.map((route, index) => {
+                        const { options } = descriptors[route.key];
+                        const isFocused = state.index === index;
 
-                {/* Вказуємо назви файлів, як вони записані в базі */}
-                <TabButton routeName="Home" label="Home" iconName="home.png" />
-                <TabButton routeName="Tracks" label="Search" iconName="search.png" />
-                <TabButton routeName="Albums" label="Library" iconName="library.png" />
+                        const onPress = () => {
+                            const event = navigation.emit({
+                                type: 'tabPress',
+                                target: route.key,
+                                canPreventDefault: true,
+                            });
 
-            </BlurView>
+                            if (!isFocused && !event.defaultPrevented) {
+                                navigation.navigate(route.name);
+                            }
+                        };
+
+                        // Визначаємо іконку та назву
+                        let iconName = 'cuida_home-outline.png';
+                        let label = 'Home';
+
+                        if (route.name === 'SearchTab') {
+                            iconName = 'cuida_search-outline.png';
+                            label = 'Search';
+                        } else if (route.name === 'LibraryTab') {
+                            iconName = 'cuida_bookmark-outline.png';
+                            label = 'Library';
+                        }
+
+                        const color = isFocused ? '#FFFFFF' : 'rgba(255, 255, 255, 0.5)';
+
+                        // Рендер іконки
+                        const iconElement = icons[iconName] ? (
+                            <Image
+                                source={{ uri: icons[iconName] }}
+                                style={{ width: 24, height: 24, tintColor: color }}
+                                resizeMode="contain"
+                            />
+                        ) : (
+                            <View style={{ width: 24, height: 24 }} />
+                        );
+
+                        return (
+                            <TouchableOpacity
+                                key={index}
+                                onPress={onPress}
+                                style={styles.tabButton}
+                                activeOpacity={0.7}
+                            >
+                                {iconElement}
+                                <Text style={[styles.tabLabel, { color }]}>{label}</Text>
+                            </TouchableOpacity>
+                        );
+                    })}
+                </BlurView>
+            </View>
         </View>
     );
 }
 
-/* 🔹 WRAPPER */
-function WithDemoNav(Component) {
-    return function Wrapped(props) {
-        return (
-            <View style={{ flex: 1, backgroundColor: '#000' }}>
-                <Component {...props} />
-                <GlassTabBar navigation={props.navigation} />
-            </View>
-        );
-    };
-}
+/* 🔹 MAIN TABS (Група екранів з нерухомим меню) 🔹 */
+function MainTabs() {
+    return (
+        // 👇 1. Обгортаємо все у View з flex: 1 👇
+        <View style={{ flex: 1 }}>
+            <Tab.Navigator
+                tabBar={props => <GlassTabBar {...props} />}
+                screenOptions={{
+                    headerShown: false,
+                    tabBarStyle: { position: 'absolute' }, // Прозорість
+                }}
+            >
+                <Tab.Screen name="HomeTab" component={DiscoverScreen} />
+                <Tab.Screen name="SearchTab" component={TrackListScreen} />
+                <Tab.Screen name="LibraryTab" component={LibraryScreen} />
+            </Tab.Navigator>
 
+            {/* 👇 2. ВСТАВЛЯЄМО МІНІ-ПЛЕЄР СЮДИ 👇 */}
+            <MiniPlayer />
+        </View>
+    );
+}
 export default function App() {
     const [isTokenLoading, setIsTokenLoading] = useState(true);
     const [initialRoute, setInitialRoute] = useState('Onboarding');
@@ -151,7 +185,7 @@ export default function App() {
             try {
                 const token = await AsyncStorage.getItem('userToken');
                 if (token) {
-                    setInitialRoute('Home');
+                    setInitialRoute('MainTabs');
                 }
             } catch (e) {
                 console.log(e);
@@ -160,6 +194,11 @@ export default function App() {
             }
         };
         checkToken();
+
+        // Прогріваємо іконки/фон плеєра заздалегідь, щоб вони не "довантажувались" при відкритті Player.
+        warmPlayerAssets().catch((e) => {
+            console.log('Warm player assets error:', e);
+        });
     }, []);
 
     const onLayoutRootView = useCallback(async () => {
@@ -187,55 +226,32 @@ export default function App() {
                 initialRouteName={initialRoute}
                 screenOptions={{ headerShown: false }}
             >
-                {/* ONBOARDING */}
+                {/* ONBOARDING & AUTH */}
                 <Stack.Screen name="Onboarding" component={OnboardingScreen} />
-
-                {/* AUTH */}
                 <Stack.Screen name="AuthChoice" component={AuthChoiceScreen} />
                 <Stack.Screen name="Login" component={LoginScreen} />
                 <Stack.Screen name="Register" component={RegisterScreen} />
 
-                {/* MAIN */}
-                <Stack.Screen
-                    name="Tracks"
-                    component={WithDemoNav(TrackListScreen)}
-                />
-                <Stack.Screen
-                    name="Albums"
-                    component={WithDemoNav(AlbumListScreen)}
-                />
-                <Stack.Screen
-                    name="Upload"
-                    component={WithDemoNav(MusicScreen)}
-                />
-                <Stack.Screen
-                    name="CreateAlbum"
-                    component={WithDemoNav(CreateAlbumScreen)}
-                />
-                <Stack.Screen
-                    name="AlbumDetail"
-                    component={AlbumDetailScreen}
-                />
-                <Stack.Screen
-                    name="Profile"
-                    component={WithDemoNav(ProfileScreen)}
-                />
-                <Stack.Screen
-                    name="Home"
-                    component={WithDemoNav(DiscoverScreen)}
-                />
-                <Stack.Screen
-                    name="Player"
-                    component={PlayerScreen}
-                />
-                <Stack.Screen
-                    name="SongInfo"
-                    component={SongInfoScreen}
-                />
-                <Stack.Screen
-                    name="ArtistProfile"
-                    component={ArtistProfileScreen}
-                />
+                {/* 👇 ГОЛОВНИЙ ЕКРАН З МЕНЮ (Тут живуть Home, Search, Library) */}
+                <Stack.Screen name="MainTabs" component={MainTabs} />
+
+                {/* ЕКРАНИ БЕЗ МЕНЮ (Поверх всього) */}
+                <Stack.Screen name="Upload" component={MusicScreen} />
+                <Stack.Screen name="CreateAlbum" component={CreateAlbumScreen} />
+                <Stack.Screen name="AlbumDetail" component={AlbumDetailScreen} />
+                <Stack.Screen name="Profile" component={ProfileScreen} />
+                <Stack.Screen name="Player" component={PlayerScreen} />
+                <Stack.Screen name="SongInfo" component={SongInfoScreen} />
+                <Stack.Screen name="ArtistProfile" component={ArtistProfileScreen} />
+                <Stack.Screen name="ContentAndDisplay" component={ContentAndDisplayScreen} />
+                <Stack.Screen name="PrivacyAndCommunity" component={PrivacyAndCommunityScreen} />
+                <Stack.Screen name="QualityOfMediaFiles" component={QualityOfMediaFilesScreen} />
+                <Stack.Screen name="Statistics" component={StatisticsScreen} />
+                <Stack.Screen name="AboutUs" component={AboutUsScreen} />
+                <Stack.Screen name="ProScreen" component={ProScreen} />
+                <Stack.Screen name="ChoosePodcast" component={ChoosePodcastScreen} />
+                <Stack.Screen name="ChooseArtist" component={ChooseArtistScreen} />
+
             </Stack.Navigator>
         </NavigationContainer>
         </View>
@@ -251,12 +267,19 @@ const styles = StyleSheet.create({
     },
 
     // --- АДАПТИВНИЙ LIQUID GLASS ---
-    glassContainer: {
+
+    glassWrapper: {
         position: 'absolute',
-        bottom: scale(30),
+        bottom: 0,
+        left: 0,
+        right: 0,
+        alignItems: 'center',
+        pointerEvents: 'box-none' // Це важливо, щоб клікати крізь пусте місце
+    },
+    glassContainer: {
+        marginBottom: scale(30),
         height: scale(70),
         width: scale(200),
-        alignSelf: 'center',
         borderRadius: scale(35),
         overflow: 'hidden',
 

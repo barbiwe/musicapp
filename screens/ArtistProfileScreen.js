@@ -11,6 +11,7 @@ import {
     ActivityIndicator
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { SvgUri, SvgXml } from 'react-native-svg';
 import { BlurView } from 'expo-blur';
 import {
     getTracks,
@@ -21,8 +22,59 @@ import {
     getAlbumCoverUrl, // 👇 Додано
     scale
 } from '../api/api';
-
 const { width, height } = Dimensions.get('window');
+
+const svgCache = {};
+// 👇 Цей компонент завантажує SVG, чистить, фарбує і КЕШУЄ результат
+const ColoredSvg = ({ uri, width, height, color }) => {
+    const cacheKey = `${uri}_${color || 'original'}`;
+    const [xml, setXml] = useState(svgCache[cacheKey] || null);
+
+    useEffect(() => {
+        let isMounted = true;
+
+        // 1. Якщо у нас вже є правильна картинка в кеші — беремо її і виходимо
+        if (svgCache[cacheKey]) {
+            setXml(svgCache[cacheKey]);
+            return;
+        }
+
+        // 2. Якщо в кеші немає — вантажимо
+        if (uri) {
+            fetch(uri)
+                .then(response => response.text())
+                .then(svgContent => {
+                    if (isMounted) {
+                        let cleanXml = svgContent.replace(/fill=['"]none['"]/gi, '###NONE###');
+
+                        if (color) {
+                            cleanXml = cleanXml.replace(/fill=['"][^'"]*['"]/g, `fill="${color}"`);
+                            cleanXml = cleanXml.replace(/stroke=['"][^'"]*['"]/g, `stroke="${color}"`);
+                        }
+
+                        cleanXml = cleanXml.replace(/###NONE###/g, 'fill="none"');
+
+                        // Зберігаємо в кеш
+                        svgCache[cacheKey] = cleanXml;
+                        setXml(cleanXml);
+                    }
+                })
+                .catch(err => console.log("SVG Error:", err));
+        }
+
+        return () => { isMounted = false; };
+    }, [cacheKey]); // 🔥 Головне: реагуємо на зміну ключа, а не ігноруємо її
+
+    if (!xml) return <View style={{ width, height }} />;
+
+    return (
+        <SvgXml
+            xml={xml}
+            width={width}
+            height={height}
+        />
+    );
+};
 
 export default function ArtistProfileScreen({ navigation, route }) {
     const { artist } = route.params || {};
@@ -68,13 +120,45 @@ export default function ArtistProfileScreen({ navigation, route }) {
         }
     };
 
-    const renderIcon = (iconName, style, tintColor) => {
-        if (icons[iconName]) {
+    // 👇 ВИПРАВЛЕНА ФУНКЦІЯ (3 аргументи замість 4)
+    const renderIcon = (iconName, style, tintColor = '#000000') => {
+        const iconUrl = icons[iconName];
+
+        if (iconUrl) {
+            const isSvg = iconName.toLowerCase().endsWith('.svg') || iconUrl.toLowerCase().endsWith('.svg');
+
+            if (isSvg) {
+                const flatStyle = StyleSheet.flatten(style);
+                const width = flatStyle?.width || 24;
+                const height = flatStyle?.height || 24;
+
+                return (
+                    <ColoredSvg
+                        uri={iconUrl}
+                        width={width}
+                        height={height}
+                        color={tintColor}
+                    />
+                );
+            }
+
+            // PNG
             const imageStyle = [style];
-            if (tintColor) imageStyle.push({ tintColor: tintColor });
-            return <Image source={{ uri: icons[iconName] }} style={imageStyle} resizeMode="contain" />;
+            if (tintColor) {
+                imageStyle.push({ tintColor: tintColor });
+            }
+
+            return (
+                <Image
+                    source={{ uri: iconUrl }}
+                    style={imageStyle}
+                    resizeMode="contain"
+                />
+            );
         }
-        return <View style={style} />;
+
+        // Якщо іконки немає — повертаємо null, щоб не було помилки з об'єктом
+        return null;
     };
 
     const avatarUrl = artist?.id ? getUserAvatarUrl(artist.id) : null;
@@ -120,14 +204,14 @@ export default function ArtistProfileScreen({ navigation, route }) {
                             onPress={() => navigation.goBack()}
                             hitSlop={{top: 20, bottom: 20, left: 20, right: 20}}
                         >
-                            {renderIcon('arrow-left.png', { width: 24, height: 24 }, '#fff')}
+                            {renderIcon('arrow-left.svg', { width: 24, height: 24 }, '#fff')}
                         </TouchableOpacity>
 
                         <View style={styles.heroTextContainer}>
                             <Text style={styles.genreText}>Rapper</Text>
                             <View style={styles.nameRow}>
                                 <Text style={styles.artistNameText}>{artist?.name || 'Unknown Artist'}</Text>
-                                {renderIcon('profile.png', { width: 20, height: 20, marginLeft: 10 }, '#fff')}
+                                {renderIcon('profile.svg', { width: 20, height: 20, marginLeft: 10 }, '#fff')}
                             </View>
                         </View>
                     </View>
@@ -248,7 +332,7 @@ export default function ArtistProfileScreen({ navigation, route }) {
                                                 )}
 
                                                 <View style={styles.vinylOverlayWrapper}>
-                                                    {renderIcon('plastinka.png', { width: scale(50), height: scale(50) }, null)}
+                                                    {renderIcon('vinyl.svg', { width: scale(50), height: scale(50) }, null)}
                                                 </View>
                                             </View>
 
@@ -260,7 +344,7 @@ export default function ArtistProfileScreen({ navigation, route }) {
 
                                             {/* ЛАЙК */}
                                             <TouchableOpacity>
-                                                {renderIcon('hurt.png', { width: 24, height: 24 }, '#fff')}
+                                                {renderIcon('hurt.svg', { width: 24, height: 24 }, '#fff')}
                                             </TouchableOpacity>
                                         </TouchableOpacity>
 

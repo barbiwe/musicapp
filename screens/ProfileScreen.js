@@ -1,64 +1,90 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
     View,
     Text,
     StyleSheet,
-    FlatList,
-    Image,
     TouchableOpacity,
+    Image,
     ActivityIndicator,
     Alert,
     ScrollView,
-    Button,
-    RefreshControl
+    StatusBar,
+    SafeAreaView,
+    Platform,
+    Dimensions
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Audio } from 'expo-av';
 import * as ImagePicker from 'expo-image-picker';
+import { LinearGradient } from 'expo-linear-gradient';
+import { SvgXml } from 'react-native-svg';
 
 import {
-    getMyTracks,
-    getMyAlbums,
-    getTracks,
-    getLikedTracks,
-    getTrackCoverUrl,
-    getStreamUrl,
-    getAlbumCoverUrl,
     getUserAvatarUrl,
     changeAvatar,
-    logoutUser
+    logoutUser,
+    getIcons,
+    scale // Обов'язково імпортуємо scale
 } from '../api/api';
 
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+
+// 0. ГЛОБАЛЬНИЙ КЕШ SVG
+const svgCache = {};
+
+const ColoredSvg = ({ uri, width, height, color }) => {
+    const cacheKey = `${uri}_${color || 'original'}`;
+    const [xml, setXml] = useState(svgCache[cacheKey] || null);
+
+    useEffect(() => {
+        let isMounted = true;
+        if (svgCache[cacheKey]) {
+            setXml(svgCache[cacheKey]);
+            return;
+        }
+        if (uri) {
+            fetch(uri)
+                .then(response => response.text())
+                .then(svgContent => {
+                    if (isMounted) {
+                        let cleanXml = svgContent.replace(/fill=['"]none['"]/gi, '###NONE###');
+                        if (color) {
+                            cleanXml = cleanXml.replace(/fill=['"][^'"]*['"]/g, `fill="${color}"`);
+                            cleanXml = cleanXml.replace(/stroke=['"][^'"]*['"]/g, `stroke="${color}"`);
+                        }
+                        cleanXml = cleanXml.replace(/###NONE###/g, 'fill="none"');
+                        svgCache[cacheKey] = cleanXml;
+                        setXml(cleanXml);
+                    }
+                })
+                .catch(err => console.log("SVG Error:", err));
+        }
+        return () => { isMounted = false; };
+    }, [cacheKey]);
+
+    if (!xml) return <View style={{ width, height }} />;
+    return <SvgXml xml={xml} width={width} height={height} />;
+};
+
 export default function ProfileScreen({ navigation }) {
-    const [myTracks, setMyTracks] = useState([]);
-    const [myAlbums, setMyAlbums] = useState([]);
-    const [likedTracks, setLikedTracks] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [refreshing, setRefreshing] = useState(false);
     const [username, setUsername] = useState('User');
     const [avatarUri, setAvatarUri] = useState(null);
-
-    // Аудіо
-    const [sound, setSound] = useState(null);
-    const [playingTrackId, setPlayingTrackId] = useState(null);
+    const [icons, setIcons] = useState({});
 
     useFocusEffect(
         useCallback(() => {
             loadProfileData();
-            return () => {
-                if (sound) sound.unloadAsync();
-            };
         }, [])
     );
 
     const loadProfileData = async () => {
-        if (!refreshing) setLoading(true);
-
+        setLoading(true);
         try {
-            console.log("--- Loading Profile Data ---");
+            // Завантажуємо іконки з бекенду
+            const iconsData = await getIcons();
+            setIcons(iconsData || {});
 
-            // 0. User Info
             const storedName = await AsyncStorage.getItem('username');
             if (storedName) setUsername(storedName);
 
@@ -66,41 +92,11 @@ export default function ProfileScreen({ navigation }) {
             if (storedId) {
                 setAvatarUri(`${getUserAvatarUrl(storedId)}?t=${new Date().getTime()}`);
             }
-
-            // 1. Мої треки
-            const tracksData = await getMyTracks();
-            setMyTracks(Array.isArray(tracksData) ? tracksData : []);
-
-            // 2. Мої альбоми
-            const albumsData = await getMyAlbums();
-            setMyAlbums(Array.isArray(albumsData) ? albumsData : []);
-
-            // 3. Лайкнуті треки
-            const likedIds = await getLikedTracks();
-            const allTracks = await getTracks();
-
-            if (Array.isArray(likedIds) && Array.isArray(allTracks)) {
-                const filteredLiked = allTracks.filter(track => {
-                    const tId = track.id || track._id || track.Id;
-                    return likedIds.map(String).includes(String(tId));
-                });
-                setLikedTracks(filteredLiked);
-            } else {
-                setLikedTracks([]);
-            }
-
         } catch (e) {
             console.error("Profile Load Error:", e);
-            Alert.alert("Error", "Could not load profile data");
         } finally {
             setLoading(false);
-            setRefreshing(false);
         }
-    };
-
-    const onRefresh = () => {
-        setRefreshing(true);
-        loadProfileData();
     };
 
     const pickAvatar = async () => {
@@ -119,23 +115,18 @@ export default function ProfileScreen({ navigation }) {
 
         if (!result.canceled) {
             const asset = result.assets[0];
-            setAvatarUri(asset.uri);
+            setAvatarUri(asset.uri); // Оптимістичне оновлення UI
 
-            console.log("Uploading avatar:", asset.uri);
             const res = await changeAvatar(asset.uri);
-
             if (res.error) {
-                console.error("Avatar upload error:", res.error);
-                Alert.alert('Error', 'Avatar upload failed. Check server logs.');
+                Alert.alert('Error', 'Avatar upload failed.');
             } else {
-                Alert.alert('Success', 'Avatar updated');
                 loadProfileData();
             }
         }
     };
 
     const handleLogout = async () => {
-        if (sound) await sound.unloadAsync();
         await logoutUser();
         navigation.reset({
             index: 0,
@@ -143,159 +134,159 @@ export default function ProfileScreen({ navigation }) {
         });
     };
 
-    const playTrack = async (track) => {
-        try {
-            const trackId = track.id || track._id;
-            if (sound) {
-                await sound.unloadAsync();
-                setSound(null);
+    // Універсальна функція рендеру іконок (як у плеєрі)
+    const renderIcon = useCallback((iconName, fallbackText, style, tintColor = '#000000') => {
+        const iconUrl = icons[iconName];
+        if (iconUrl) {
+            const isSvg = iconName.toLowerCase().endsWith('.svg') || iconUrl.toLowerCase().endsWith('.svg');
+            if (isSvg) {
+                const flatStyle = StyleSheet.flatten(style);
+                const width = flatStyle?.width || 24;
+                const height = flatStyle?.height || 24;
+                return <ColoredSvg key={iconName} uri={iconUrl} width={width} height={height} color={tintColor} />;
             }
-            if (playingTrackId === trackId) {
-                setPlayingTrackId(null);
-                return;
-            }
-
-            const { sound: newSound } = await Audio.Sound.createAsync(
-                { uri: getStreamUrl(trackId) },
-                { shouldPlay: true }
-            );
-            setSound(newSound);
-            setPlayingTrackId(trackId);
-
-            newSound.setOnPlaybackStatusUpdate((status) => {
-                if (status.didJustFinish) setPlayingTrackId(null);
-            });
-        } catch (e) {
-            Alert.alert('Error', 'Cannot play track');
+            const imageStyle = [style];
+            if (tintColor) imageStyle.push({ tintColor: tintColor });
+            return <Image source={{ uri: iconUrl }} style={imageStyle} resizeMode="contain" />;
         }
-    };
 
-    // Рендер айтемів
-    const renderAlbumItem = ({ item }) => {
-        const albumId = item.id || item._id || item.Id;
-        const coverUrl = getAlbumCoverUrl(albumId);
-
+        // Фолбек, якщо іконки ще немає на бекенді
         return (
-            <TouchableOpacity
-                style={styles.albumCard}
-                onPress={() => navigation.navigate('AlbumDetail', { id: albumId })}
-            >
-                {coverUrl ? (
-                    <Image source={{ uri: coverUrl }} style={styles.albumCover} />
-                ) : (
-                    <View style={styles.albumPlaceholder} />
-                )}
-                <Text style={styles.albumTitle} numberOfLines={1}>{item.title}</Text>
-            </TouchableOpacity>
+            <View style={[style, { justifyContent: 'center', alignItems: 'center' }]}>
+                <Text style={{ color: tintColor || '#F5D8CB', fontSize: style.height ? style.height * 0.6 : 14 }}>
+                    {fallbackText}
+                </Text>
+            </View>
         );
-    };
+    }, [icons]);
 
-    const renderTrackItem = ({ item }) => {
-        const isPlaying = playingTrackId === (item.id || item._id);
-        const coverUri = getTrackCoverUrl(item);
+    // Дані для меню з назвами іконок, які мають бути на бекенді
+    const menuItems = [
+        { id: 1, title: 'Content and display', icon: 'src.svg' },
+        { id: 2, title: 'Privacy and community', icon: 'guard.svg' },
+        { id: 3, title: 'Quality of media files', icon: 'list.svg' },
+        { id: 4, title: 'Statistics', icon: 'chart.svg' },
+        { id: 5, title: 'About us', icon: 'info.svg' },
+    ];
 
+    if (loading && !username) {
         return (
-            <TouchableOpacity onPress={() => playTrack(item)} style={styles.trackRow}>
-                {coverUri ? (
-                    <Image source={{ uri: coverUri }} style={styles.trackCover} />
-                ) : (
-                    <View style={styles.trackCoverPlaceholder} />
-                )}
-                <View style={styles.trackInfo}>
-                    <Text style={styles.trackTitle} numberOfLines={1}>{item.title}</Text>
-
-                    {/* 👇 ВИПРАВЛЕННЯ ТУТ: Безпечно дістаємо ім'я з об'єкта 👇 */}
-                    <Text style={styles.trackArtist} numberOfLines={1}>
-                        {item.artist?.name || item.artist || username}
-                    </Text>
-                </View>
-                <Text style={styles.playText}>{isPlaying ? 'Stop' : 'Play'}</Text>
-            </TouchableOpacity>
+            <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+                <ActivityIndicator size="large" color="#F5D8CB" />
+            </View>
         );
-    };
+    }
 
     return (
         <View style={styles.container}>
-            <View style={styles.header}>
-                <Text style={styles.headerTitle}>Profile</Text>
-                <Button title="Logout" onPress={handleLogout} color="red" />
-            </View>
+            <StatusBar barStyle="light-content" translucent={true} backgroundColor="transparent" />
 
-            {loading ? (
-                <ActivityIndicator size="large" style={{ marginTop: 50 }} color="#000" />
-            ) : (
-                <ScrollView
-                    contentContainerStyle={styles.scrollContent}
-                    refreshControl={
-                        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-                    }
-                >
-                    {/* User Info & Avatar */}
-                    <View style={styles.userInfo}>
-                        <TouchableOpacity onPress={pickAvatar} style={styles.avatarContainer}>
-                            {avatarUri ? (
-                                <Image source={{ uri: avatarUri }} style={styles.avatarImage} />
-                            ) : (
-                                <View style={styles.avatarPlaceholder}>
-                                    <Text style={styles.avatarText}>
-                                        {username ? username.charAt(0).toUpperCase() : 'U'}
-                                    </Text>
-                                </View>
-                            )}
-                            <View style={styles.editIconBadge}>
-                                <Text style={styles.editIconText}>+</Text>
+            <LinearGradient
+                colors={['#AC654F', '#883426', '#190707',]}
+                locations={[0, 0.2, 0.59,]}
+                start={{ x: 1, y: 0 }}
+                end={{ x: 0.5, y: 1 }}
+                style={styles.gradient}
+            >
+                <SafeAreaView style={styles.safeArea}>
+                    <ScrollView
+                        contentContainerStyle={styles.scrollContent}
+                        showsVerticalScrollIndicator={false}
+                        bounces={false}
+                    >
+                        <View style={styles.topSection}>
+                            {/* ХЕДЕР (Кнопка назад) */}
+                            <View style={styles.header}>
+                                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton} hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}>
+                                    {renderIcon('arrow-left.svg', '<', { width: scale(24), height: scale(24) }, '#F5D8CB')}
+                                </TouchableOpacity>
                             </View>
+
+                            {/* БЛОК ПРОФІЛЮ */}
+                            <View style={styles.profileRow}>
+                                {/* Аватарка */}
+                                <TouchableOpacity onPress={pickAvatar} activeOpacity={0.8} style={styles.avatarContainer}>
+                                    {avatarUri ? (
+                                        <Image source={{ uri: avatarUri }} style={styles.avatar} />
+                                    ) : (
+                                        <View style={[styles.avatar, styles.avatarPlaceholder]}>
+                                            <Text style={styles.avatarPlaceholderText}>
+                                                {username ? username.charAt(0).toUpperCase() : 'U'}
+                                            </Text>
+                                        </View>
+                                    )}
+                                </TouchableOpacity>
+
+                                {/* Інформація: Ім'я та бейдж */}
+                                <View style={styles.profileInfo}>
+                                    <Text style={styles.username} numberOfLines={1}>{username}</Text>
+                                    <TouchableOpacity style={styles.singerBadge} activeOpacity={0.7}>
+                                        <Text style={styles.singerBadgeText}>Become a singer</Text>
+                                    </TouchableOpacity>
+                                </View>
+
+                                {/* Кнопка редагування */}
+                                <TouchableOpacity onPress={pickAvatar} style={styles.editButton} hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}>
+                                    {renderIcon('edit.svg', '✎', { width: scale(24), height: scale(24) }, '#F5D8CB')}
+                                </TouchableOpacity>
+                            </View>
+
+                            {/* Розділювач */}
+                            <View style={styles.separator} />
+
+                            {/* МЕНЮ */}
+                            <View style={styles.menuContainer}>
+                                {menuItems.map((item) => (
+                                    <TouchableOpacity
+                                        key={item.id}
+                                        style={styles.menuItem}
+                                        activeOpacity={0.7}
+                                        // 👇 ОНОВЛЕНА ЛОГІКА ПЕРЕХОДІВ
+                                        onPress={() => {
+                                            switch (item.title) {
+                                                case 'Content and display':
+                                                    navigation.navigate('ContentAndDisplay');
+                                                    break;
+                                                case 'Privacy and community':
+                                                    navigation.navigate('PrivacyAndCommunity');
+                                                    break;
+                                                case 'Quality of media files':
+                                                    navigation.navigate('QualityOfMediaFiles');
+                                                    break;
+                                                case 'Statistics':
+                                                    navigation.navigate('Statistics');
+                                                    break;
+                                                case 'About us':
+                                                    navigation.navigate('AboutUs');
+                                                    break;
+                                                default:
+                                                    console.log('No route for', item.title);
+                                            }
+                                        }}
+                                    >
+                                        <View style={styles.menuItemLeft}>
+                                            <View style={styles.menuIconPlaceholder}>
+                                                {/* Іконка з бекенду */}
+                                                {renderIcon(item.icon, '☐', { width: scale(17), height: scale(17) }, '#F5D8CB')}
+                                            </View>
+                                            <Text style={styles.menuItemText}>{item.title}</Text>
+                                        </View>
+                                        {/* Стрілочка вправо з бекенду */}
+                                        {renderIcon('arrow-right.svg', '>', { width: scale(20), height: scale(20) }, '#F5D8CB')}
+                                    </TouchableOpacity>
+                                ))}
+                            </View>
+                        </View>
+
+                        {/* КНОПКА ВИХОДУ */}
+                        <TouchableOpacity style={styles.logoutButton} onPress={handleLogout} activeOpacity={0.7}>
+                            {renderIcon('log out.svg', '⍈', { width: scale(24), height: scale(24) }, '#F5D8CB')}
+                            <Text style={styles.logoutText}>Log out</Text>
                         </TouchableOpacity>
 
-                        <Text style={styles.usernameText}>{username}</Text>
-                    </View>
-
-                    {/* My Albums */}
-                    <View style={styles.section}>
-                        <Text style={styles.sectionTitle}>My Albums</Text>
-                        {myAlbums.length === 0 ? (
-                            <Text style={styles.emptyText}>No albums yet.</Text>
-                        ) : (
-                            <FlatList
-                                horizontal
-                                data={myAlbums}
-                                keyExtractor={(item) => (item.id || item._id || Math.random()).toString()}
-                                renderItem={renderAlbumItem}
-                                showsHorizontalScrollIndicator={false}
-                            />
-                        )}
-                    </View>
-
-                    {/* My Tracks */}
-                    <View style={styles.section}>
-                        <Text style={styles.sectionTitle}>My Tracks</Text>
-                        {myTracks.length === 0 ? (
-                            <Text style={styles.emptyText}>No tracks uploaded.</Text>
-                        ) : (
-                            myTracks.map((item, index) => (
-                                <View key={item.id || item._id || index}>
-                                    {renderTrackItem({ item })}
-                                </View>
-                            ))
-                        )}
-                    </View>
-
-                    {/* Liked Tracks */}
-                    <View style={styles.section}>
-                        <Text style={styles.sectionTitle}>Liked Tracks</Text>
-                        {likedTracks.length === 0 ? (
-                            <Text style={styles.emptyText}>No liked tracks yet.</Text>
-                        ) : (
-                            likedTracks.map((item, index) => (
-                                <View key={item.id || item._id || index}>
-                                    {renderTrackItem({ item })}
-                                </View>
-                            ))
-                        )}
-                    </View>
-
-                </ScrollView>
-            )}
+                    </ScrollView>
+                </SafeAreaView>
+            </LinearGradient>
         </View>
     );
 }
@@ -303,149 +294,136 @@ export default function ProfileScreen({ navigation }) {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#fff',
-        paddingTop: 50,
+        backgroundColor: '#160607',
     },
-    header: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        paddingHorizontal: 20,
-        marginBottom: 20,
-    },
-    headerTitle: {
-        fontSize: 22,
-        fontWeight: 'bold',
-        color: '#000',
-    },
-    scrollContent: {
-        paddingBottom: 40,
-    },
-    userInfo: {
-        alignItems: 'center',
-        marginBottom: 30,
-        borderBottomWidth: 1,
-        borderBottomColor: '#f0f0f0',
-        paddingBottom: 20,
-    },
-    avatarContainer: {
-        width: 100,
-        height: 100,
-        marginBottom: 15,
-        position: 'relative',
-    },
-    avatarImage: {
-        width: 100,
-        height: 100,
-        borderRadius: 50,
-        backgroundColor: '#ddd',
-    },
-    avatarPlaceholder: {
-        width: 100,
-        height: 100,
-        borderRadius: 50,
-        backgroundColor: '#eee',
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    avatarText: {
-        fontSize: 40,
-        color: '#888',
-        fontWeight: 'bold',
-    },
-    editIconBadge: {
-        position: 'absolute',
-        bottom: 0,
-        right: 0,
-        backgroundColor: '#007AFF',
-        width: 28,
-        height: 28,
-        borderRadius: 14,
-        justifyContent: 'center',
-        alignItems: 'center',
-        borderWidth: 2,
-        borderColor: '#fff',
-    },
-    editIconText: {
-        color: '#fff',
-        fontWeight: 'bold',
-        marginTop: -2,
-    },
-    usernameText: {
-        fontSize: 18,
-        fontWeight: '600',
-    },
-    section: {
-        marginBottom: 30,
-        paddingHorizontal: 20,
-    },
-    sectionTitle: {
-        fontSize: 18,
-        fontWeight: '600',
-        marginBottom: 15,
-        color: '#333',
-    },
-    emptyText: {
-        color: '#999',
-        fontStyle: 'italic',
-    },
-    albumCard: {
-        marginRight: 15,
-        width: 120,
-    },
-    albumCover: {
-        width: 120,
-        height: 120,
-        borderRadius: 8,
-        backgroundColor: '#ddd',
-        marginBottom: 8,
-    },
-    albumPlaceholder: {
-        width: 120,
-        height: 120,
-        borderRadius: 8,
-        backgroundColor: '#eee',
-        marginBottom: 8,
-    },
-    albumTitle: {
-        fontSize: 14,
-        fontWeight: '500',
-    },
-    trackRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingVertical: 10,
-        borderBottomWidth: 1,
-        borderBottomColor: '#f0f0f0',
-    },
-    trackCover: {
-        width: 40,
-        height: 40,
-        borderRadius: 4,
-        backgroundColor: '#ddd',
-        marginRight: 12,
-    },
-    trackCoverPlaceholder: {
-        width: 40,
-        height: 40,
-        borderRadius: 4,
-        backgroundColor: '#eee',
-        marginRight: 12,
-    },
-    trackInfo: {
+    gradient: {
         flex: 1,
     },
-    trackTitle: {
-        fontSize: 15,
-        fontWeight: '500',
+    safeArea: {
+        flex: 1,
+        paddingTop: Platform.OS === 'android' ? scale(40) : 0,
     },
-    trackArtist: {
-        fontSize: 12,
-        color: '#888',
+    scrollContent: {
+        flexGrow: 1, // Розтягує контент, притискаючи Logout до низу
+        paddingHorizontal: scale(24),
+        paddingBottom: scale(40),
+        justifyContent: 'space-between',
     },
-    playText: {
-        color: '#007AFF',
-        fontWeight: '600',
-        fontSize: 14,
+    topSection: {
+        width: '100%',
+    },
+
+    // Header
+    header: {
+        marginTop: scale(10),
+        marginBottom: scale(20),
+    },
+    backButton: {
+        alignSelf: 'flex-start',
+        padding: scale(5),
+        marginLeft: scale(-5),
+    },
+
+    // Profile Row
+    profileRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between', // Розподіляє аватар, текст і кнопку по ширині
+        marginBottom: scale(30),
+    },
+    avatarContainer: {
+        marginRight: scale(16),
+    },
+    avatar: {
+        width: scale(92),
+        height: scale(92),
+        borderRadius: scale(48),
+        backgroundColor: '#F5D8CB',
+    },
+    avatarPlaceholder: {
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    avatarPlaceholderText: {
+        fontSize: scale(36),
+        fontFamily: 'Unbounded-SemiBold',
+        color: '#300C0A',
+    },
+    profileInfo: {
+        flex: 1,
+        justifyContent: 'center',
+    },
+    username: {
+        fontSize: scale(24),
+        fontFamily: 'Unbounded-Medium',
+        color: '#F5D8CB',
+        marginBottom: scale(8),
+    },
+    singerBadge: {
+        borderWidth: scale(1),
+        borderColor: '#F5D8CB',
+        borderRadius: scale(20),
+        paddingVertical: scale(6),
+        paddingHorizontal: scale(14),
+        alignSelf: 'flex-start',
+    },
+    singerBadgeText: {
+        color: '#F5D8CB',
+        fontSize: scale(14),
+        fontFamily: 'Poppins-Regular',
+    },
+    editButton: {
+        padding: scale(10),
+        marginLeft: scale(10),
+    },
+
+    // Divider
+    separator: {
+        height: 1,
+        backgroundColor: 'rgba(245, 216, 203, 0.4)',
+        marginBottom: scale(20),
+        width: '100%',
+    },
+
+    // Menu Item
+    menuContainer: {
+        width: '100%',
+    },
+    menuItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingVertical: scale(10),
+    },
+    menuItemLeft: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    menuIconPlaceholder: {
+        width: scale(24),
+        height: scale(24),
+        marginRight: scale(16),
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    menuItemText: {
+        fontSize: scale(16),
+        fontFamily: 'Poppins-Medium',
+        color: '#F5D8CB',
+    },
+
+    // Logout Button
+    logoutButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginTop: scale(40),
+        alignSelf: 'flex-start',
+        paddingVertical: scale(10),
+    },
+    logoutText: {
+        fontSize: scale(16),
+        fontFamily: 'Unbounded-Regular',
+        color: '#F5D8CB',
+        marginLeft: scale(12),
     },
 });

@@ -17,9 +17,60 @@ import {
     scale,
     getAlbumDetails
 } from '../api/api';
-
+import { SvgUri, SvgXml } from 'react-native-svg';
 const { height } = Dimensions.get('window');
 
+const svgCache = {};
+// 👇 Цей компонент завантажує SVG, чистить, фарбує і КЕШУЄ результат
+const ColoredSvg = ({ uri, width, height, color }) => {
+    const cacheKey = `${uri}_${color || 'original'}`;
+    const [xml, setXml] = useState(svgCache[cacheKey] || null);
+
+    useEffect(() => {
+        let isMounted = true;
+
+        // 1. Якщо у нас вже є правильна картинка в кеші — беремо її і виходимо
+        if (svgCache[cacheKey]) {
+            setXml(svgCache[cacheKey]);
+            return;
+        }
+
+        // 2. Якщо в кеші немає — вантажимо
+        if (uri) {
+            fetch(uri)
+                .then(response => response.text())
+                .then(svgContent => {
+                    if (isMounted) {
+                        let cleanXml = svgContent.replace(/fill=['"]none['"]/gi, '###NONE###');
+
+                        if (color) {
+                            cleanXml = cleanXml.replace(/fill=['"][^'"]*['"]/g, `fill="${color}"`);
+                            cleanXml = cleanXml.replace(/stroke=['"][^'"]*['"]/g, `stroke="${color}"`);
+                        }
+
+                        cleanXml = cleanXml.replace(/###NONE###/g, 'fill="none"');
+
+                        // Зберігаємо в кеш
+                        svgCache[cacheKey] = cleanXml;
+                        setXml(cleanXml);
+                    }
+                })
+                .catch(err => console.log("SVG Error:", err));
+        }
+
+        return () => { isMounted = false; };
+    }, [cacheKey]); // 🔥 Головне: реагуємо на зміну ключа, а не ігноруємо її
+
+    if (!xml) return <View style={{ width, height }} />;
+
+    return (
+        <SvgXml
+            xml={xml}
+            width={width}
+            height={height}
+        />
+    );
+};
 export default function TrackInfoScreen({ navigation, route }) {
     // Отримуємо трек з параметрів навігації
     const { track } = route.params || {};
@@ -60,13 +111,45 @@ export default function TrackInfoScreen({ navigation, route }) {
     };
 
     // Хелпер для іконок
-    const renderIcon = (iconName, style, tintColor) => {
-        if (icons[iconName]) {
+    // 👇 ВИПРАВЛЕНА ФУНКЦІЯ (3 аргументи замість 4)
+    const renderIcon = (iconName, style, tintColor = '#000000') => {
+        const iconUrl = icons[iconName];
+
+        if (iconUrl) {
+            const isSvg = iconName.toLowerCase().endsWith('.svg') || iconUrl.toLowerCase().endsWith('.svg');
+
+            if (isSvg) {
+                const flatStyle = StyleSheet.flatten(style);
+                const width = flatStyle?.width || 24;
+                const height = flatStyle?.height || 24;
+
+                return (
+                    <ColoredSvg
+                        uri={iconUrl}
+                        width={width}
+                        height={height}
+                        color={tintColor}
+                    />
+                );
+            }
+
+            // PNG
             const imageStyle = [style];
-            if (tintColor) imageStyle.push({ tintColor: tintColor });
-            return <Image source={{ uri: icons[iconName] }} style={imageStyle} resizeMode="contain" />;
+            if (tintColor) {
+                imageStyle.push({ tintColor: tintColor });
+            }
+
+            return (
+                <Image
+                    source={{ uri: iconUrl }}
+                    style={imageStyle}
+                    resizeMode="contain"
+                />
+            );
         }
-        return <View style={style} />;
+
+        // Якщо іконки немає — повертаємо null, щоб не було помилки з об'єктом
+        return null;
     };
 
     // Хелпер для форматування дати (з createdAt або поточної дати)
@@ -99,8 +182,8 @@ export default function TrackInfoScreen({ navigation, route }) {
                 overScrollMode="never"
             >
                 <LinearGradient
-                    colors={['#AC654F', '#883426', '#190707',]}
-                    locations={[0, 0.2, 0.5,]}
+                    colors={['#9A4B39', '#80291E', '#190707']}
+                    locations={[0, 0.2, 0.59]}
                     start={{ x: 1, y: 0 }}
                     end={{ x: 0.5, y: 1 }}
                     style={[styles.gradient, { paddingBottom: 100 }]}
@@ -111,7 +194,7 @@ export default function TrackInfoScreen({ navigation, route }) {
                             onPress={() => navigation.goBack()}
                             hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
                         >
-                            {renderIcon('arrow-left.png', { width: 24, height: 24 }, '#F5D8CB')}
+                            {renderIcon('arrow-left.svg', { width: 24, height: 24 }, '#F5D8CB')}
                         </TouchableOpacity>
                     </View>
 
@@ -131,7 +214,7 @@ export default function TrackInfoScreen({ navigation, route }) {
 
                             {/* 2. Пластинка (зверху) */}
                             <View style={styles.bigVinylOverlay}>
-                                {renderIcon('plastinka.png', { width: scale(200), height: scale(200) }, null)}
+                                {renderIcon('plastinka.svg', { width: scale(200), height: scale(200) }, null)}
                             </View>
                         </View>
                     </View>

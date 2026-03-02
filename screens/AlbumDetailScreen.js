@@ -17,6 +17,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useFonts } from 'expo-font';
+import { SvgUri, SvgXml } from 'react-native-svg';
 
 // Імпорт API
 import {
@@ -31,6 +32,58 @@ import {
 } from '../api/api';
 
 const { height } = Dimensions.get('window');
+
+const svgCache = {};
+// 👇 Цей компонент завантажує SVG, чистить, фарбує і КЕШУЄ результат
+const ColoredSvg = ({ uri, width, height, color }) => {
+    const cacheKey = `${uri}_${color || 'original'}`;
+    const [xml, setXml] = useState(svgCache[cacheKey] || null);
+
+    useEffect(() => {
+        let isMounted = true;
+
+        // 1. Якщо у нас вже є правильна картинка в кеші — беремо її і виходимо
+        if (svgCache[cacheKey]) {
+            setXml(svgCache[cacheKey]);
+            return;
+        }
+
+        // 2. Якщо в кеші немає — вантажимо
+        if (uri) {
+            fetch(uri)
+                .then(response => response.text())
+                .then(svgContent => {
+                    if (isMounted) {
+                        let cleanXml = svgContent.replace(/fill=['"]none['"]/gi, '###NONE###');
+
+                        if (color) {
+                            cleanXml = cleanXml.replace(/fill=['"][^'"]*['"]/g, `fill="${color}"`);
+                            cleanXml = cleanXml.replace(/stroke=['"][^'"]*['"]/g, `stroke="${color}"`);
+                        }
+
+                        cleanXml = cleanXml.replace(/###NONE###/g, 'fill="none"');
+
+                        // Зберігаємо в кеш
+                        svgCache[cacheKey] = cleanXml;
+                        setXml(cleanXml);
+                    }
+                })
+                .catch(err => console.log("SVG Error:", err));
+        }
+
+        return () => { isMounted = false; };
+    }, [cacheKey]); // 🔥 Головне: реагуємо на зміну ключа, а не ігноруємо її
+
+    if (!xml) return <View style={{ width, height }} />;
+
+    return (
+        <SvgXml
+            xml={xml}
+            width={width}
+            height={height}
+        />
+    );
+};
 
 export default function AlbumDetailScreen({ route, navigation }) {
     const { id: routeId, albumId: routeAlbumId } = route.params || {};
@@ -216,17 +269,45 @@ export default function AlbumDetailScreen({ route, navigation }) {
         }
     };
 
-    const renderIcon = (iconName, fallbackText, style, tintColor) => {
-        if (iconsMap[iconName]) {
+    // 👇 ВИПРАВЛЕНА ФУНКЦІЯ (3 аргументи замість 4)
+    const renderIcon = (iconName, style, tintColor = '#000000') => {
+        const iconUrl = icons[iconName];
+
+        if (iconUrl) {
+            const isSvg = iconName.toLowerCase().endsWith('.svg') || iconUrl.toLowerCase().endsWith('.svg');
+
+            if (isSvg) {
+                const flatStyle = StyleSheet.flatten(style);
+                const width = flatStyle?.width || 24;
+                const height = flatStyle?.height || 24;
+
+                return (
+                    <ColoredSvg
+                        uri={iconUrl}
+                        width={width}
+                        height={height}
+                        color={tintColor}
+                    />
+                );
+            }
+
+            // PNG
+            const imageStyle = [style];
+            if (tintColor) {
+                imageStyle.push({ tintColor: tintColor });
+            }
+
             return (
                 <Image
-                    source={{ uri: iconsMap[iconName] }}
-                    style={[style, tintColor ? { tintColor } : {}]}
+                    source={{ uri: iconUrl }}
+                    style={imageStyle}
                     resizeMode="contain"
                 />
             );
         }
-        return <Text style={{ fontSize: 12, color: tintColor || '#fff' }}>{fallbackText}</Text>;
+
+        // Якщо іконки немає — повертаємо null, щоб не було помилки з об'єктом
+        return null;
     };
 
     // --- COMPONENTS ---
@@ -238,7 +319,7 @@ export default function AlbumDetailScreen({ route, navigation }) {
                 style={styles.navBtn}
                 hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
             >
-                {renderIcon('arrow-left.png', '<', { width: 24, height: 24 }, '#F5D8CB')}
+                {renderIcon('arrow-left.svg', '<', { width: 24, height: 24 }, '#F5D8CB')}
             </TouchableOpacity>
 
             <View style={{ flex: 1 }} />
@@ -247,7 +328,7 @@ export default function AlbumDetailScreen({ route, navigation }) {
                 style={styles.navBtn}
                 hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
             >
-                {renderIcon('more.png', '•••', { width: 24, height: 24 }, '#F5D8CB')}
+                {renderIcon('more.svg', '•••', { width: 24, height: 24 }, '#F5D8CB')}
             </TouchableOpacity>
         </View>
     );
@@ -281,8 +362,8 @@ export default function AlbumDetailScreen({ route, navigation }) {
                         overScrollMode="never">
 
                 <LinearGradient
-                    colors={['#AC654F', '#883426', '#190707',]}
-                    locations={[0, 0.2, 0.5,]}
+                    colors={['#9A4B39', '#80291E', '#190707']}
+                    locations={[0, 0.2, 0.59]}
                     start={{ x: 1, y: 0 }}
                     end={{ x: 0.5, y: 1 }}
                     style={[styles.gradient, { paddingBottom: 50 }]}
@@ -309,11 +390,11 @@ export default function AlbumDetailScreen({ route, navigation }) {
                         {/* CONTROLS */}
                         <View style={styles.controlsRow}>
                             <TouchableOpacity style={styles.circleBtn} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                                {renderIcon('download.png', 'Dwn', { width: 24, height: 24 }, '#F5D8CB')}
+                                {renderIcon('download.svg', 'Dwn', { width: 24, height: 24 }, '#F5D8CB')}
                             </TouchableOpacity>
 
                             <TouchableOpacity style={styles.circleBtn} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                                {renderIcon('hurt.png', 'Like', { width: 35, height: 35 }, '#F5D8CB')}
+                                {renderIcon('add.svg', 'Like', { width: 24, height: 24 }, '#F5D8CB')}
                             </TouchableOpacity>
 
                             {/* PLAY BUTTON */}
@@ -323,7 +404,7 @@ export default function AlbumDetailScreen({ route, navigation }) {
                                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                             >
                                 {renderIcon(
-                                    (isAlbumPlaying && isPlaying) ? 'pause.png' : 'play.png',
+                                    (isAlbumPlaying && isPlaying) ? 'pause.svg' : 'play.svg',
                                     'Play',
                                     { width: 21.37, height: 21.37 },
                                     '#300C0A'
@@ -331,11 +412,11 @@ export default function AlbumDetailScreen({ route, navigation }) {
                             </TouchableOpacity>
 
                             <TouchableOpacity style={styles.circleBtn} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                                {renderIcon('share.png', 'Shr', { width: 24, height: 24 }, '#F5D8CB')}
+                                {renderIcon('share.svg', 'Shr', { width: 24, height: 24 }, '#F5D8CB')}
                             </TouchableOpacity>
 
                             <TouchableOpacity style={styles.circleBtn} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                                {renderIcon('shuffle.png', 'Mix', { width: 24, height: 24 }, '#F5D8CB')}
+                                {renderIcon('shuffle.svg', 'Mix', { width: 24, height: 24 }, '#F5D8CB')}
                             </TouchableOpacity>
                         </View>
                     </View>
@@ -361,7 +442,7 @@ export default function AlbumDetailScreen({ route, navigation }) {
                                     </View>
 
                                     <TouchableOpacity hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                                        {renderIcon('hurt.png', '♡', { width: 30, height: 30 }, '#F5D8CB')}
+                                        {renderIcon('hurt.svg', '♡', { width: 30, height: 30 }, '#F5D8CB')}
                                     </TouchableOpacity>
                                 </TouchableOpacity>
                             );
