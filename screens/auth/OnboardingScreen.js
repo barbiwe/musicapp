@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import {
     View,
     Text,
@@ -11,7 +11,7 @@ import {
     StatusBar
 } from 'react-native';
 import { SvgUri, SvgXml } from 'react-native-svg';
-import { scale } from '../api/api';
+import { scale } from '../../api/api';
 
 const { width, height } = Dimensions.get('window');
 
@@ -134,7 +134,7 @@ export default function OnboardingScreen({ navigation }) {
             <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
 
             <ImageBackground
-                source={require('../assets/background.png')}
+                source={require('../../assets/background.png')}
                 style={styles.backgroundImage}
                 resizeMode="cover"
             >

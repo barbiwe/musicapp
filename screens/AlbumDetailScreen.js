@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
     View,
     Text,
@@ -10,28 +10,38 @@ import {
     Alert,
     Dimensions,
     StatusBar,
-    Platform
+    Platform,
+    Modal,
+    TouchableWithoutFeedback,
+    Animated,
+    Easing
 } from 'react-native';
-import { Audio } from 'expo-av';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useFonts } from 'expo-font';
-import { SvgUri, SvgXml } from 'react-native-svg';
+import { BlurView } from 'expo-blur';
+import { SvgXml } from 'react-native-svg';
+import MiniPlayer from '../components/MiniPlayer';
+import { usePlayerStore } from '../store/usePlayerStore';
 
 // Імпорт API
 import {
     getAlbumDetails,
     getAlbumTracks,
+    getAlbums,
     getTracks,
+    likeTrack,
+    unlikeTrack,
+    getLikedTracks,
     getAlbumCoverUrl,
-    getStreamUrl,
     uploadAlbumCover,
     getIcons,
-    scale
+    scale,
+    resolveArtistName
 } from '../api/api';
 
 const { height } = Dimensions.get('window');
+const GUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const svgCache = {};
 // 👇 Цей компонент завантажує SVG, чистить, фарбує і КЕШУЄ результат
@@ -86,62 +96,92 @@ const ColoredSvg = ({ uri, width, height, color }) => {
 };
 
 export default function AlbumDetailScreen({ route, navigation }) {
-    const { id: routeId, albumId: routeAlbumId } = route.params || {};
-    const albumId = routeId || routeAlbumId;
+    const {
+        id: routeId,
+        albumId: routeAlbumId,
+        Id: routeUpperId,
+        AlbumId: routeUpperAlbumId,
+        album: routeAlbum
+    } = route.params || {};
+    const rawAlbumIds = [
+        routeId,
+        routeAlbumId,
+        routeUpperId,
+        routeUpperAlbumId,
+        routeAlbum?.id,
+        routeAlbum?.Id,
+        routeAlbum?._id,
+        routeAlbum?.albumId,
+        routeAlbum?.AlbumId,
+    ].filter(Boolean);
+    const albumId = rawAlbumIds.find((v) => GUID_REGEX.test(String(v))) || null;
 
     const [album, setAlbum] = useState(null);
     const [albumTracks, setAlbumTracks] = useState([]);
     const [loading, setLoading] = useState(true);
     const [isOwner, setIsOwner] = useState(false);
     const [iconsMap, setIconsMap] = useState({});
+    const [likedTrackIds, setLikedTrackIds] = useState([]);
+    const [modalVisible, setModalVisible] = useState(false);
 
-    const [isPlaying, setIsPlaying] = useState(false);
-
-
-    const [sound, setSound] = useState(null);
-    const [playingTrackId, setPlayingTrackId] = useState(null);
+    const slideAnim = useRef(new Animated.Value(height)).current;
+    const {
+        currentTrack,
+        isPlaying,
+        setQueue,
+        togglePlay,
+    } = usePlayerStore();
+    const playingTrackId = currentTrack?.id || currentTrack?._id;
 
 
     const isAlbumPlaying = albumTracks.some(t => (t.id || t._id) === playingTrackId);
 
     useEffect(() => {
-        async function configureAudio() {
-            try {
-                await Audio.setAudioModeAsync({
-                    allowsRecordingIOS: false,
-                    staysActiveInBackground: false,
-                    playsInSilentModeIOS: true,
-                    shouldDuckAndroid: true,
-                    playThroughEarpieceAndroid: false,
-                });
-            } catch (e) {
-                console.log('Error configuring audio:', e);
-            }
-        }
-        configureAudio();
         loadData();
-
-        return () => {
-            if (sound) sound.unloadAsync();
-        };
     }, [albumId]);
 
     const loadData = async () => {
         setLoading(true);
         try {
-            const icons = await getIcons();
-            setIconsMap(icons || {});
-
-            const albumData = await getAlbumDetails(albumId);
-            if (!albumData) {
+            if (!albumId) {
                 setAlbum(null);
                 setLoading(false);
                 return;
             }
-            setAlbum(albumData);
+
+            const icons = await getIcons();
+            setIconsMap(icons || {});
+
+            const likedIds = await getLikedTracks();
+            setLikedTrackIds(Array.isArray(likedIds) ? likedIds : []);
+
+            let effectiveAlbum = await getAlbumDetails(albumId);
+            if (!effectiveAlbum) {
+                if (routeAlbum && rawAlbumIds.length > 0) {
+                    effectiveAlbum = routeAlbum;
+                } else {
+                    // Fallback для випадку, коли API деталей не знаходить, але альбом є у списку
+                    const allAlbums = await getAlbums();
+                    effectiveAlbum = Array.isArray(allAlbums)
+                        ? allAlbums.find((a) => {
+                            const candidateIds = [a.id, a.Id, a._id, a.albumId, a.AlbumId].filter(Boolean);
+                            const candidateGuid = candidateIds.find((v) => GUID_REGEX.test(String(v)));
+                            return candidateGuid && albumId && candidateGuid.toString() === albumId.toString();
+                        })
+                        : null;
+                }
+            }
+
+            if (!effectiveAlbum) {
+                setAlbum(null);
+                setLoading(false);
+                return;
+            }
+
+            setAlbum(effectiveAlbum);
 
             const storedName = await AsyncStorage.getItem('username');
-            const artistName = albumData.artist?.name || albumData.artist;
+            const artistName = effectiveAlbum.artist?.name || effectiveAlbum.artist;
             if (storedName && artistName) {
                 const isMyAlbum = storedName.toLowerCase().trim() === artistName.toLowerCase().trim();
                 setIsOwner(isMyAlbum);
@@ -168,77 +208,52 @@ export default function AlbumDetailScreen({ route, navigation }) {
             const trackId = track.id || track._id;
             if (!trackId) return;
 
-            // А. ЯКЩО НАТИСНУЛИ НА ТОЙ САМИЙ ТРЕК
-            if (playingTrackId === trackId) {
-                if (sound) {
-                    if (isPlaying) {
-                        await sound.pauseAsync();
-                        setIsPlaying(false);
-                    } else {
-                        await sound.playAsync();
-                        setIsPlaying(true);
-                    }
-                    return;
-                }
+            // Якщо натиснули на поточний трек цього альбому — просто play/pause
+            if (playingTrackId === trackId && isAlbumPlaying) {
+                await togglePlay();
+                return;
             }
 
-            // Б. ЯКЩО НОВИЙ ТРЕК -> ЗУПИНЯЄМО СТАРИЙ
-            if (sound) {
-                await sound.unloadAsync();
-                setPlayingTrackId(null);
-                setIsPlaying(false);
-            }
-
-            // В. ЗАВАНТАЖУЄМО НОВИЙ
-            const { sound: newSound } = await Audio.Sound.createAsync(
-                { uri: getStreamUrl(trackId) },
-                { shouldPlay: true }
-            );
-
-            setSound(newSound);
-            setPlayingTrackId(trackId);
-            setIsPlaying(true);
-
-            // Г. ЛОГІКА АВТОПЕРЕМИКАННЯ
-            newSound.setOnPlaybackStatusUpdate(async (status) => {
-                if (status.didJustFinish) {
-                    const currentIndex = albumTracks.findIndex(t => (t.id || t._id) === trackId);
-                    const nextTrack = albumTracks[currentIndex + 1];
-
-                    if (nextTrack) {
-                        // Рекурсивно запускаємо наступний
-                        // Важливо: передаємо nextTrack у нову ітерацію playTrack
-                        // Але оскільки playTrack асинхронний і використовує замикання,
-                        // тут краще викликати його "з нуля".
-
-                        // Щоб уникнути накладання, можна просто викликати:
-                        playTrack(nextTrack);
-                    } else {
-                        setPlayingTrackId(null);
-                        setIsPlaying(false);
-                        await newSound.unloadAsync();
-                    }
-                }
+            const normalizedQueue = albumTracks.map((t) => {
+                const artistLabel = resolveArtistName(
+                    t,
+                    resolveArtistName(
+                        {
+                            artist: album?.artist || routeAlbum?.artist,
+                            artistName: album?.artistName || routeAlbum?.artistName,
+                        },
+                        'Unknown Artist'
+                    )
+                );
+                return {
+                    ...t,
+                    artistName: artistLabel,
+                    artist: typeof t.artist === 'object' && t.artist !== null
+                        ? { ...t.artist, name: t.artist.name || artistLabel }
+                        : { name: artistLabel },
+                };
             });
 
+            const trackIndex = normalizedQueue.findIndex((t) => (t.id || t._id) === trackId);
+            if (trackIndex === -1) return;
+
+            if (normalizedQueue.length > 0) {
+                // Ставимо весь альбом у глобальну чергу, щоб працював MiniPlayer/PlayerScreen
+                await setQueue(normalizedQueue, trackIndex);
+            }
         } catch (e) {
             console.error("Play error:", e);
         }
     };
 
 
-    const handleAlbumPlay = () => {
+    const handleAlbumPlay = async () => {
         if (albumTracks.length === 0) return;
 
         if (isAlbumPlaying) {
-            // Якщо альбом активний — знаходимо поточний трек і тоглим його (Play/Pause)
-            const currentTrack = albumTracks.find(t => (t.id || t._id) === playingTrackId);
-            if (currentTrack) {
-                playTrack(currentTrack);
-            }
+            await togglePlay();
         } else {
-            // Якщо нічого не грає — стартуємо перший
-            playTrack(albumTracks[0]);
+            await playTrack(albumTracks[0]);
         }
     };
 
@@ -269,15 +284,112 @@ export default function AlbumDetailScreen({ route, navigation }) {
         }
     };
 
-    // 👇 ВИПРАВЛЕНА ФУНКЦІЯ (3 аргументи замість 4)
-    const renderIcon = (iconName, style, tintColor = '#000000') => {
-        const iconUrl = icons[iconName];
+    const handleTrackLikeToggle = async (track) => {
+        const trackId = track.id || track._id;
+        if (!trackId) return;
+
+        const isLikedNow = likedTrackIds.includes(trackId);
+        const prevIds = likedTrackIds;
+        const nextIds = isLikedNow
+            ? likedTrackIds.filter((id) => id !== trackId)
+            : [...likedTrackIds, trackId];
+
+        setLikedTrackIds(nextIds);
+
+        try {
+            if (isLikedNow) {
+                await unlikeTrack(trackId);
+            } else {
+                await likeTrack(trackId);
+            }
+        } catch (e) {
+            console.log('Track like toggle error:', e);
+            setLikedTrackIds(prevIds);
+        }
+    };
+
+    const openModal = () => {
+        setModalVisible(true);
+        Animated.timing(slideAnim, {
+            toValue: 0,
+            duration: 300,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+        }).start();
+    };
+
+    const closeModal = () => {
+        Animated.timing(slideAnim, {
+            toValue: height,
+            duration: 250,
+            easing: Easing.in(Easing.cubic),
+            useNativeDriver: true,
+        }).start(() => {
+            setModalVisible(false);
+        });
+    };
+
+    const handleViewArtist = () => {
+        closeModal();
+        const artistData = album?.artist || {};
+        const artistId = artistData.id || artistData._id || album?.ownerId;
+        if (!artistId) return;
+
+        navigation.navigate('ArtistProfile', {
+            artist: {
+                ...artistData,
+                id: artistId,
+                name: resolveArtistName(
+                    { artist: artistData, artistName: album?.artistName || routeAlbum?.artistName },
+                    'Unknown Artist'
+                ),
+            },
+        });
+    };
+
+    const findIconUrl = (iconName) => {
+        if (!iconName) return null;
+
+        const lowerMap = {};
+        Object.keys(iconsMap || {}).forEach((k) => {
+            lowerMap[k.toLowerCase()] = iconsMap[k];
+        });
+
+        const normalized = iconName.toLowerCase();
+        const candidates = [
+            iconName,
+            normalized,
+            normalized.endsWith('.png') ? normalized.replace(/\.png$/i, '.svg') : normalized,
+            normalized.endsWith('.svg') ? normalized : `${normalized}.svg`,
+            normalized.endsWith('.svg') ? normalized.replace(/\.svg$/i, '.png') : normalized,
+            normalized.endsWith('.png') ? normalized : `${normalized}.png`,
+        ];
+
+        for (const candidate of candidates) {
+            if (iconsMap[candidate]) return iconsMap[candidate];
+            if (lowerMap[candidate]) return lowerMap[candidate];
+        }
+
+        return null;
+    };
+
+    // Підтримує старі виклики з fallbackText і нові без нього
+    const renderIcon = (iconName, arg2, arg3, arg4) => {
+        let style = arg2;
+        let tintColor = arg3 ?? '#000000';
+
+        if (typeof arg2 === 'string') {
+            style = arg3;
+            tintColor = arg4 ?? '#000000';
+        }
+
+        const iconUrl = findIconUrl(iconName);
+        const flatStyle = StyleSheet.flatten(style) || {};
 
         if (iconUrl) {
             const isSvg = iconName.toLowerCase().endsWith('.svg') || iconUrl.toLowerCase().endsWith('.svg');
 
             if (isSvg) {
-                const flatStyle = StyleSheet.flatten(style);
                 const width = flatStyle?.width || 24;
                 const height = flatStyle?.height || 24;
 
@@ -306,8 +418,7 @@ export default function AlbumDetailScreen({ route, navigation }) {
             );
         }
 
-        // Якщо іконки немає — повертаємо null, щоб не було помилки з об'єктом
-        return null;
+        return <View style={{ width: flatStyle?.width || 24, height: flatStyle?.height || 24 }} />;
     };
 
     // --- COMPONENTS ---
@@ -317,18 +428,19 @@ export default function AlbumDetailScreen({ route, navigation }) {
             <TouchableOpacity
                 onPress={() => navigation.goBack()}
                 style={styles.navBtn}
-                hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
+                hitSlop={{ top: scale(20), bottom: scale(20), left: scale(20), right: scale(20) }}
             >
-                {renderIcon('arrow-left.svg', '<', { width: 24, height: 24 }, '#F5D8CB')}
+                {renderIcon('arrow-left.svg', '<', { width: scale(24), height: scale(24) }, '#F5D8CB')}
             </TouchableOpacity>
 
             <View style={{ flex: 1 }} />
 
             <TouchableOpacity
                 style={styles.navBtn}
-                hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
+                hitSlop={{ top: scale(20), bottom: scale(20), left: scale(20), right: scale(20) }}
+                onPress={openModal}
             >
-                {renderIcon('more.svg', '•••', { width: 24, height: 24 }, '#F5D8CB')}
+                {renderIcon('more.svg', '•••', { width: scale(24), height: scale(24) }, '#F5D8CB')}
             </TouchableOpacity>
         </View>
     );
@@ -350,7 +462,13 @@ export default function AlbumDetailScreen({ route, navigation }) {
     }
 
     const coverUri = album.coverFileId ? getAlbumCoverUrl(album.id || album._id) : null;
-    const artistName = album.artist?.name || album.artist || 'Unknown Artist';
+    const artistName = resolveArtistName(
+        {
+            artist: album?.artist || routeAlbum?.artist,
+            artistName: album?.artistName || routeAlbum?.artistName,
+        },
+        'Unknown Artist'
+    );
 
     return (
         <View style={styles.container}>
@@ -366,7 +484,7 @@ export default function AlbumDetailScreen({ route, navigation }) {
                     locations={[0, 0.2, 0.59]}
                     start={{ x: 1, y: 0 }}
                     end={{ x: 0.5, y: 1 }}
-                    style={[styles.gradient, { paddingBottom: 50 }]}
+                    style={[styles.gradient, { paddingBottom: scale(50) }]}
                 >
                     {/* NavBar всередині скролу */}
                     <NavBar />
@@ -389,34 +507,34 @@ export default function AlbumDetailScreen({ route, navigation }) {
 
                         {/* CONTROLS */}
                         <View style={styles.controlsRow}>
-                            <TouchableOpacity style={styles.circleBtn} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                                {renderIcon('download.svg', 'Dwn', { width: 24, height: 24 }, '#F5D8CB')}
+                            <TouchableOpacity style={styles.circleBtn} hitSlop={{ top: scale(10), bottom: scale(10), left: scale(10), right: scale(10) }}>
+                                {renderIcon('download.svg', 'Dwn', { width: scale(24), height: scale(24) }, '#F5D8CB')}
                             </TouchableOpacity>
 
-                            <TouchableOpacity style={styles.circleBtn} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                                {renderIcon('add.svg', 'Like', { width: 24, height: 24 }, '#F5D8CB')}
+                            <TouchableOpacity style={styles.circleBtn} hitSlop={{ top: scale(10), bottom: scale(10), left: scale(10), right: scale(10) }}>
+                                {renderIcon('add.svg', 'Like', { width: scale(24), height: scale(24) }, '#F5D8CB')}
                             </TouchableOpacity>
 
                             {/* PLAY BUTTON */}
                             <TouchableOpacity
                                 style={[styles.circleBtn, styles.playBtn]}
                                 onPress={handleAlbumPlay}
-                                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                                hitSlop={{ top: scale(10), bottom: scale(10), left: scale(10), right: scale(10) }}
                             >
                                 {renderIcon(
                                     (isAlbumPlaying && isPlaying) ? 'pause.svg' : 'play.svg',
                                     'Play',
-                                    { width: 21.37, height: 21.37 },
+                                    { width: scale(21.37), height: scale(21.37) },
                                     '#300C0A'
                                 )}
                             </TouchableOpacity>
 
-                            <TouchableOpacity style={styles.circleBtn} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                                {renderIcon('share.svg', 'Shr', { width: 24, height: 24 }, '#F5D8CB')}
+                            <TouchableOpacity style={styles.circleBtn} hitSlop={{ top: scale(10), bottom: scale(10), left: scale(10), right: scale(10) }}>
+                                {renderIcon('share.svg', 'Shr', { width: scale(24), height: scale(24) }, '#F5D8CB')}
                             </TouchableOpacity>
 
-                            <TouchableOpacity style={styles.circleBtn} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                                {renderIcon('shuffle.svg', 'Mix', { width: 24, height: 24 }, '#F5D8CB')}
+                            <TouchableOpacity style={styles.circleBtn} hitSlop={{ top: scale(10), bottom: scale(10), left: scale(10), right: scale(10) }}>
+                                {renderIcon('shuffle.svg', 'Mix', { width: scale(24), height: scale(24) }, '#F5D8CB')}
                             </TouchableOpacity>
                         </View>
                     </View>
@@ -425,8 +543,9 @@ export default function AlbumDetailScreen({ route, navigation }) {
                     <View style={styles.tracksContainer}>
                         {albumTracks.map((item, index) => {
                             const trackId = item.id || item._id;
-                            const isPlaying = playingTrackId === trackId;
-                            const trackArtist = item.artist?.name || item.artist || 'Unknown';
+                            const isTrackActive = playingTrackId === trackId;
+                            const isLiked = likedTrackIds.includes(trackId);
+                            const trackArtist = resolveArtistName(item, artistName);
 
                             return (
                                 <TouchableOpacity
@@ -435,14 +554,19 @@ export default function AlbumDetailScreen({ route, navigation }) {
                                     onPress={() => playTrack(item)}
                                 >
                                     <View style={styles.trackInfo}>
-                                        <Text style={[styles.trackTitle, isPlaying && styles.activeText]}>
+                                        <Text style={[styles.trackTitle, isTrackActive && styles.activeText]}>
                                             {item.title}
                                         </Text>
                                         <Text style={styles.trackArtist}>{trackArtist}</Text>
                                     </View>
 
-                                    <TouchableOpacity hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                                        {renderIcon('hurt.svg', '♡', { width: 30, height: 30 }, '#F5D8CB')}
+                                    <TouchableOpacity
+                                        onPress={() => handleTrackLikeToggle(item)}
+                                        hitSlop={{ top: scale(10), bottom: scale(10), left: scale(10), right: scale(10) }}
+                                    >
+                                        {isLiked
+                                            ? renderIcon('added.svg', '♥', { width: scale(24), height: scale(24) }, '#F5D8CB')
+                                            : renderIcon('add.svg', '♡', { width: scale(24), height: scale(24) }, '#F5D8CB')}
                                     </TouchableOpacity>
                                 </TouchableOpacity>
                             );
@@ -451,6 +575,93 @@ export default function AlbumDetailScreen({ route, navigation }) {
 
                 </LinearGradient>
             </ScrollView>
+
+            <Modal
+                animationType="fade"
+                transparent={true}
+                visible={modalVisible}
+                onRequestClose={closeModal}
+            >
+                <TouchableWithoutFeedback onPress={closeModal}>
+                    <View style={styles.modalOverlay}>
+                        <TouchableWithoutFeedback>
+                            <Animated.View
+                                style={[
+                                    styles.modalSheetWrapper,
+                                    { transform: [{ translateY: slideAnim }] }
+                                ]}
+                            >
+                                <LinearGradient
+                                    colors={['rgba(255, 255, 255, 0.15)', 'rgba(255, 255, 255, 0.1)', 'rgba(255, 255, 255, 0.05)']}
+                                    locations={[0, 0.2, 1]}
+                                    start={{ x: 0.5, y: 0 }}
+                                    end={{ x: 0.5, y: 1 }}
+                                    style={styles.modalBorderGradient}
+                                >
+                                    <BlurView intensity={40} tint="dark" style={styles.modalGlassContainer}>
+                                        <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(30, 10, 8, 0.85)' }]} />
+
+                                        <View style={styles.modalInnerContent}>
+                                            <View style={styles.modalIndicator} />
+                                            <Text style={styles.modalTitle}>More</Text>
+
+                                            <ScrollView style={styles.modalScroll} showsVerticalScrollIndicator={false}>
+                                                <TouchableOpacity
+                                                    style={styles.menuItemCapsule}
+                                                    onPress={() => {
+                                                        closeModal();
+                                                        Alert.alert('Playlist', 'Function coming soon');
+                                                    }}
+                                                >
+                                                    <View style={styles.menuItemIconCircle}>
+                                                        {renderIcon('add to another playlist.svg', '', { width: scale(24), height: scale(24) }, '#F5D8CB')}
+                                                    </View>
+                                                    <Text style={styles.menuItemText}>Add to another playlist</Text>
+                                                </TouchableOpacity>
+
+                                                <TouchableOpacity
+                                                    style={styles.menuItemCapsule}
+                                                    onPress={() => {
+                                                        closeModal();
+                                                        Alert.alert('Queue', 'Function coming soon');
+                                                    }}
+                                                >
+                                                    <View style={styles.menuItemIconCircle}>
+                                                        {renderIcon('add to queue.svg', '', { width: scale(24), height: scale(24) }, '#F5D8CB')}
+                                                    </View>
+                                                    <Text style={styles.menuItemText}>Add to queue</Text>
+                                                </TouchableOpacity>
+
+                                                <TouchableOpacity style={styles.menuItemCapsule} onPress={handleViewArtist}>
+                                                    <View style={styles.menuItemIconCircle}>
+                                                        {renderIcon('artist.svg', '', { width: scale(24), height: scale(24) }, '#F5D8CB')}
+                                                    </View>
+                                                    <Text style={styles.menuItemText}>View the artist</Text>
+                                                </TouchableOpacity>
+
+                                                <TouchableOpacity
+                                                    style={styles.menuItemCapsule}
+                                                    onPress={() => {
+                                                        closeModal();
+                                                        Alert.alert('Radio', 'Function coming soon');
+                                                    }}
+                                                >
+                                                    <View style={styles.menuItemIconCircle}>
+                                                        {renderIcon('radio.svg', '', { width: scale(24), height: scale(24) }, '#F5D8CB')}
+                                                    </View>
+                                                    <Text style={styles.menuItemText}>Go to radio based on album</Text>
+                                                </TouchableOpacity>
+                                            </ScrollView>
+                                        </View>
+                                    </BlurView>
+                                </LinearGradient>
+                            </Animated.View>
+                        </TouchableWithoutFeedback>
+                    </View>
+                </TouchableWithoutFeedback>
+            </Modal>
+
+            <MiniPlayer bottomOffset={scale(24)} />
         </View>
     );
 }
@@ -470,7 +681,7 @@ const styles = StyleSheet.create({
 
     // NAV BAR
     navBar: {
-        marginTop: Platform.OS === 'ios' ? 50 : StatusBar.currentHeight + 10,
+        marginTop: Platform.OS === 'ios' ? scale(50) : (StatusBar.currentHeight || 0) + scale(10),
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
@@ -479,7 +690,7 @@ const styles = StyleSheet.create({
         zIndex: 10,
     },
     navBtn: {
-        padding: 5,
+        padding: scale(5),
     },
 
     // HEADER
@@ -493,7 +704,7 @@ const styles = StyleSheet.create({
         fontSize: scale(14),
         fontFamily: 'Unbounded-Regular',
         textTransform: 'uppercase',
-        letterSpacing: 1,
+        letterSpacing: scale(1),
         marginBottom: scale(20),
         marginTop: scale(10),
     },
@@ -503,15 +714,15 @@ const styles = StyleSheet.create({
         borderRadius: scale(24),
         marginBottom: scale(20),
         shadowColor: "#000",
-        shadowOffset: { width: 0, height: 10 },
+        shadowOffset: { width: 0, height: scale(10) },
         shadowOpacity: 0.5,
-        shadowRadius: 10,
+        shadowRadius: scale(10),
     },
     placeholderCover: {
         backgroundColor: '#333',
         justifyContent: 'center',
         alignItems: 'center',
-        borderWidth: 1,
+        borderWidth: scale(1),
         borderColor: '#555'
     },
     placeholderText: {
@@ -540,7 +751,7 @@ const styles = StyleSheet.create({
         width: scale(48),
         height: scale(48),
         borderRadius: scale(24),
-        borderWidth: 1,
+        borderWidth: scale(1),
         borderColor: '#F5D8CB',
         justifyContent: 'center',
         alignItems: 'center',
@@ -552,7 +763,7 @@ const styles = StyleSheet.create({
         borderRadius: scale(30),
         backgroundColor: '#F5D8CB',
         borderColor: '#F5D8CB',
-        borderWidth: 0,
+        borderWidth: scale(0),
     },
 
     // TRACKS
@@ -566,7 +777,7 @@ const styles = StyleSheet.create({
         paddingVertical: scale(14),
         paddingHorizontal: scale(0),
         marginHorizontal: scale(16),
-        borderBottomWidth: 1,
+        borderBottomWidth: scale(1),
         borderBottomColor: '#F5D8CB',
     },
     trackInfo: {
@@ -586,5 +797,82 @@ const styles = StyleSheet.create({
         color: '#F5D8CB',
         fontSize: scale(14),
         fontFamily: 'Poppins-Regular',
+    },
+    modalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0, 0, 0, 0.3)',
+        justifyContent: 'flex-end',
+    },
+    modalSheetWrapper: {
+        width: '100%',
+        height: scale(375),
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: scale(-10) },
+        shadowOpacity: 0.3,
+        shadowRadius: scale(20),
+        elevation: 15,
+    },
+    modalBorderGradient: {
+        borderTopLeftRadius: scale(40),
+        borderTopRightRadius: scale(40),
+        paddingTop: scale(1.5),
+        paddingHorizontal: scale(1.5),
+        flex: 1,
+    },
+    modalGlassContainer: {
+        borderTopLeftRadius: scale(40),
+        borderTopRightRadius: scale(40),
+        overflow: 'hidden',
+        width: '100%',
+        flex: 1,
+    },
+    modalScroll: {
+        width: '100%',
+    },
+    modalInnerContent: {
+        paddingHorizontal: scale(20),
+        paddingTop: scale(16),
+        alignItems: 'center',
+        paddingBottom: scale(40),
+    },
+    modalIndicator: {
+        width: scale(40),
+        height: scale(4),
+        backgroundColor: 'rgba(245, 216, 203, 0.2)',
+        borderRadius: scale(2),
+        marginBottom: scale(18),
+    },
+    modalTitle: {
+        color: '#F5D8CB',
+        fontSize: scale(22),
+        fontFamily: 'Unbounded-SemiBold',
+        marginBottom: scale(20),
+    },
+    menuItemCapsule: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        height: scale(48),
+        borderRadius: scale(24),
+        borderWidth: scale(1),
+        borderColor: '#F5D8CB',
+        marginBottom: scale(12),
+        paddingRight: scale(16),
+    },
+    menuItemIconCircle: {
+        width: scale(48),
+        height: scale(48),
+        borderRadius: scale(24),
+        borderWidth: scale(1),
+        borderColor: '#F5D8CB',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginLeft: scale(-1),
+        marginRight: scale(12),
+    },
+    menuItemText: {
+        color: '#F5D8CB',
+        fontSize: scale(16),
+        fontFamily: 'Poppins-Regular',
+        fontWeight: '400',
     },
 });

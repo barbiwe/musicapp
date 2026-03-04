@@ -14,7 +14,6 @@ import {
     ScrollView,
     TouchableWithoutFeedback,
     Image,
-    ImageBackground,
     StatusBar,
 } from 'react-native';
 import { Audio } from 'expo-av';
@@ -29,6 +28,7 @@ import {
     unlikeTrack,
     getLikedTracks,
     getIcons,
+    getCachedIcons,
     getTrackCoverUrl,
     markTrackAsPlayed,
     getRadioQueue,
@@ -37,6 +37,7 @@ import {
     getUserAvatarUrl,
     getColoredSvgXml,
     peekColoredSvgXml,
+    resolveArtistName,
 } from '../api/api';
 
 
@@ -46,6 +47,7 @@ const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('screen');
 // 0. ГЛОБАЛЬНИЙ КЕШ (Щоб не вантажити одне й те саме 100 разів)
 const imagePrefetchCache = new Set();
 let iconsMapCache = null;
+const artistAvatarUrlCache = new Map();
 
 const prefetchImageOnce = (uri) => {
     if (!uri || imagePrefetchCache.has(uri)) return;
@@ -56,7 +58,7 @@ const prefetchImageOnce = (uri) => {
 };
 
 // 👇 Цей компонент завантажує SVG, чистить, фарбує і КЕШУЄ результат
-const ColoredSvg = ({ uri, width, height, color }) => {
+const ColoredSvg = React.memo(({ uri, width, height, color }) => {
     const [xml, setXml] = useState(peekColoredSvgXml(uri, color));
 
     useEffect(() => {
@@ -84,7 +86,7 @@ const ColoredSvg = ({ uri, width, height, color }) => {
             height={height}
         />
     );
-};
+});
 
 
 // 👇 ОНОВЛЕНИЙ QueueItem (приймає isLiked та onLike)
@@ -115,7 +117,7 @@ const QueueItem = React.memo(({ item, currentTrack, isPlaying, playFromQueue, ha
                     {item.title || 'No Title'}
                 </Text>
                 <Text style={styles.queueArtist} numberOfLines={1}>
-                    {item.artist?.name || 'Unknown'}
+                    {resolveArtistName(item, 'Unknown')}
                 </Text>
             </View>
 
@@ -153,15 +155,22 @@ export default function PlayerScreen({ navigation, route }) {
 
     // 2. ДІСТАЄМО ІНФУ САМЕ З ГЛОБАЛЬНОГО СТОРУ
     const trackTitle = currentTrack?.title || 'No Title';
-    const trackArtist = currentTrack?.artist?.name || currentTrack?.artistName || 'Unknown Artist';
+    const trackArtist = resolveArtistName(currentTrack, 'Unknown Artist');
     const coverUrl = getTrackCoverUrl(currentTrack);
 
     // 3. ВСІ ІНШІ СТЕЙТИ
-    const [icons, setIcons] = useState({});
+    const [icons, setIcons] = useState(() => getCachedIcons() || {});
+    const playerBackgroundUrl =
+        icons['playerbg.png'] ||
+        icons['bg.png'] ||
+        icons['playerBg.png'] ||
+        icons['bg.PNG'] ||
+        null;
     const [recommendations, setRecommendations] = useState([]);
     const [relatedArtists, setRelatedArtists] = useState([]);
     const [notification, setNotification] = useState(null);
     const notifAnim = useRef(new Animated.Value(200)).current;
+    const notifHideTimeoutRef = useRef(null);
     const [modalVisible, setModalVisible] = useState(false);
     const [queueVisible, setQueueVisible] = useState(false);
     const [relatedVisible, setRelatedVisible] = useState(false);
@@ -192,12 +201,20 @@ export default function PlayerScreen({ navigation, route }) {
     }, [coverUrl]);
 
     useEffect(() => {
+        prefetchImageOnce(playerBackgroundUrl);
+    }, [playerBackgroundUrl]);
+
+    useEffect(() => {
         // Прогріваємо найближчі обкладинки в черзі, щоб у модалці відкривались без затримки
         const upcomingTracks = queue.slice(currentIndex, currentIndex + 8);
         upcomingTracks.forEach((track) => prefetchImageOnce(getTrackCoverUrl(track)));
     }, [queue, currentIndex]);
 
     const loadIconsData = async () => {
+        if (Object.keys(icons).length > 0) {
+            return;
+        }
+
         if (iconsMapCache) {
             setIcons(iconsMapCache);
             return;
@@ -218,9 +235,12 @@ export default function PlayerScreen({ navigation, route }) {
 
     useEffect(() => {
         if (relatedVisible) {
-            loadRelatedData();
+            // Не перезавантажуємо щоразу при відкритті модалки, якщо дані вже є
+            if (recommendations.length === 0 || relatedArtists.length === 0) {
+                loadRelatedData();
+            }
         }
-    }, [relatedVisible]);
+    }, [relatedVisible, recommendations.length, relatedArtists.length]);
 
 
     const loadRelatedData = async () => {
@@ -228,9 +248,12 @@ export default function PlayerScreen({ navigation, route }) {
         if (!trackId) return;
 
         try {
-            // 1. "You may also like"
-            // 🔥 БЕРЕМО БІЛЬШЕ (10 штук), щоб було що підставляти, коли видаляємо
-            const recs = await getRecommendations();
+            // Паралельно вантажимо рекомендації та треки для артистів
+            const [recs, allTracks] = await Promise.all([
+                getRecommendations(),
+                getTracks(),
+            ]);
+
             const formattedRecs = (recs || []).map(r => ({
                 ...r, // 👈 СПОЧАТКУ розгортаємо об'єкт із сервера
                 id: r.trackId, // 👈 ПОТІМ задаємо ID (щоб він точно був правильним)
@@ -242,8 +265,7 @@ export default function PlayerScreen({ navigation, route }) {
             setRecommendations(formattedRecs.slice(0, 10));
             formattedRecs.slice(0, 10).forEach((track) => prefetchImageOnce(getTrackCoverUrl(track)));
 
-            // 2. "Related artists" (Мокаємо: беремо 4 з усіх треків)
-            const allTracks = await getTracks();
+            // Related artists: беремо перші 4 унікальних артистів
             const map = new Map();
             allTracks.forEach(t => {
                 const aName = t.artistName || t.artist?.name;
@@ -252,7 +274,14 @@ export default function PlayerScreen({ navigation, route }) {
                     map.set(aId, { id: aId, name: aName });
                 }
             });
-            setRelatedArtists([...map.values()].slice(0, 4));
+            const nextRelatedArtists = [...map.values()].slice(0, 4);
+            setRelatedArtists(nextRelatedArtists);
+
+            // Прогріваємо аватари, щоб рендерились одразу при відкритті Related
+            nextRelatedArtists.forEach((artist) => {
+                const url = getAvatar(artist.id);
+                prefetchImageOnce(url);
+            });
 
         } catch (e) {
             console.log("Error loading related:", e);
@@ -271,7 +300,14 @@ export default function PlayerScreen({ navigation, route }) {
     };
 
 
-    const getAvatar = (userId) => `${getUserAvatarUrl(userId)}?t=${new Date().getTime()}`;
+    const getAvatar = (userId) => {
+        if (!userId) return null;
+        const key = String(userId);
+        if (!artistAvatarUrlCache.has(key)) {
+            artistAvatarUrlCache.set(key, getUserAvatarUrl(userId));
+        }
+        return artistAvatarUrlCache.get(key);
+    };
 
 
     //LIKE STATUS
@@ -293,7 +329,9 @@ export default function PlayerScreen({ navigation, route }) {
     // 2. Функція перемикання лайка для будь-якого треку в списку
     const handleItemLikeToggle = async (track) => {
         const trackId = track.id || track._id;
+        if (!trackId) return;
         const isCurrentlyLiked = likedTrackIds.includes(trackId);
+        const prevIds = likedTrackIds;
 
         // Оптимістичне оновлення (миттєво змінюємо UI)
         let newIds;
@@ -308,41 +346,56 @@ export default function PlayerScreen({ navigation, route }) {
         try {
             if (isCurrentlyLiked) {
                 await unlikeTrack(trackId);
+                showNotification('Removed from liked');
             } else {
                 await likeTrack(trackId);
+                showNotification('Added to liked');
             }
         } catch (error) {
             console.log("Like error:", error);
-            // Якщо помилка - повертаємо назад (можна додати, якщо треба)
+            // Відкатуємо оптимістичне оновлення при помилці
+            setLikedTrackIds(prevIds);
+            showNotification('Failed to update like');
         }
     };
 
      //NOTIFICATIONS
     // 👇 ОНОВЛЕНА ФУНКЦІЯ (Анімація знизу)
     const showNotification = (message, actionLabel = null, action = null) => {
+        if (notifHideTimeoutRef.current) {
+            clearTimeout(notifHideTimeoutRef.current);
+            notifHideTimeoutRef.current = null;
+        }
+        notifAnim.stopAnimation();
+
         setNotification({ message, actionLabel, action });
 
-        Animated.sequence([
-            // 1. Виїжджає знизу (до позиції 0 - це "рідна" позиція, задана в стилях)
-            Animated.timing(notifAnim, {
-                toValue: 0,
-                duration: 400,
-                easing: Easing.out(Easing.back(1.5)),
-                useNativeDriver: true,
-            }),
-            // 2. Висить 3 секунди
-            Animated.delay(3000),
-            // 3. Ховається назад вниз
+        Animated.timing(notifAnim, {
+            toValue: 0,
+            duration: 260,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+        }).start();
+
+        notifHideTimeoutRef.current = setTimeout(() => {
             Animated.timing(notifAnim, {
                 toValue: 200,
                 duration: 300,
                 easing: Easing.in(Easing.cubic),
                 useNativeDriver: true,
-            })
-        ]).start(() => {
-            setNotification(null);
-        });
+            }).start(() => {
+                setNotification(null);
+            });
+        }, 2400);
     };
+
+    useEffect(() => {
+        return () => {
+            if (notifHideTimeoutRef.current) {
+                clearTimeout(notifHideTimeoutRef.current);
+            }
+        };
+    }, []);
 
     // 4. SEEKING
     const calculateSeekPosition = (e) => {
@@ -393,7 +446,7 @@ export default function PlayerScreen({ navigation, route }) {
             console.log("📻 Radio response length:", radioTracks.length);
 
             if (radioTracks.length === 0) {
-                Alert.alert("Radio", "Server returned 0 similar tracks.");
+                showNotification('Radio: no similar tracks');
                 return;
             }
 
@@ -414,11 +467,11 @@ export default function PlayerScreen({ navigation, route }) {
                 openModal('queue');
             }, 500);
 
-            Alert.alert("Radio Started", `Added ${radioTracks.length} tracks!`);
+            showNotification(`Radio started: ${radioTracks.length} tracks`);
 
         } catch (e) {
             console.log("❌ Radio start error:", e);
-            Alert.alert("Error", "Radio failed");
+            showNotification('Radio failed');
         }
     };
 
@@ -515,7 +568,7 @@ export default function PlayerScreen({ navigation, route }) {
     const handleClearQueue = () => {
         closeModal();
         clearQueue(); // 👈 З Zustand
-        Alert.alert("Queue", "Queue cleared");
+        showNotification('Queue cleared');
     };
 
     const handleDownload = () => {
@@ -525,8 +578,7 @@ export default function PlayerScreen({ navigation, route }) {
 
     const handleAddToPlaylist = () => {
         closeModal();
-        // Тут поки заглушка, або навігація на екран вибору плейлиста, якщо він є
-        Alert.alert("Playlist", "Function coming soon!");
+        showNotification('Playlist function coming soon');
     };
 
     const formatTime = (millis) => {
@@ -633,7 +685,13 @@ export default function PlayerScreen({ navigation, route }) {
             />
 
             {/* 1. ФОН (Абсолютне позиціювання) */}
-            {icons['background.svg'] ? (
+            {playerBackgroundUrl ? (
+                <Image
+                    source={{ uri: playerBackgroundUrl, cache: 'force-cache' }}
+                    style={styles.fixedBackground}
+                    resizeMode="cover"
+                />
+            ) : icons['background.svg'] ? (
                 <View style={styles.fixedBackground}>
                     <ColoredSvg
                         uri={icons['background.svg']}

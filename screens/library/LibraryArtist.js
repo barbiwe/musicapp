@@ -9,7 +9,7 @@ import {
     Dimensions
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { scale } from '../api/api';
+import { scale } from '../../api/api';
 
 const { width, height } = Dimensions.get('window');
 

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-
+import { SvgUri } from 'react-native-svg';
 import {
     View,
     Text,
@@ -9,63 +9,41 @@ import {
     TouchableOpacity,
     Dimensions
 } from 'react-native';
-import { SvgUri } from 'react-native-svg';
 import { LinearGradient } from 'expo-linear-gradient';
-import { getIcons, scale } from '../api/api';
+import { getIcons, scale } from '../../api/api';
 import InsetShadow from 'react-native-inset-shadow';
 const { width, height } = Dimensions.get('window');
 
-export default function LibraryPodcast({ navigation }) {
-    // Дані згідно зі скріншотом "Podcast"
+export default function LibraryPlaylist({ navigation }) {
+    // Дані згідно зі скріншотом (Playlist tab)
     const DATA = [
         {
             id: '1',
-            title: 'Топ аудіокниг',
-            subtitle: 'Podcast / Taras Andrushko',
-            // Навушники та книги
-            image: 'https://www.chipublib.org/wp-content/uploads/sites/3/2022/09/36079964425_7b3042d5e1_k.jpg'
+            title: 'For car',
+            subtitle: 'Playlist / Unknown',
+            // Картинка: дівчина в машині/рука на кермі
+            image: 'https://images.unsplash.com/photo-1511553677255-ba939e5537e0?q=80&w=300&auto=format&fit=crop'
         },
         {
             id: '2',
-            title: 'Атомні звички',
-            subtitle: 'Podcast / Andrew Ozarkiv',
-            // Книга на світлому фоні
-            image: 'https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?q=80&w=300&auto=format&fit=crop'
+            title: 'Mix of the day',
+            subtitle: 'Playlist / For this user',
+            // Картинка: книга/ранок
+            image: 'https://images.unsplash.com/photo-1515378791036-0648a3ef77b2?q=80&w=300&auto=format&fit=crop'
         },
         {
             id: '3',
-            title: 'Книги для розвитку',
-            subtitle: 'Podcast / Dmitrij',
-            // Стопка книг
-            image: 'https://images.unsplash.com/photo-1512820790803-83ca734da794?q=80&w=300&auto=format&fit=crop'
+            title: 'My summer',
+            subtitle: 'Playlist / QWS',
+            // Картинка: пальми
+            image: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?q=80&w=300&auto=format&fit=crop'
         },
         {
             id: '4',
-            title: 'Подкаст українською',
-            subtitle: 'Podcast / Unknown',
-            // Мінімалістичний текст на білому
-            image: 'https://images.unsplash.com/photo-1589829085413-56de8ae18c73?q=80&w=300&auto=format&fit=crop'
-        },
-        {
-            id: '5',
-            title: 'Подкаст терапія',
-            subtitle: 'Podcast / Spartak Subbota',
-            // Чорно-біле фото чоловіка
-            image: 'https://images.unsplash.com/photo-1531427186611-ecfd6d936c79?q=80&w=300&auto=format&fit=crop'
-        },
-        {
-            id: '6',
-            title: 'Цейво подкаст',
-            subtitle: 'Podcast / Василь Байдак',
-            // Чоловік на синьому фоні
-            image: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=300&auto=format&fit=crop'
-        },
-        {
-            id: '7',
-            title: 'Подкаст',
-            subtitle: 'Podcast / Alla Malkin',
-            // Мозок / ілюстрація
-            image: 'https://images.unsplash.com/photo-1559757175-5700dde675bc?q=80&w=300&auto=format&fit=crop'
+            title: 'Magic city',
+            subtitle: 'Playlist / S-star',
+            // Картинка: леопард/лапа
+            image: 'https://images.unsplash.com/photo-1534234828569-1d37803d5268?q=80&w=300&auto=format&fit=crop'
         },
     ];
 
@@ -73,14 +51,14 @@ export default function LibraryPodcast({ navigation }) {
         return (
             <TouchableOpacity
                 key={item.id}
-                style={styles.cardContainer} // Стиль ідентичний до Playlist/Album
+                style={styles.cardContainer} // Стиль точно як у твоєму коді
                 activeOpacity={0.7}
                 onPress={() => {}}
             >
                 <View style={styles.imageWrapper}>
                     <Image
                         source={{ uri: item.image }}
-                        style={styles.image} // Квадратні з заокругленням (не круглі)
+                        style={styles.image}
                         resizeMode="cover"
                     />
                 </View>
@@ -106,7 +84,7 @@ export default function LibraryPodcast({ navigation }) {
                 end={{ x: 0.5, y: 1 }}
                 style={styles.gradient}
             >
-                {/* Відступ під хедер */}
+                {/* Відступ під хедер (як у прикладі) */}
                 <View style={{ height: 220 }} />
 
                 <ScrollView
@@ -139,7 +117,7 @@ const styles = StyleSheet.create({
         paddingBottom: scale(100),
     },
 
-    // --- CARD STYLES ---
+    // --- CARD STYLES (Скопійовано з твого коду 1 в 1) ---
     cardContainer: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -147,8 +125,7 @@ const styles = StyleSheet.create({
         borderRadius: scale(20),
         marginBottom: scale(16),
         width: '100%',
-
-        // Зберігаємо стиль лівого краю як у Playlist
+        // Ті самі скруглення зліва, що ти скинув
         borderTopLeftRadius: scale(50),
         borderBottomLeftRadius: scale(50),
 
@@ -167,7 +144,7 @@ const styles = StyleSheet.create({
     image: {
         width: scale(80),
         height: scale(80),
-        borderRadius: scale(15), // Стандартне заокруглення (не коло)
+        borderRadius: scale(15),
         backgroundColor: '#333',
     },
 

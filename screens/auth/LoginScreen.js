@@ -1,28 +1,31 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect } from 'react';
 import {
     View,
     Text,
     TextInput,
     StyleSheet,
     TouchableOpacity,
+    ActivityIndicator,
     ScrollView,
     Platform,
-    KeyboardAvoidingView,
     Alert,
-    ActivityIndicator,
+    KeyboardAvoidingView,
     Image,
     StatusBar
-} from "react-native";
+} from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+
+import * as WebBrowser from 'expo-web-browser';
+import * as Google from 'expo-auth-session/providers/google';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SvgUri, SvgXml } from 'react-native-svg';
-import * as WebBrowser from "expo-web-browser";
-import * as Google from "expo-auth-session/providers/google";
-// 👇 Імпорти API та утиліт
-import { registerUser, googleLogin, scale, getIcons } from "../api/api";
+// 👇 Імпортуємо готові функції та утиліти
+import { loginUser, googleLogin, scale, getIcons } from '../../api/api';
 
 WebBrowser.maybeCompleteAuthSession();
 
 const svgCache = {};
+
 // 👇 Цей компонент завантажує SVG, чистить, фарбує і КЕШУЄ результат
 const ColoredSvg = ({ uri, width, height, color }) => {
     const cacheKey = `${uri}_${color || 'original'}`;
@@ -74,19 +77,18 @@ const ColoredSvg = ({ uri, width, height, color }) => {
     );
 };
 
-export default function RegisterScreen({ navigation }) {
-    const [username, setUsername] = useState("");
-    const [email, setEmail] = useState("");
-    const [password, setPassword] = useState("");
-    const [secure, setSecure] = useState(true);
-    const [error, setError] = useState("");
+export default function LoginScreen({ navigation }) {
+    const [email, setEmail] = useState('');
+    const [password, setPassword] = useState('');
     const [loading, setLoading] = useState(false);
+    const [error, setError] = useState('');
+    const [secure, setSecure] = useState(true);
 
-    // 👇 Стейт для іконок
+    // Стейт для іконок
     const [icons, setIcons] = useState({});
 
     /* =========================
-       GOOGLE AUTH CONFIG
+           GOOGLE AUTH CONFIG
     ========================= */
     const [request, response, promptAsync] = Google.useIdTokenAuthRequest({
         iosClientId: '651816373430-s2bjgg2rh5pjga66kuevbt3u8e6e56e6.apps.googleusercontent.com',
@@ -94,7 +96,7 @@ export default function RegisterScreen({ navigation }) {
         redirectUri: 'com.googleusercontent.apps.651816373430-s2bjgg2rh5pjga66kuevbt3u8e6e56e6:/oauth2redirect/google'
     });
 
-    // 1. Завантаження іконок
+    // 1. Завантаження іконок при старті
     useEffect(() => {
         loadIconsData();
     }, []);
@@ -108,71 +110,85 @@ export default function RegisterScreen({ navigation }) {
         }
     };
 
-    // 2. Обробка Google Auth
+    // 2. Обробка відповіді Google
     useEffect(() => {
-        if (response?.type === "success") {
+        if (response?.type === 'success') {
             const { id_token } = response.params;
-            handleBackendGoogleRegister(id_token);
-        } else if (response?.type === "error") {
-            console.log("Google Register Error:", response.error);
+            handleBackendGoogleLogin(id_token);
+        } else if (response?.type === 'error') {
+            setError('Google sign-in failed');
         }
     }, [response]);
 
-    const handleBackendGoogleRegister = async (token) => {
+    /* =========================
+       LOGIC
+    ========================= */
+    const handleBackendGoogleLogin = async (token) => {
         setLoading(true);
         const result = await googleLogin(token);
         setLoading(false);
 
         if (result?.error) {
-            Alert.alert("Error", typeof result.error === 'string' ? result.error : 'Google registration failed');
+            setError(typeof result.error === 'string' ? result.error : 'Google login failed');
         } else {
+            try {
+                const uid = result.userId || result.id;
+                if (uid) await AsyncStorage.setItem('userId', uid.toString());
+            } catch(e) { console.log(e); }
+
             navigation.replace('MainTabs');
         }
     };
 
-    /* =========================
-       HELPERS
-    ========================= */
-    const isFormValid = username && email && password.length >= 8;
+    const handleLogin = async () => {
+        if (!email || !password) {
+            setError('Fill all fields');
+            return;
+        }
 
-    const handleRegister = async () => {
-        if (!isFormValid) return;
         setLoading(true);
-        const res = await registerUser(username, email, "", password);
+        setError('');
+
+        const result = await loginUser(email, password);
         setLoading(false);
 
-        if (res?.error) {
-            Alert.alert("Error", typeof res.error === 'string' ? res.error : "Registration failed");
-        } else {
-            navigation.replace('MainTabs');
+        if (result?.error) {
+            setError('Invalid email or password');
+            return;
         }
+
+        try {
+            const uid = result.userId || result.id;
+            if (uid) await AsyncStorage.setItem('userId', uid.toString());
+        } catch(e) { console.log(e); }
+
+        navigation.replace('MainTabs');
     };
 
-    const renderIcon = (iconName, fallbackText, style, tintColor = '#000000') => {
+    // 👇 Змінив аргументи: прибрав fallbackText, тепер їх 3
+    const renderIcon = (iconName, style, tintColor = '#000000') => {
         const iconUrl = icons[iconName];
 
         if (iconUrl) {
             const isSvg = iconName.toLowerCase().endsWith('.svg') || iconUrl.toLowerCase().endsWith('.svg');
 
             if (isSvg) {
+                // Тепер style — це справді стиль, а не текст
                 const flatStyle = StyleSheet.flatten(style);
                 const width = flatStyle?.width || 24;
                 const height = flatStyle?.height || 24;
-
-                // ❌ МИ ПРИБРАЛИ ПЕРЕВІРКУ if (!tintColor)
-                // Тепер ми ЗАВЖДИ використовуємо ColoredSvg, бо тільки він має КЕШ.
 
                 return (
                     <ColoredSvg
                         uri={iconUrl}
                         width={width}
                         height={height}
-                        color={tintColor} // Якщо null, ColoredSvg просто не буде фарбувати
+                        color={tintColor}
                     />
                 );
             }
 
-            // PNG (стара логіка)
+            // PNG
             const imageStyle = [style];
             if (tintColor) {
                 imageStyle.push({ tintColor: tintColor });
@@ -187,8 +203,16 @@ export default function RegisterScreen({ navigation }) {
             );
         }
 
-        return <Text style={[styles.headerText, { fontSize: 14, color: tintColor || '#F5D8CB' }]}>{fallbackText}</Text>;
+        // Якщо іконки немає — просто нічого не показуємо, або показуємо назву дрібно
+        // (Щоб не було помилки об'єкта)
+        return null;
+        // Або якщо хочеш бачити текст:
+        // return <Text style={{ fontSize: 10, color: 'red' }}>{iconName}</Text>;
     };
+
+
+    const isDisabled = !email || !password || loading;
+
     return (
         <LinearGradient
             colors={['#9A4B39', '#80291E', '#190707']}
@@ -208,43 +232,21 @@ export default function RegisterScreen({ navigation }) {
                     keyboardShouldPersistTaps="handled"
                     showsVerticalScrollIndicator={false}
                     bounces={false}
-                    overScrollMode="never"
                 >
-                    {/* BACK BUTTON */}
+                    {/* BACK BUTTON (Опціонально, якщо треба повертатись назад) */}
                     <TouchableOpacity
                         style={styles.backButton}
-                        onPress={() => navigation.goBack()}
-                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                        onPress={() => navigation.canGoBack() ? navigation.goBack() : null}
                     >
-                        {renderIcon('arrow-left.svg', '<', { width: scale(24), height: scale(24) }, '#F5D8CB')}
                     </TouchableOpacity>
 
-                    {/* HEADER */}
-                    <Text style={styles.title}>
-                        Hey,{"\n"}Nice to meet you
-                    </Text>
+                    <Text style={styles.title}>Hey,{'\n'}Welcome Back</Text>
 
-                    {/* INPUTS */}
                     <View style={styles.inputsWrap}>
-
-                        {/* USERNAME */}
-                        <View style={styles.inputWrapper}>
+                        {/* EMAIL INPUT */}
+                        <View style={[styles.inputWrapper, error ? { borderColor: 'red' } : {}]}>
                             <View style={styles.iconCircle}>
-                                {renderIcon('user.svg', 'U', { width: scale(20), height: scale(20) }, '#F5D8CB')}
-                            </View>
-                            <TextInput
-                                placeholder="Name"
-                                value={username}
-                                onChangeText={setUsername}
-                                style={styles.input}
-                                placeholderTextColor="#F5D8CB" // #F5D8CB напівпрозорий
-                            />
-                        </View>
-
-                        {/* EMAIL */}
-                        <View style={styles.inputWrapper}>
-                            <View style={styles.iconCircle}>
-                                {renderIcon('email.svg', '@', { width: scale(24), height: scale(24) }, '#F5D8CB')}
+                                {renderIcon('email.svg', { width: scale(24), height: scale(24) }, '#F5D8CB')}
                             </View>
                             <TextInput
                                 placeholder="Email"
@@ -257,87 +259,82 @@ export default function RegisterScreen({ navigation }) {
                             />
                         </View>
 
-                        {/* PASSWORD */}
-                        <View style={[
-                            styles.inputWrapper,
-                            (password.length > 0 && password.length < 8) ? { borderColor: '#F5D8CB' } : {}
-                        ]}>
+                        {/* PASSWORD INPUT */}
+                        <View style={[styles.inputWrapper, error ? { borderColor: 'red' } : {}]}>
                             <View style={styles.iconCircle}>
-                                {renderIcon('password.svg', '*', { width: scale(24), height: scale(24) }, '#F5D8CB')}
+                                {renderIcon('password.svg', { width: scale(24), height: scale(24) }, '#F5D8CB')}
                             </View>
-
                             <TextInput
                                 placeholder="Password"
                                 value={password}
                                 onChangeText={setPassword}
-                                secureTextEntry={secure}
                                 style={styles.input}
                                 placeholderTextColor="#F5D8CB"
+                                secureTextEntry={secure}
                             />
+                            {/* Око для показу пароля (опціонально) */}
+                            <TouchableOpacity
+                                onPress={() => setSecure(!secure)}
+                                style={{ position: 'absolute', right: scale(16) }}
+                            >
+                                {/* Тут можна додати іконку ока, якщо вона є в базі */}
+                            </TouchableOpacity>
                         </View>
-
-                        {/* Текст помилки знизу */}
-                        {password.length > 0 && password.length < 8 && (
-                            <Text style={{
-                                color: '#F5D8CB',
-                                opacity: 0.8,
-                                marginTop: scale(4),
-                                textAlign: 'center',
-                                width: '100%',
-                                fontSize: scale(12),
-                                fontFamily: 'Poppins-Regular'
-                            }}>
-                                Password must contain 8 numbers
-                            </Text>
-                        )}
                     </View>
 
-                    {/* REGISTER BUTTON */}
+                    {error ? <Text style={styles.errorText}>{error}</Text> : null}
+
+                    <TouchableOpacity onPress={() => Alert.alert("Reset Password", "Coming soon")}>
+                        <Text style={styles.forgot}>Forgot password?</Text>
+                    </TouchableOpacity>
+
+                    {/* SIGN IN BUTTON */}
                     <TouchableOpacity
-                        disabled={!isFormValid || loading}
-                        onPress={handleRegister}
-                        style={[
-                            styles.button,
-                            (!isFormValid || loading) && styles.buttonDisabled
-                        ]}
-                        activeOpacity={0.8}
+                        style={[styles.button, isDisabled && styles.buttonDisabled]}
+                        onPress={handleLogin}
+                        disabled={isDisabled}
                     >
                         {loading ? (
                             <ActivityIndicator color="#300C0A" />
                         ) : (
-                            <Text style={styles.buttonText}>Sign up</Text>
+                            <Text style={styles.buttonText}>Sign in</Text>
                         )}
                     </TouchableOpacity>
 
-                    {/* SOCIAL */}
                     <Text style={styles.or}>or continue with</Text>
 
+                    {/* SOCIAL ROW */}
                     <View style={styles.socialRow}>
-                        {/* GOOGLE BUTTON */}
+                        {/* GOOGLE */}
                         <TouchableOpacity
                             style={styles.socialButton}
                             onPress={() => {
-                                if (request) promptAsync();
+                                if (request) {
+                                    promptAsync();
+                                } else {
+                                    Alert.alert("Wait", "Google loading...");
+                                }
                             }}
                             disabled={!request}
                         >
-                            {renderIcon('google.svg', 'G', { width: scale(24), height: scale(24) }, '#F5D8CB')}
+                            {renderIcon('google.svg', { width: scale(24), height: scale(24) }, '#F5D8CB')}
                         </TouchableOpacity>
 
-                        {/* DISCORD BUTTON */}
+                        {/* APPLE / OTHER (Stub) */}
                         <TouchableOpacity
                             style={styles.socialButton}
-                            onPress={() => Alert.alert("Discord", "Coming soon")}
+                            onPress={() => Alert.alert("Apple Auth", "Coming soon")}
                         >
-                            {renderIcon('discord.svg', 'D', { width: scale(24), height: scale(24) }, '#F5D8CB')}
+                            {/* Заглушка або іконка Apple */}
+                            {renderIcon('discord.svg', { width: scale(24), height: scale(24) }, '#F5D8CB')}
                         </TouchableOpacity>
                     </View>
 
                     {/* FOOTER */}
                     <View style={styles.footerContainer}>
-                        <Text style={styles.footerText}>Already have an account? </Text>
-                        <TouchableOpacity onPress={() => navigation.replace('Login')}>
-                            <Text style={styles.linkText}>Sign in</Text>
+                        <Text style={styles.footerText}>Don’t have an account? </Text>
+                        <TouchableOpacity onPress={() => navigation.navigate('Register')}>
+                            <Text style={styles.linkText}>Sign Up</Text>
                         </TouchableOpacity>
                     </View>
 
@@ -359,23 +356,22 @@ const styles = StyleSheet.create({
     },
     backButton: {
         alignSelf: 'flex-start',
-        marginBottom: scale(74),
+        marginBottom: scale(40), // Менше відступу, ніж в Register, бо там стрілка вище
+        height: scale(24) // Резерв місця
     },
-
-    /* TITLES */
     title: {
         fontSize: scale(32),
         fontFamily: 'Unbounded-SemiBold',
         color: '#F5D8CB',
         lineHeight: scale(40),
-        marginBottom: scale(10)
+        marginBottom: scale(10),
+        marginTop: scale(20)
     },
-
     inputsWrap: {
-        marginTop: scale(30)
-    },
+        marginTop: scale(30),
+        marginBottom: scale(16),
 
-    /* INPUT STYLE */
+    },
     inputWrapper: {
         flexDirection: "row",
         alignItems: "center",
@@ -383,18 +379,16 @@ const styles = StyleSheet.create({
         borderWidth: 1,
         borderColor: '#F5D8CB',
         borderRadius: scale(24),
-        marginTop: scale(16),
+        marginBottom: scale(16),
         paddingRight: scale(16),
         position: 'relative'
     },
-
-    // Кружечок зліва
     iconCircle: {
         width: scale(48),
         height: scale(48),
         borderRadius: scale(24),
         borderRightWidth: 1,
-        borderColor: '#bbb',
+        borderColor: '#bbb', // Або колір бордера
         alignItems: 'center',
         justifyContent: 'center',
         marginRight: scale(12),
@@ -403,23 +397,36 @@ const styles = StyleSheet.create({
         left: -1,
         top: -1
     },
-
     input: {
         flex: 1,
         fontSize: scale(14),
         color: '#F5D8CB',
         fontFamily: 'Unbounded-Regular',
-        marginLeft: scale(56) + scale(12) // Відступ для тексту, щоб не наліз на іконку
+        marginLeft: scale(56) + scale(12)
     },
-
-    /* BUTTON */
+    errorText: {
+        color: '#FF6B6B',
+        fontSize: scale(12),
+        marginBottom: scale(10),
+        marginLeft: scale(10),
+        marginTop: scale(-20),
+        fontFamily: 'Unbounded-Regular'
+    },
+    forgot: {
+        textAlign: 'right',
+        textDecorationLine: 'underline',
+        marginBottom: scale(61),
+        color: '#F5D8CB',
+        fontFamily: 'Unbounded-Regular',
+        fontSize: scale(14)
+    },
     button: {
-        marginTop: scale(46),
         height: scale(48),
         borderRadius: scale(24),
         backgroundColor: '#F5D8CB',
         alignItems: "center",
-        justifyContent: "center"
+        justifyContent: "center",
+        marginBottom: scale(30)
     },
     buttonDisabled: {
         opacity: 0.6
@@ -429,20 +436,18 @@ const styles = StyleSheet.create({
         fontSize: scale(14),
         fontFamily: 'Unbounded-Regular',
     },
-
-    /* SOCIAL */
     or: {
-        marginTop: scale(40),
         textAlign: "center",
         color: "#F5D8CB",
         fontFamily: 'Unbounded-Regular',
-        fontSize: scale(14)
+        fontSize: scale(14),
+        marginBottom: scale(20)
     },
     socialRow: {
-        marginTop: scale(20),
         flexDirection: "row",
         justifyContent: "center",
-        gap: scale(20)
+        gap: scale(20),
+        marginBottom: scale(40)
     },
     socialButton: {
         width: scale(48),
@@ -451,12 +456,10 @@ const styles = StyleSheet.create({
         borderWidth: 1,
         borderColor: '#F5D8CB',
         alignItems: 'center',
-        justifyContent: 'center'
+        justifyContent: 'center',
+        marginBottom: scale(36),
     },
-
-    /* FOOTER */
     footerContainer: {
-        marginTop: scale(40),
         flexDirection: 'row',
         justifyContent: 'center',
         alignItems: 'center'

@@ -25,7 +25,7 @@ import {
     logoutUser,
     getIcons,
     scale // Обов'язково імпортуємо scale
-} from '../api/api';
+} from '../../api/api';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 

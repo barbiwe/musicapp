@@ -14,7 +14,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { SvgXml } from 'react-native-svg';
 
-import { getIcons, scale } from '../api/api';
+import { getIcons, scale } from '../../api/api';
 
 // --- КЕШ SVG ---
 const svgCache = {};

@@ -15,7 +15,7 @@ import {
     Animated,
     Easing
 } from 'react-native';
-import { usePlayerStore } from '../store/usePlayerStore';
+import { usePlayerStore } from '../../store/usePlayerStore';
 import { SvgXml } from 'react-native-svg';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -27,7 +27,7 @@ import LibrarySongs from './LibrarySongs';
 import LibraryAlbum from './LibraryAlbum';
 import LibraryArtist from './LibraryArtist';
 
-import { getIcons, scale } from '../api/api';
+import { getIcons, scale } from '../../api/api';
 
 const { width, height } = Dimensions.get('window');
 
@@ -311,6 +311,23 @@ export default function LibraryScreen({ navigation }) {
                                                     <View style={styles.plusVertical} />
                                                 </View>
                                                 <Text style={styles.modalItemText}>Add podcast or show</Text>
+                                            </TouchableOpacity>
+
+                                            {/* Item 4: Add album */}
+                                            <TouchableOpacity
+                                                style={styles.modalItem}
+                                                onPress={() => {
+                                                    closeModal();
+                                                    setTimeout(() => {
+                                                        navigation.navigate('AlbumList');
+                                                    }, 300);
+                                                }}
+                                            >
+                                                <View style={styles.circlePlus}>
+                                                    <View style={styles.plusHorizontal} />
+                                                    <View style={styles.plusVertical} />
+                                                </View>
+                                                <Text style={styles.modalItemText}>Add album</Text>
                                             </TouchableOpacity>
 
                                         </View>

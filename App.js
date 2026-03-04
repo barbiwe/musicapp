@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
     View,
     Text,
@@ -9,57 +9,60 @@ import {
     Dimensions,
     Image // 👈 Додано Image для рендеру іконок
 } from 'react-native';
-import { NavigationContainer, useNavigationState } from '@react-navigation/native';
+import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { BlurView } from 'expo-blur';
-import * as SplashScreen from 'expo-splash-screen';
 import { useFonts } from 'expo-font';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { SvgXml } from 'react-native-svg';
 
-
-SplashScreen.preventAutoHideAsync();
-
-import { getIcons, scale, warmPlayerAssets } from './api/api';
+import { getIcons, getCachedIcons, scale, warmSearchData } from './api/api';
 
 /* SCREENS */
-import OnboardingScreen from './screens/OnboardingScreen';
-import AuthChoiceScreen from './screens/AuthChoiceScreen';
-import LoginScreen from './screens/LoginScreen';
-import RegisterScreen from './screens/HomeScreen';
-import TrackListScreen from './screens/TrackListScreen';
+import OnboardingScreen from './screens/auth/OnboardingScreen';
+import AuthChoiceScreen from './screens/auth/AuthChoiceScreen';
+import LoginScreen from './screens/auth/LoginScreen';
+import RegisterScreen from './screens/auth/HomeScreen';
+import SearchScreen from './screens/SearchScreen';
+import GenreDetailScreen from './screens/GenreDetailScreen';
 import MusicScreen from './screens/MusicScreen';
 import AlbumListScreen from './screens/AlbumListScreen';
 import AlbumDetailScreen from './screens/AlbumDetailScreen';
 import CreateAlbumScreen from './screens/CreateAlbumScreen';
-import ProfileScreen from './screens/ProfileScreen';
+import ProfileScreen from './screens/profile/ProfileScreen';
 import PlayerScreen from './screens/PlayerScreen';
 import DiscoverScreen from './screens/DiscoverScreen.js';
 import ArtistProfileScreen from './screens/ArtistProfileScreen';
 import SongInfoScreen from './screens/SongInfoScreen';
-import LibraryScreen from './screens/LibraryScreen';
-import ContentAndDisplayScreen from './screens/ContentAndDisplayScreen';
-import PrivacyAndCommunityScreen from './screens/PrivacyAndCommunityScreen';
-import QualityOfMediaFilesScreen from './screens/QualityOfMediaFilesScreen';
-import StatisticsScreen from './screens/StatisticsScreen';
-import AboutUsScreen from './screens/AboutUsScreen';
+import LibraryScreen from './screens/library/LibraryScreen';
+import ContentAndDisplayScreen from './screens/profile/ContentAndDisplayScreen';
+import PrivacyAndCommunityScreen from './screens/profile/PrivacyAndCommunityScreen';
+import QualityOfMediaFilesScreen from './screens/profile/QualityOfMediaFilesScreen';
+import StatisticsScreen from './screens/profile/StatisticsScreen';
+import AboutUsScreen from './screens/profile/AboutUsScreen';
 import ProScreen from './screens/ProScreen';
-import ChoosePodcastScreen from './screens/ChoosePodcastScreen';
-import ChooseArtistScreen from './screens/ChooseArtistScreen';
+import ChoosePodcastScreen from './screens/library/ChoosePodcastScreen';
+import ChooseArtistScreen from './screens/library/ChooseArtistScreen';
 
 // MINI PLAYER
 
 import MiniPlayer from './components/MiniPlayer';
 
 const Stack = createNativeStackNavigator();
+const SearchStack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator(); // 👇 Створюємо Таби
+const tabSvgCache = {};
 
 /* 🔹 LIQUID GLASS NAVIGATION (Оновлене меню) 🔹 */
 function GlassTabBar({ state, descriptors, navigation }) {
-    const [icons, setIcons] = useState({});
+    const [icons, setIcons] = useState(() => getCachedIcons() || {});
+    const [svgMap, setSvgMap] = useState({});
 
     useEffect(() => {
-        loadIcons();
+        if (Object.keys(icons).length === 0) {
+            loadIcons();
+        }
     }, []);
 
     const loadIcons = async () => {
@@ -69,6 +72,46 @@ function GlassTabBar({ state, descriptors, navigation }) {
         } catch (e) {
             console.log("Error loading nav icons:", e);
         }
+    };
+
+    const renderTabIcon = (iconName, color) => {
+        const iconUrl = icons[iconName];
+        if (!iconUrl) return <View style={{ width: 24, height: 24 }} />;
+
+        const isSvg = iconName.toLowerCase().endsWith('.svg') || iconUrl.toLowerCase().endsWith('.svg');
+        if (!isSvg) {
+            return (
+                <Image
+                    source={{ uri: iconUrl }}
+                    style={{ width: 24, height: 24, tintColor: color }}
+                    resizeMode="contain"
+                />
+            );
+        }
+
+        const cacheKey = `${iconUrl}_${color}`;
+        const xml = svgMap[cacheKey];
+
+        if (!xml) {
+            if (!tabSvgCache[cacheKey]) {
+                tabSvgCache[cacheKey] = fetch(iconUrl)
+                    .then((res) => res.text())
+                    .then((svgContent) => {
+                        let cleanXml = svgContent.replace(/fill=['"]none['"]/gi, '###NONE###');
+                        cleanXml = cleanXml.replace(/fill=['"][^'"]*['"]/g, `fill="${color}"`);
+                        cleanXml = cleanXml.replace(/stroke=['"][^'"]*['"]/g, `stroke="${color}"`);
+                        cleanXml = cleanXml.replace(/###NONE###/g, 'fill="none"');
+                        tabSvgCache[cacheKey] = cleanXml;
+                        setSvgMap((prev) => ({ ...prev, [cacheKey]: cleanXml }));
+                    })
+                    .catch((err) => console.log('Tab SVG Error:', err));
+            } else if (typeof tabSvgCache[cacheKey] === 'string') {
+                setSvgMap((prev) => ({ ...prev, [cacheKey]: tabSvgCache[cacheKey] }));
+            }
+            return <View style={{ width: 24, height: 24 }} />;
+        }
+
+        return <SvgXml xml={xml} width={24} height={24} />;
     };
 
     return (
@@ -92,29 +135,23 @@ function GlassTabBar({ state, descriptors, navigation }) {
                         };
 
                         // Визначаємо іконку та назву
-                        let iconName = 'cuida_home-outline.png';
+                        let iconName = 'cuida_home-outline.svg';
                         let label = 'Home';
 
                         if (route.name === 'SearchTab') {
-                            iconName = 'cuida_search-outline.png';
+                            iconName = 'search.svg';
                             label = 'Search';
                         } else if (route.name === 'LibraryTab') {
-                            iconName = 'cuida_bookmark-outline.png';
+                            iconName = 'cuida_bookmark-outline.svg';
                             label = 'Library';
+                        } else if (route.name === 'AlbumsTab') {
+                            iconName = 'libplus.svg';
+                            label = 'Create';
                         }
 
                         const color = isFocused ? '#FFFFFF' : 'rgba(255, 255, 255, 0.5)';
 
-                        // Рендер іконки
-                        const iconElement = icons[iconName] ? (
-                            <Image
-                                source={{ uri: icons[iconName] }}
-                                style={{ width: 24, height: 24, tintColor: color }}
-                                resizeMode="contain"
-                            />
-                        ) : (
-                            <View style={{ width: 24, height: 24 }} />
-                        );
+                        const iconElement = renderTabIcon(iconName, color);
 
                         return (
                             <TouchableOpacity
@@ -134,6 +171,15 @@ function GlassTabBar({ state, descriptors, navigation }) {
     );
 }
 
+function SearchStackScreen() {
+    return (
+        <SearchStack.Navigator screenOptions={{ headerShown: false }}>
+            <SearchStack.Screen name="SearchMain" component={SearchScreen} />
+            <SearchStack.Screen name="GenreDetail" component={GenreDetailScreen} />
+        </SearchStack.Navigator>
+    );
+}
+
 /* 🔹 MAIN TABS (Група екранів з нерухомим меню) 🔹 */
 function MainTabs() {
     return (
@@ -147,8 +193,9 @@ function MainTabs() {
                 }}
             >
                 <Tab.Screen name="HomeTab" component={DiscoverScreen} />
-                <Tab.Screen name="SearchTab" component={TrackListScreen} />
+                <Tab.Screen name="SearchTab" component={SearchStackScreen} />
                 <Tab.Screen name="LibraryTab" component={LibraryScreen} />
+                <Tab.Screen name="AlbumsTab" component={MusicScreen} />
             </Tab.Navigator>
 
             {/* 👇 2. ВСТАВЛЯЄМО МІНІ-ПЛЕЄР СЮДИ 👇 */}
@@ -158,6 +205,7 @@ function MainTabs() {
 }
 export default function App() {
     const [isTokenLoading, setIsTokenLoading] = useState(true);
+    const [isFontsGateDone, setIsFontsGateDone] = useState(false);
     const [initialRoute, setInitialRoute] = useState('Onboarding');
 
     const [fontsLoaded] = useFonts({
@@ -181,44 +229,60 @@ export default function App() {
     });
 
     useEffect(() => {
+        let isMounted = true;
+        const tokenCheckFallbackId = setTimeout(() => {
+            if (isMounted) {
+                setIsTokenLoading(false);
+            }
+        }, 2500);
+        const fontsGateTimeoutId = setTimeout(() => {
+            if (isMounted) {
+                setIsFontsGateDone(true);
+            }
+        }, 3000);
+
         const checkToken = async () => {
             try {
                 const token = await AsyncStorage.getItem('userToken');
-                if (token) {
+                if (token && isMounted) {
                     setInitialRoute('MainTabs');
+                    warmSearchData().catch(() => {});
                 }
             } catch (e) {
                 console.log(e);
             } finally {
-                setIsTokenLoading(false);
+                if (isMounted) {
+                    setIsTokenLoading(false);
+                }
+                clearTimeout(tokenCheckFallbackId);
             }
         };
+
         checkToken();
 
-        // Прогріваємо іконки/фон плеєра заздалегідь, щоб вони не "довантажувались" при відкритті Player.
-        warmPlayerAssets().catch((e) => {
-            console.log('Warm player assets error:', e);
-        });
+        return () => {
+            clearTimeout(tokenCheckFallbackId);
+            clearTimeout(fontsGateTimeoutId);
+            isMounted = false;
+        };
     }, []);
 
-    const onLayoutRootView = useCallback(async () => {
-        if (fontsLoaded && !isTokenLoading) {
-            await SplashScreen.hideAsync();
+    useEffect(() => {
+        if (fontsLoaded) {
+            setIsFontsGateDone(true);
         }
-    }, [fontsLoaded, isTokenLoading]);
+    }, [fontsLoaded]);
 
-    if (!fontsLoaded) return null;
-
-    if (isTokenLoading) {
+    if (isTokenLoading || !isFontsGateDone) {
         return (
-            <View style={styles.loader} onLayout={onLayoutRootView}>
+            <View style={styles.loader}>
                 <ActivityIndicator size="large" color="#000" />
             </View>
         );
     }
 
     return (
-        <View style={{ flex: 1 }} onLayout={onLayoutRootView}>
+        <View style={{ flex: 1 }}>
         <NavigationContainer>
             <StatusBar barStyle="light-content" />
 
@@ -238,9 +302,18 @@ export default function App() {
                 {/* ЕКРАНИ БЕЗ МЕНЮ (Поверх всього) */}
                 <Stack.Screen name="Upload" component={MusicScreen} />
                 <Stack.Screen name="CreateAlbum" component={CreateAlbumScreen} />
+                <Stack.Screen name="AlbumList" component={AlbumListScreen} />
                 <Stack.Screen name="AlbumDetail" component={AlbumDetailScreen} />
                 <Stack.Screen name="Profile" component={ProfileScreen} />
-                <Stack.Screen name="Player" component={PlayerScreen} />
+                <Stack.Screen
+                    name="Player"
+                    component={PlayerScreen}
+                    options={{
+                        animation: 'slide_from_bottom',
+                        animationDuration: 180,
+                        gestureEnabled: true,
+                    }}
+                />
                 <Stack.Screen name="SongInfo" component={SongInfoScreen} />
                 <Stack.Screen name="ArtistProfile" component={ArtistProfileScreen} />
                 <Stack.Screen name="ContentAndDisplay" component={ContentAndDisplayScreen} />
@@ -279,7 +352,7 @@ const styles = StyleSheet.create({
     glassContainer: {
         marginBottom: scale(30),
         height: scale(70),
-        width: scale(200),
+        width: scale(260),
         borderRadius: scale(35),
         overflow: 'hidden',
 

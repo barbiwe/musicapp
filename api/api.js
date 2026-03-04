@@ -10,6 +10,12 @@ let iconsMapCache = null;
 let iconsMapRequest = null;
 const svgXmlCache = {};
 const svgXmlRequestCache = {};
+let tracksCache = null;
+let tracksRequest = null;
+let genresCache = null;
+let genresRequest = null;
+let recentPlayedCache = null;
+let recentPlayedRequest = null;
 
 export const api = axios.create({
     baseURL: API_URL,
@@ -66,6 +72,29 @@ const saveUserIdFromToken = async (token) => {
 const { width } = Dimensions.get('window');
 const guidelineBaseWidth = 375;
 export const scale = (size) => (width / guidelineBaseWidth) * size;
+
+export const resolveArtistName = (track, fallback = 'Unknown Artist') => {
+    if (!track) return fallback;
+    if (typeof track === 'string') {
+        const value = track.trim();
+        return value || fallback;
+    }
+
+    const candidates = [
+        track.artistName,
+        track.artist?.name,
+        typeof track.artist === 'string' ? track.artist : null,
+        track.ownerName,
+        track.userName,
+        track.authorName,
+        track.creatorName,
+        track.albumArtistName,
+        track.album?.artist?.name,
+    ];
+
+    const found = candidates.find((value) => typeof value === 'string' && value.trim().length > 0);
+    return found ? found.trim() : fallback;
+};
 /* =========================
    AUTH
 ========================= */
@@ -233,6 +262,8 @@ export const getIcons = async () => {
     return iconsMapRequest;
 };
 
+export const getCachedIcons = () => iconsMapCache || null;
+
 const getSvgCacheKey = (uri, color) => `${uri}_${color || 'original'}`;
 
 const paintSvgXml = (svgContent, color) => {
@@ -287,6 +318,8 @@ export const warmPlayerAssets = async () => {
         ['next.svg', '#F5D8CB'],
         ['pause.svg', '#300C0A'],
         ['play.svg', '#300C0A'],
+        ['pause.svg', '#F5D8CB'],
+        ['play.svg', '#F5D8CB'],
         ['previous-1.svg', '#F5D8CB'],
         ['play next.svg', '#F5D8CB'],
         ['download.svg', '#F5D8CB'],
@@ -322,6 +355,19 @@ export const clearIconsCache = () => {
     iconsMapCache = null;
     iconsMapRequest = null;
 };
+
+export const clearSearchCache = () => {
+    tracksCache = null;
+    tracksRequest = null;
+    genresCache = null;
+    genresRequest = null;
+    recentPlayedCache = null;
+    recentPlayedRequest = null;
+};
+
+export const getCachedTracks = () => tracksCache || null;
+export const getCachedGenres = () => genresCache || null;
+export const getCachedRecentlyPlayed = () => recentPlayedCache || null;
 
 /* =========================
    AVATAR
@@ -360,6 +406,8 @@ export const changeAvatar = async (imageUri) => {
 
 export const logoutUser = async () => {
     await AsyncStorage.multiRemove(['userToken', 'username', 'userId']);
+    clearIconsCache();
+    clearSearchCache();
 };
 
 /* =========================
@@ -446,12 +494,22 @@ export const createAlbum = async (title, cover) => {
  * @returns {Promise<Track[]>}
  */
 export const getTracks = async () => {
-    try {
-        const res = await api.get('/api/Tracks');
-        return res.data;
-    } catch {
-        return [];
-    }
+    if (tracksCache) return tracksCache;
+    if (tracksRequest) return tracksRequest;
+
+    tracksRequest = (async () => {
+        try {
+            const res = await api.get('/api/Tracks');
+            tracksCache = Array.isArray(res.data) ? res.data : [];
+            return tracksCache;
+        } catch {
+            return [];
+        } finally {
+            tracksRequest = null;
+        }
+    })();
+
+    return tracksRequest;
 };
 
 export const getMyTracks = async () => {
@@ -463,18 +521,127 @@ export const getMyTracks = async () => {
     }
 };
 
+export const searchTracksByTitle = async (query) => {
+    const q = String(query || '').trim();
+    if (!q) return [];
+    try {
+        const res = await api.get('/api/Tracks/search', { params: { query: q } });
+        return Array.isArray(res.data) ? res.data : [];
+    } catch (e) {
+        console.log('Search title error:', e?.response?.status || e?.message);
+        return [];
+    }
+};
+
+export const searchTracksByArtist = async (query) => {
+    const q = String(query || '').trim();
+    if (!q) return [];
+    try {
+        const res = await api.get('/api/Tracks/search/artist', { params: { query: q } });
+        return Array.isArray(res.data) ? res.data : [];
+    } catch (e) {
+        console.log('Search artist error:', e?.response?.status || e?.message);
+        return [];
+    }
+};
+
+export const searchTracksByGenre = async (query) => {
+    const q = String(query || '').trim();
+    if (!q) return [];
+
+    // 1) Пробуємо кілька можливих роутів (у різних збірках беку можуть відрізнятися)
+    const endpoints = [
+        '/api/Tracks/search/genre',
+        '/api/Tracks/search/genres',
+        '/api/Tracks/search/by-genre',
+    ];
+
+    for (const endpoint of endpoints) {
+        try {
+            const res = await api.get(endpoint, { params: { query: q } });
+            return Array.isArray(res.data) ? res.data : [];
+        } catch (e) {
+            if (e?.response?.status !== 404) {
+                console.log('Search genre error:', e?.response?.status || e?.message);
+                return [];
+            }
+        }
+    }
+
+    // 2) Fallback: якщо genre-search не існує, фільтруємо локально по загальному списку треків
+    try {
+        const allTracks = await getTracks();
+        const queryLower = q.toLowerCase();
+
+        return (Array.isArray(allTracks) ? allTracks : []).filter((track) => {
+            const names = [];
+            const ids = [];
+
+            if (typeof track.genre === 'string') names.push(track.genre.toLowerCase());
+            if (track.genre?.name) names.push(String(track.genre.name).toLowerCase());
+            if (Array.isArray(track.genres)) {
+                track.genres.forEach((g) => {
+                    if (typeof g === 'string') names.push(g.toLowerCase());
+                    if (g?.name) names.push(String(g.name).toLowerCase());
+                    if (g?.title) names.push(String(g.title).toLowerCase());
+                    if (g?.id || g?._id || g?.genreId) ids.push(String(g.id || g._id || g.genreId).toLowerCase());
+                });
+            }
+
+            if (track.genreId) ids.push(String(track.genreId).toLowerCase());
+            if (Array.isArray(track.genreIds)) {
+                track.genreIds.forEach((id) => ids.push(String(id).toLowerCase()));
+            }
+
+            return names.some((n) => n.includes(queryLower)) || ids.some((id) => id.includes(queryLower));
+        });
+    } catch {
+        return [];
+    }
+};
+
+export const searchTracksCombined = async (query) => {
+    const q = String(query || '').trim();
+    if (!q) return [];
+
+    const [byTitle, byArtist, byGenre] = await Promise.all([
+        searchTracksByTitle(q),
+        searchTracksByArtist(q),
+        searchTracksByGenre(q),
+    ]);
+
+    const merged = [...byTitle, ...byArtist, ...byGenre];
+    const used = new Set();
+    return merged.filter((track) => {
+        const key = String(track?.id || track?._id || `${track?.title}-${track?.artistName || ''}`).toLowerCase();
+        if (used.has(key)) return false;
+        used.add(key);
+        return true;
+    });
+};
+
 
 // 1. Додай функцію отримання жанрів (припустимо, що контролер GenreController існує)
 // Якщо бекендер не зробив окремий контролер, спитай його.
 // Але зазвичай це /api/Genre або /api/Icon/genres
 export const getGenres = async () => {
-    try {
-        const res = await api.get('/api/Tracks/genres');
-        return res.data;
-    } catch (e) {
-        console.log('Get genres error:', e);
-        return [];
-    }
+    if (genresCache) return genresCache;
+    if (genresRequest) return genresRequest;
+
+    genresRequest = (async () => {
+        try {
+            const res = await api.get('/api/Tracks/genres');
+            genresCache = Array.isArray(res.data) ? res.data : [];
+            return genresCache;
+        } catch (e) {
+            console.log('Get genres error:', e);
+            return [];
+        } finally {
+            genresRequest = null;
+        }
+    })();
+
+    return genresRequest;
 };
 
 export const uploadTrack = async (file, title, artistId, albumId, cover, genreIds, lyrics) => {
@@ -555,7 +722,6 @@ export const getRecommendedArtists = async () => {
 export const getRecommendations = async () => {
     try {
         const res = await api.get('/api/radio/recommendations?limit=10');
-        console.log("🔥 RECOMMENDATIONS:", res.data.length);
         return res.data;
     } catch (e) {
         console.log('Get recommendations error:', e);
@@ -576,14 +742,32 @@ export const getAllArtists = async () => {
 
 // 3. Нещодавно програні (Квадрати)
 export const getRecentlyPlayed = async () => {
-    try {
-        const res = await api.get('/api/radio/history');
-        console.log("📜 RAW HISTORY RESPONSE:", JSON.stringify(res.data, null, 2));
-        return res.data;
-    } catch (e) {
-        console.log('Get recent error:', e);
-        return [];
-    }
+    if (recentPlayedCache) return recentPlayedCache;
+    if (recentPlayedRequest) return recentPlayedRequest;
+
+    recentPlayedRequest = (async () => {
+        try {
+            const res = await api.get('/api/radio/history');
+            recentPlayedCache = Array.isArray(res.data) ? res.data : [];
+            return recentPlayedCache;
+        } catch (e) {
+            console.log('Get recent error:', e);
+            return [];
+        } finally {
+            recentPlayedRequest = null;
+        }
+    })();
+
+    return recentPlayedRequest;
+};
+
+export const warmSearchData = async () => {
+    await Promise.allSettled([
+        getTracks(),
+        getGenres(),
+        getRecentlyPlayed(),
+        getIcons(),
+    ]);
 };
 
 // 4. Heritage (Рандомні/Спеціальні)

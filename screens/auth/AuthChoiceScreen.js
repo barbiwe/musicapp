@@ -17,7 +17,7 @@ import * as WebBrowser from "expo-web-browser";
 import * as Google from "expo-auth-session/providers/google";
 
 // 👇 Імпортуємо scale та getIcons
-import { googleLogin, scale, getIcons } from "../api/api";
+import { googleLogin, scale, getIcons } from "../../api/api";
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -182,7 +182,6 @@ export default function AuthChoiceScreen({ navigation }) {
                 showsVerticalScrollIndicator={false}
                 bounces={false}
                 overScrollMode="never">
-            >
                 {/* BACK BUTTON */}
                 <TouchableOpacity
                     style={styles.backButton}

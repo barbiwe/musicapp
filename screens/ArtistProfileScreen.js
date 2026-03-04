@@ -23,6 +23,7 @@ import {
     scale
 } from '../api/api';
 const { width, height } = Dimensions.get('window');
+const GUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const svgCache = {};
 // 👇 Цей компонент завантажує SVG, чистить, фарбує і КЕШУЄ результат
@@ -276,16 +277,33 @@ export default function ArtistProfileScreen({ navigation, route }) {
                             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ paddingLeft: scale(16) }}>
                                 {albums.map((album, index) => {
                                     // Отримуємо ID та обкладинку
-                                    const albumId = album.id || album.Id || album._id;
-                                    const coverUrl = (album.coverFileId || album.CoverFileId)
+                                    const rawAlbumIds = [
+                                        album.id,
+                                        album.Id,
+                                        album._id,
+                                        album.albumId,
+                                        album.AlbumId
+                                    ].filter(Boolean);
+                                    const albumId =
+                                        rawAlbumIds.find((v) => GUID_REGEX.test(String(v))) ||
+                                        rawAlbumIds[0] ||
+                                        null;
+                                    const coverUrl = (album.coverFileId || album.CoverFileId) && albumId
                                         ? getAlbumCoverUrl(albumId)
                                         : null;
 
                                     return (
                                         <TouchableOpacity
-                                            key={index}
+                                            key={albumId || index}
                                             style={styles.albumCard}
-                                            onPress={() => navigation.navigate('AlbumDetail', { albumId: albumId })}
+                                            onPress={() => {
+                                                if (!albumId || !GUID_REGEX.test(String(albumId))) return;
+                                                navigation.navigate('AlbumDetail', {
+                                                    id: albumId,
+                                                    albumId: albumId,
+                                                    album,
+                                                });
+                                            }}
                                         >
                                             {coverUrl ? (
                                                 <Image

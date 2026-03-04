@@ -1,63 +1,51 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Image, Platform } from 'react-native'; // 👈 ДОДАНО Platform
+import { View, Text, StyleSheet, TouchableOpacity, Image, Platform } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { usePlayerStore } from '../store/usePlayerStore';
 import { SvgXml } from 'react-native-svg';
-
-// Імпортуємо getIcons та scale
-import { scale, getTrackCoverUrl, getIcons } from '../api/api';
-
-// 1. КЕШ ТА РЕНДЕР SVG (щоб іконки тягнулися з бекенду)
-const svgCache = {};
+import { scale, getTrackCoverUrl, getIcons, getCachedIcons, getColoredSvgXml, peekColoredSvgXml, warmPlayerAssets, resolveArtistName } from '../api/api';
 
 const ColoredSvg = ({ uri, width, height, color }) => {
-    const cacheKey = `${uri}_${color || 'original'}`;
-    const [xml, setXml] = useState(svgCache[cacheKey] || null);
+    const [xml, setXml] = useState(peekColoredSvgXml(uri, color));
 
     useEffect(() => {
         let isMounted = true;
-        if (svgCache[cacheKey]) {
-            setXml(svgCache[cacheKey]);
-            return;
-        }
+
         if (uri) {
-            fetch(uri)
-                .then(response => response.text())
-                .then(svgContent => {
-                    if (isMounted) {
-                        let cleanXml = svgContent.replace(/fill=['"]none['"]/gi, '###NONE###');
-                        if (color) {
-                            cleanXml = cleanXml.replace(/fill=['"][^'"]*['"]/g, `fill="${color}"`);
-                            cleanXml = cleanXml.replace(/stroke=['"][^'"]*['"]/g, `stroke="${color}"`);
-                        }
-                        cleanXml = cleanXml.replace(/###NONE###/g, 'fill="none"');
-                        svgCache[cacheKey] = cleanXml;
-                        setXml(cleanXml);
-                    }
+            getColoredSvgXml(uri, color)
+                .then((cachedXml) => {
+                    if (isMounted) setXml(cachedXml);
                 })
-                .catch(err => console.log("SVG Error:", err));
+                .catch((err) => console.log('SVG Error:', err));
+        } else {
+            setXml(null);
         }
-        return () => { isMounted = false; };
-    }, [cacheKey]);
+
+        return () => {
+            isMounted = false;
+        };
+    }, [uri, color]);
 
     if (!xml) return <View style={{ width, height }} />;
     return <SvgXml xml={xml} width={width} height={height} />;
 };
 
-export default function MiniPlayer() {
+export default function MiniPlayer({ bottomOffset = scale(100) }) {
     const navigation = useNavigation();
-
-    // Витягуємо дані зі сховища Zustand
     const { currentTrack, isPlaying, togglePlay } = usePlayerStore();
-
-    // Стейт для іконок
-    const [icons, setIcons] = useState({});
+    const [icons, setIcons] = useState(() => getCachedIcons() || {});
 
     useEffect(() => {
-        getIcons().then(res => setIcons(res || {}));
+        if (Object.keys(icons).length === 0) {
+            getIcons().then((res) => setIcons(res || {}));
+        }
     }, []);
 
-    // Універсальна функція для рендеру іконок
+    useEffect(() => {
+        // Фоновий прогрів основних ассетів плеєра без блокування UI.
+        warmPlayerAssets().catch(() => {});
+    }, []);
+
     const renderIcon = (iconName, style, tintColor = '#000000') => {
         const iconUrl = icons[iconName];
 
@@ -77,46 +65,43 @@ export default function MiniPlayer() {
             }
 
             const imageStyle = [style];
-            if (tintColor) imageStyle.push({ tintColor: tintColor });
-
+            if (tintColor) imageStyle.push({ tintColor });
             return <Image source={{ uri: iconUrl }} style={imageStyle} resizeMode="contain" />;
         }
+
         const flatStyle = StyleSheet.flatten(style);
         return <View style={{ width: flatStyle?.width || 24, height: flatStyle?.height || 24 }} />;
     };
 
-    // Якщо трек не вибрано - не показуємо міні-плеєр взагалі
     if (!currentTrack) return null;
 
     const openFullPlayer = () => {
+        const coverUrl = getTrackCoverUrl(currentTrack);
+        const playerBackgroundUrl =
+            icons['playerbg.png'] ||
+            icons['bg.png'] ||
+            icons['playerBg.png'] ||
+            icons['bg.PNG'] ||
+            null;
+
+        if (coverUrl) Image.prefetch(coverUrl).catch(() => {});
+        if (playerBackgroundUrl) Image.prefetch(playerBackgroundUrl).catch(() => {});
         navigation.navigate('Player');
     };
 
-    // Правильно дістаємо ім'я артиста
-    const artistName = currentTrack.artistName || currentTrack.artist?.name || 'Unknown Artist';
+    const artistName = resolveArtistName(currentTrack, 'Unknown Artist');
     const coverUrl = getTrackCoverUrl(currentTrack);
 
     return (
-        <TouchableOpacity
-            style={styles.container}
-            activeOpacity={0.95}
-            onPress={openFullPlayer}
-        >
+        <TouchableOpacity style={[styles.container, { bottom: bottomOffset }]} activeOpacity={0.95} onPress={openFullPlayer}>
             <View style={styles.content}>
-
-                {/* ВІНІЛОВА ПЛАТІВКА З ОБКЛАДИНКОЮ */}
                 <View style={styles.vinylContainer}>
                     <View style={styles.vinylBackground}>
-                        {/* Зверни увагу: переконайся, що в тебе є іконка вінілу на бекенді, наприклад 'vinyl.svg' */}
                         {renderIcon('vinyl.svg', { width: scale(46), height: scale(46) }, null)}
                     </View>
-                    <Image
-                        source={{ uri: coverUrl || 'https://via.placeholder.com/150' }}
-                        style={styles.artwork}
-                    />
+                    <Image source={{ uri: coverUrl || 'https://via.placeholder.com/150' }} style={styles.artwork} />
                 </View>
 
-                {/* ІНФОРМАЦІЯ ПРО ТРЕК */}
                 <View style={styles.info}>
                     <Text style={styles.title} numberOfLines={1}>
                         {currentTrack.title || 'Unknown Song'}
@@ -126,7 +111,6 @@ export default function MiniPlayer() {
                     </Text>
                 </View>
 
-                {/* КНОПКА PLAY/PAUSE */}
                 <TouchableOpacity
                     style={styles.playButton}
                     onPress={togglePlay}
@@ -134,8 +118,7 @@ export default function MiniPlayer() {
                 >
                     {isPlaying
                         ? renderIcon('pause.svg', { width: scale(12), height: scale(12) }, '#F5D8CB')
-                        : renderIcon('play.svg', { width: scale(12), height: scale(12) }, '#F5D8CB')
-                    }
+                        : renderIcon('play.svg', { width: scale(12), height: scale(12) }, '#F5D8CB')}
                 </TouchableOpacity>
             </View>
         </TouchableOpacity>
@@ -145,10 +128,9 @@ export default function MiniPlayer() {
 const styles = StyleSheet.create({
     container: {
         position: 'absolute',
-        bottom: scale(100), // Відступ над нижнім меню
         left: scale(20),
         right: scale(20),
-        backgroundColor: '#F5D8CB', // Світло-пісочний колір з макету
+        backgroundColor: '#F5D8CB',
         borderRadius: scale(40),
         marginBottom: scale(5),
     },
@@ -156,10 +138,8 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         paddingVertical: scale(8),
-        paddingHorizontal: scale(12), // Зменшені відступи по краях, як на скріні
+        paddingHorizontal: scale(12),
     },
-
-    // --- ВІНІЛ ---
     vinylContainer: {
         width: scale(46),
         height: scale(46),
@@ -174,24 +154,22 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     artwork: {
-        width: scale(20), // Розмір дірки у вінілі
+        width: scale(20),
         height: scale(20),
         borderRadius: scale(10),
         backgroundColor: '#59221A',
     },
-
-    // --- ТЕКСТ ---
     info: {
         flex: 1,
         marginLeft: scale(12),
         justifyContent: 'center',
     },
     title: {
-        color: '#59221A', // Темно-бордовий/коричневий
+        color: '#59221A',
         fontSize: scale(15),
-        fontFamily: 'Unbounded-Bold', // Дуже жирний шрифт, як на макеті
-        textTransform: 'uppercase', // Зробили всі літери великими
-        marginBottom: Platform.OS === 'ios' ? 0 : scale(-2), // Коригування для шрифту
+        fontFamily: 'Unbounded-Bold',
+        textTransform: 'uppercase',
+        marginBottom: Platform.OS === 'ios' ? 0 : scale(-2),
     },
     artist: {
         color: '#59221A',
@@ -199,13 +177,11 @@ const styles = StyleSheet.create({
         fontFamily: 'Poppins-Regular',
         marginTop: scale(2),
     },
-
-    // --- КНОПКА PLAY ---
     playButton: {
         width: scale(36),
         height: scale(36),
-        borderRadius: scale(23), // Ідеальне коло
-        backgroundColor: '#59221A', // Темний фон кнопки
+        borderRadius: scale(23),
+        backgroundColor: '#59221A',
         justifyContent: 'center',
         alignItems: 'center',
         marginLeft: scale(10),

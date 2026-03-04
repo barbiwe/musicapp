@@ -15,12 +15,13 @@ import {
 import { SvgXml } from 'react-native-svg';
 import { LinearGradient } from 'expo-linear-gradient';
 
-import { getIcons, scale } from '../api/api';
+import { getIcons, scale } from '../../api/api';
 
 const { width, height } = Dimensions.get('window');
 
 // Розраховуємо ширину так, щоб 3 колонки поміщалися ідеально
 const ITEM_WIDTH = (width - scale(40) - scale(20)) / 3;
+const CIRCLE_RADIUS = ITEM_WIDTH / 2; // Для ідеально круглих карток
 
 // 1. КЕШ ТА РЕНДЕР SVG
 const svgCache = {};
@@ -59,41 +60,39 @@ const ColoredSvg = ({ uri, width, height, color }) => {
     return <SvgXml xml={xml} width={width} height={height} />;
 };
 
-export default function ChoosePodcastScreen({ navigation }) {
+export default function ChooseArtistScreen({ navigation }) {
     const [icons, setIcons] = useState({});
     const [searchQuery, setSearchQuery] = useState('');
 
-    // Стейт для зберігання ID вибраних подкастів
-    const [selectedPodcasts, setSelectedPodcasts] = useState([]);
+    // Стейт для зберігання ID вибраних артистів
+    const [selectedArtists, setSelectedArtists] = useState([]);
 
-    // Згруповані дані: кожен елемент масиву - це ОДИН РЯДОК (масив з 3 карток)
-    const PODCASTS_ROWS = [
-        [
-            { id: '1', title: 'Kult: Podcast', isMore: false, image: 'https://images.unsplash.com/photo-1589829085413-56de8ae18c73?q=80&w=300&auto=format&fit=crop' },
-            { id: '2', title: 'Комік-історик', isMore: false, image: 'https://images.unsplash.com/photo-1589829085413-56de8ae18c73?q=80&w=300&auto=format&fit=crop' },
-            { id: '3', title: 'Historical motives', isMore: true }
-        ],
-        [
-            { id: '4', title: 'Кроки до успіху...', isMore: false, image: 'https://images.unsplash.com/photo-1589829085413-56de8ae18c73?q=80&w=300&auto=format&fit=crop' },
-            { id: '5', title: 'Шева, Леся і Франко', isMore: false, image: 'https://images.unsplash.com/photo-1589829085413-56de8ae18c73?q=80&w=300&auto=format&fit=crop' },
-            { id: '6', title: 'Books', isMore: true }
-        ],
-        [
-            { id: '7', title: 'Гуртом та Вщент', isMore: false, image: 'https://images.unsplash.com/photo-1589829085413-56de8ae18c73?q=80&w=300&auto=format&fit=crop' },
-            { id: '8', title: 'Bromance', isMore: false, image: 'https://images.unsplash.com/photo-1589829085413-56de8ae18c73?q=80&w=300&auto=format&fit=crop'},
-            { id: '9', title: 'Culture', isMore: true }
-        ],
-        [
-            { id: '10', title: 'Gap Podcast', isMore: false, image: 'https://images.unsplash.com/photo-1589829085413-56de8ae18c73?q=80&w=300&auto=format&fit=crop' },
-            { id: '11', title: 'Науковий BOOM', isMore: false, image: 'https://images.unsplash.com/photo-1589829085413-56de8ae18c73?q=80&w=300&auto=format&fit=crop' },
-            { id: '12', title: 'Education', isMore: true }
-        ],
-        [
-            { id: '13', title: 'Голосове на го...', isMore: false, image: 'https://images.unsplash.com/photo-1589829085413-56de8ae18c73?q=80&w=300&auto=format&fit=crop' },
-            { id: '14', title: 'Простими словами', isMore: false, image: 'https://images.unsplash.com/photo-1589829085413-56de8ae18c73?q=80&w=300&auto=format&fit=crop' },
-            { id: '15', title: 'Relationships', isMore: true }
-        ]
+    // Дані для артистів (Останній елемент — це спец. кнопка)
+    const ARTISTS_DATA = [
+        { id: '1', title: 'ASAP Rocky', image: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?q=80&w=300&auto=format&fit=crop' },
+        { id: '2', title: 'Nikow', image: 'https://images.unsplash.com/photo-1570295999919-56ceb5ecca61?q=80&w=300&auto=format&fit=crop' },
+        { id: '3', title: 'The Weeknd', image: 'https://images.unsplash.com/photo-1520333789090-1afc82db536a?q=80&w=300&auto=format&fit=crop' },
+        { id: '4', title: 'Lady Gaga', image: 'https://images.unsplash.com/photo-1500917293891-ef795e70e1f6?q=80&w=300&auto=format&fit=crop' },
+        { id: '5', title: 'MONATIK', image: 'https://www.chipublib.org/wp-content/uploads/sites/3/2022/09/36079964425_7b3042d5e1_k.jpg' },
+        { id: '6', title: 'Eminem', image: 'https://images.unsplash.com/photo-1529626455594-4ff0802cfb7e?q=80&w=300&auto=format&fit=crop' },
+        { id: '7', title: 'Travis Scott', image: 'https://images.unsplash.com/photo-1493225255756-d9584f8606e9?q=80&w=300&auto=format&fit=crop' },
+        { id: '8', title: 'Drake', image: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=300&auto=format&fit=crop' },
+        { id: '9', title: 'Rihanna', image: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?q=80&w=300&auto=format&fit=crop' },
+        { id: '10', title: 'LOBODA', image: 'https://images.unsplash.com/photo-1531746020798-e6953c6e8e04?q=80&w=300&auto=format&fit=crop' },
+        { id: '11', title: 'INNA', image: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?q=80&w=300&auto=format&fit=crop' },
+        { id: 'rec', title: 'Recommended for you', isRecommended: true }
     ];
+
+    // Функція для розбиття масиву на рядки по 3 елементи
+    const chunkArray = (arr, size) => {
+        const result = [];
+        for (let i = 0; i < arr.length; i += size) {
+            result.push(arr.slice(i, i + size));
+        }
+        return result;
+    };
+
+    const ARTISTS_ROWS = chunkArray(ARTISTS_DATA, 3);
 
     useEffect(() => {
         loadIcons();
@@ -135,47 +134,52 @@ export default function ChoosePodcastScreen({ navigation }) {
         return <View style={{ width: flatStyle?.width || 24, height: flatStyle?.height || 24 }} />;
     };
 
-    const togglePodcastSelection = (id) => {
-        if (selectedPodcasts.includes(id)) {
-            setSelectedPodcasts(selectedPodcasts.filter(item => item !== id));
+    const toggleSelection = (id) => {
+        if (selectedArtists.includes(id)) {
+            setSelectedArtists(selectedArtists.filter(item => item !== id));
         } else {
-            setSelectedPodcasts([...selectedPodcasts, id]);
+            setSelectedArtists([...selectedArtists, id]);
         }
     };
 
     const renderCard = (item) => {
-        const isSelected = selectedPodcasts.includes(item.id);
+        const isSelected = selectedArtists.includes(item.id);
 
-        if (item.isMore) {
+        if (item.isRecommended) {
+            // Кругла картка "Recommended for you"
             return (
                 <TouchableOpacity key={item.id} style={styles.cardContainer} activeOpacity={0.8}>
-                    <View style={[styles.imageSquare, styles.moreCard]}>
-                        <Text style={styles.moreText}>{item.title}:{"\n"}more</Text>
+                    <View style={[styles.imageCircle, styles.moreCard]}>
+                        <Text style={styles.moreText}>Recommended{"\n"}for you</Text>
                     </View>
                     <Text style={styles.hiddenTitle}> </Text>
                 </TouchableOpacity>
             );
         }
 
+        // Звичайна картка артиста
         return (
             <TouchableOpacity
                 key={item.id}
                 style={styles.cardContainer}
                 activeOpacity={0.8}
-                onPress={() => togglePodcastSelection(item.id)}
+                onPress={() => toggleSelection(item.id)}
             >
                 <View style={[styles.imageWrapper, isSelected && { zIndex: 10 }]}>
-                    <Image source={{ uri: item.image }} style={styles.imageSquare} />
 
-                    {/* 👇 Градієнт знизу обкладинки, якщо вибрано */}
-                    {isSelected && (
-                        <LinearGradient
-                            colors={['transparent', 'rgba(48, 12, 10, 0.8)']} // Темно-червонуватий/коричневий перелив
-                            style={styles.selectedOverlay}
-                        />
-                    )}
+                    {/* 👇 Огорнули картинку і градієнт в новий контейнер, щоб вони ідеально обрізались по колу */}
+                    <View style={styles.circleContainer}>
+                        <Image source={{ uri: item.image }} style={styles.imageCircle} />
 
-                    {/* Галочка */}
+                        {isSelected && (
+                            <LinearGradient
+                                colors={['transparent', 'rgba(48, 12, 10, 0.8)']}
+                                style={styles.selectedOverlay}
+                            />
+                        )}
+                    </View>
+
+                    {/* Галочка залишається ЗОВНІ */}
                     {isSelected && (
                         <View style={styles.checkBadge}>
                             {renderIcon('check.svg', { width: scale(16), height: scale(16) }, '#000')}
@@ -185,10 +189,10 @@ export default function ChoosePodcastScreen({ navigation }) {
                 <Text style={styles.title} numberOfLines={1}>{item.title}</Text>
             </TouchableOpacity>
         );
+
     };
 
-    // Перевіряємо, чи є вибрані елементи
-    const isConfirmDisabled = selectedPodcasts.length === 0;
+    const isConfirmDisabled = selectedArtists.length === 0;
 
     return (
         <View style={styles.container}>
@@ -213,13 +217,14 @@ export default function ChoosePodcastScreen({ navigation }) {
                             {renderIcon('arrow-left.svg', { width: scale(24), height: scale(24) }, '#F5D8CB')}
                         </TouchableOpacity>
 
-                        <Text style={styles.headerTitle}>Choose podcast{"\n"}or show</Text>
+                        {/* Великий заголовок */}
+                        <Text style={styles.headerTitle}>Choose more{"\n"}artists that you like</Text>
                     </View>
 
                     {/* SEARCH BAR */}
                     <View style={styles.searchContainer}>
                         <View style={styles.searchBox}>
-                            {renderIcon('search.svg', { width: scale(20), height: scale(20) }, 'rgba(245, 216, 203, 0.5)')}
+                            {renderIcon('search.svg', { width: scale(24), height: scale(24) }, 'rgba(245, 216, 203, 0.5)')}
                             <TextInput
                                 style={styles.searchInput}
                                 placeholder="Search"
@@ -231,17 +236,21 @@ export default function ChoosePodcastScreen({ navigation }) {
                         </View>
                     </View>
 
-                    {/* GRID З ПОДКАСТАМИ */}
+                    {/* GRID З АРТИСТАМИ */}
                     <ScrollView
                         showsVerticalScrollIndicator={false}
                         bounces={false}
-                        // 👇 Додаємо безпечні відступи для скролу, щоб галочки не обрізалися і кнопки не перекривали
                         contentContainerStyle={{ paddingTop: scale(15), paddingBottom: scale(120) }}
                     >
                         <View style={styles.gridContainer}>
-                            {PODCASTS_ROWS.map((row, rowIndex) => (
+                            {ARTISTS_ROWS.map((row, rowIndex) => (
                                 <View key={rowIndex} style={styles.rowContainer}>
                                     {row.map((item) => renderCard(item))}
+
+                                    {/* Додаємо пусті блоки, якщо в рядку менше 3 елементів (щоб сітка не поїхала) */}
+                                    {row.length < 3 && Array.from({ length: 3 - row.length }).map((_, i) => (
+                                        <View key={`empty-${i}`} style={styles.cardContainer} />
+                                    ))}
                                 </View>
                             ))}
                         </View>
@@ -250,11 +259,10 @@ export default function ChoosePodcastScreen({ navigation }) {
                     {/* CONFIRM BUTTON */}
                     <View style={styles.bottomButtonContainer}>
                         <TouchableOpacity
-                            // 👇 Кнопка стає напівпрозорою, якщо нічого не вибрано
-                            style={[styles.confirmButton, isConfirmDisabled && { opacity: 0.8 }]}
-                            activeOpacity={1}
-                            disabled={isConfirmDisabled} // 👈 Відключаємо клік
-                            onPress={() => console.log('Confirmed:', selectedPodcasts)}
+                            style={[styles.confirmButton, isConfirmDisabled && { opacity: 0.5 }]}
+                            activeOpacity={0.9}
+                            disabled={isConfirmDisabled}
+                            onPress={() => console.log('Confirmed:', selectedArtists)}
                         >
                             <Text style={styles.confirmButtonText}>Confirm</Text>
                         </TouchableOpacity>
@@ -288,19 +296,19 @@ const styles = StyleSheet.create({
     },
     backButton: {
         width: scale(30),
-        marginBottom: scale(15),
+        marginBottom: scale(20),
     },
     headerTitle: {
         color: '#F5D8CB',
-        fontSize: scale(32),
-        fontFamily: 'Unbounded-SemiBold',
-        lineHeight: scale(38),
+        fontSize: scale(32), // Збільшили розмір
+        fontFamily: 'Unbounded-SemiBold', // Зробили жирним
+        lineHeight: scale(42),
     },
 
     // --- SEARCH ---
     searchContainer: {
         paddingHorizontal: scale(20),
-        marginBottom: scale(10), // Зменшили відступ, бо тепер ScrollView має свій paddingTop
+        marginBottom: scale(10),
     },
     searchBox: {
         flexDirection: 'row',
@@ -334,16 +342,25 @@ const styles = StyleSheet.create({
     // --- CARD ---
     cardContainer: {
         width: ITEM_WIDTH,
+        alignItems: 'center',
     },
     imageWrapper: {
         position: 'relative',
         marginBottom: scale(8),
-        overflow: 'visible',
-    },
-    imageSquare: {
         width: ITEM_WIDTH,
         height: ITEM_WIDTH,
-        borderRadius: scale(24),
+        overflow: 'visible',
+    },
+    circleContainer: {
+        width: '100%',
+        height: '100%',
+        borderRadius: CIRCLE_RADIUS,
+        overflow: 'hidden',
+    },
+    imageCircle: {
+        width: ITEM_WIDTH,
+        height: ITEM_WIDTH,
+        borderRadius: CIRCLE_RADIUS,
         backgroundColor: '#333',
     },
     title: {
@@ -357,41 +374,39 @@ const styles = StyleSheet.create({
         marginTop: scale(8),
     },
 
-    // --- OVELAY ДЛЯ ВИБРАНИХ ---
+    // --- OVERLAY ---
     selectedOverlay: {
         position: 'absolute',
         bottom: 0,
         left: 0,
         right: 0,
-        height: '50%',
-        borderBottomLeftRadius: scale(24),
-        borderBottomRightRadius: scale(24),
+        height: '80%',
     },
 
-    // --- MORE CARD ---
+    // --- RECOMMENDED CARD ---
     moreCard: {
-        backgroundColor: 'rgba(48, 12, 10, 0.4)',
+        backgroundColor: 'transparent',
         borderWidth: 1,
-        borderColor: 'rgba(245, 216, 203, 0.2)',
+        borderColor: 'rgba(245, 216, 203, 0.5)',
         justifyContent: 'center',
         alignItems: 'center',
         padding: scale(10),
     },
     moreText: {
         color: '#F5D8CB',
-        fontSize: scale(11),
-        fontFamily: 'Poppins-SemiBold',
+        fontSize: scale(10),
+        fontFamily: 'Poppins-Regular',
         textAlign: 'center',
     },
 
     // --- CHECK BADGE ---
     checkBadge: {
         position: 'absolute',
-        top: scale(-3),      // Трохи змістили вище
-        right: scale(-3),    // Трохи змістили правіше
+        top: scale(0),
+        right: scale(0),
         width: scale(31),
         height: scale(31),
-        borderRadius: scale(14),
+        borderRadius: scale(16),
         backgroundColor: '#F5D8CB',
         justifyContent: 'center',
         alignItems: 'center',

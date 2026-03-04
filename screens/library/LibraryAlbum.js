@@ -10,7 +10,7 @@ import {
     Dimensions
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { getIcons, scale } from '../api/api';
+import { getIcons, scale } from '../../api/api';
 import InsetShadow from 'react-native-inset-shadow';
 const { width, height } = Dimensions.get('window');
 const svgCache = {};

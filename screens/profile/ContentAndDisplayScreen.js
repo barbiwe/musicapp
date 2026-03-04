@@ -14,7 +14,7 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { SvgXml } from 'react-native-svg';
 
-import { getIcons, scale } from '../api/api';
+import { getIcons, scale } from '../../api/api';
 
 // --- КЕШ SVG ---
 const svgCache = {};
@@ -85,12 +85,15 @@ const CustomSwitch = ({ value, onValueChange }) => {
     );
 };
 
-export default function QualityOfMediaFilesScreen({ navigation }) {
+
+export default function ContentAndDisplayScreen({ navigation }) {
     const [icons, setIcons] = useState({});
 
-    // Стейт для перемикачів (на скріншоті вони увімкнені)
-    const [autoplay, setAutoplay] = useState(true);
-    const [deviceAccess, setDeviceAccess] = useState(true);
+    // Стейт для перемикачів
+    const [ageRestricted, setAgeRestricted] = useState(true);
+    const [unavailableSongs, setUnavailableSongs] = useState(false);
+    const [externalDevices, setExternalDevices] = useState(false);
+    const [createButton, setCreateButton] = useState(false);
 
     useEffect(() => {
         loadIcons();
@@ -168,22 +171,36 @@ export default function QualityOfMediaFilesScreen({ navigation }) {
                         showsVerticalScrollIndicator={false}
                         bounces={false}
                     >
-                        {/* ПІДЗАГОЛОВОК */}
-                        <Text style={styles.sectionHeader}>Playback Controls</Text>
-
                         {/* СПИСОК НАЛАШТУВАНЬ */}
                         <SettingItem
-                            title="Autoplay"
-                            description="Play similar content after finishing listening to tracks."
-                            value={autoplay}
-                            onToggle={setAutoplay}
+                            title="Allow age-restricted content"
+                            description="Enables playback of age-restricted content. If this setting is disabled, age-restricted music and podcasts are skipped, and related audiobooks (if available) are hidden."
+                            value={ageRestricted}
+                            onToggle={setAgeRestricted}
                         />
 
                         <SettingItem
-                            title="Access to music playing on the device"
-                            description="Other apps will have access to display music playing on the device."
-                            value={deviceAccess}
-                            onToggle={setDeviceAccess}
+                            title="Unavailable songs"
+                            description="Songs that are unavailable due to artist removal, user location, etc., are still displayed."
+                            value={unavailableSongs}
+                            onToggle={setUnavailableSongs}
+                        />
+
+                        <SettingItem
+                            title="Allow playback to external devices"
+                            description="For example, Bluetooth in a car, wired headset"
+                            value={externalDevices}
+                            onToggle={setExternalDevices}
+                        />
+
+                        {/* ПІДЗАГОЛОВОК */}
+                        <Text style={styles.sectionHeader}>Display settings</Text>
+
+                        <SettingItem
+                            title="Create button"
+                            description="The Create button will appear on the main navigation bar."
+                            value={createButton}
+                            onToggle={setCreateButton}
                         />
 
                     </ScrollView>
@@ -208,7 +225,7 @@ const styles = StyleSheet.create({
     header: {
         paddingHorizontal: scale(24),
         marginTop: scale(10),
-        marginBottom: scale(60), // Трохи менший відступ, бо підзаголовок йде одразу
+        marginBottom: scale(60),
     },
     backButton: {
         alignSelf: 'flex-start',
@@ -220,37 +237,37 @@ const styles = StyleSheet.create({
         paddingBottom: scale(40),
     },
 
-    // Підзаголовок (Playback Controls)
-    sectionHeader: {
-        fontSize: scale(18),
-        fontFamily: 'Poppins-Bold', // або Unbounded-Bold
-        color: '#F5D8CB',
-        marginBottom: scale(20),
-    },
-
     // Елемент налаштувань
     settingItem: {
         flexDirection: 'row',
         justifyContent: 'space-between',
-        alignItems: 'flex-start',
-        marginBottom: scale(30),
+        alignItems: 'flex-start', // Вирівнюємо по верху, бо тексти можуть бути довгими
+        marginBottom: scale(20),
     },
     settingTextContainer: {
         flex: 1,
-        paddingRight: scale(20),
+        paddingRight: scale(20), // Відступ між текстом і перемикачем
     },
     settingTitle: {
         fontSize: scale(14),
-        fontFamily: 'Poppins-SemiBold',
+        fontFamily: 'Poppins-Bold',
         color: '#F5D8CB',
         marginBottom: scale(6),
-        lineHeight: scale(20),
+        lineHeight: scale(22),
     },
     settingDescription: {
         fontSize: scale(12),
         fontFamily: 'Poppins-Regular',
+        color: '#F5D8CB', // Напівпрозорий основний колір
+        lineHeight: scale(20),
+    },
+
+    // Підзаголовок (Display settings)
+    sectionHeader: {
+        fontSize: scale(16),
+        fontFamily: 'Poppins-Bold',
         color: '#F5D8CB',
-        lineHeight: scale(18),
+        marginTop: scale(10),
     },
 
     // Кастомний Switch
@@ -260,13 +277,12 @@ const styles = StyleSheet.create({
         borderRadius: scale(12),
         justifyContent: 'center',
         padding: scale(2),
-        marginTop: scale(2),
     },
     switchTrackActive: {
-        backgroundColor: '#F5D8CB',
+        backgroundColor: '#F5D8CB', // Залитий, коли УВІМКНЕНО
     },
     switchTrackInactive: {
-        backgroundColor: 'transparent',
+        backgroundColor: 'transparent', // Прозорий, коли ВИМКНЕНО
         borderWidth: scale(1.5),
         borderColor: '#F5D8CB',
     },
@@ -276,9 +292,9 @@ const styles = StyleSheet.create({
         borderRadius: scale(9),
     },
     switchThumbActive: {
-        backgroundColor: '#300C0A',
+        backgroundColor: '#300C0A', // Темна крапка на світлому фоні
     },
     switchThumbInactive: {
-        backgroundColor: '#F5D8CB',
+        backgroundColor: '#F5D8CB', // Світла крапка на темному/прозорому фоні
     }
 });

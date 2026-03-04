@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SvgUri, SvgXml } from 'react-native-svg';
-import { getIcons, scale } from '../api/api';
+import { getIcons, scale } from '../../api/api';
 
 const { width, height } = Dimensions.get('window');
 
