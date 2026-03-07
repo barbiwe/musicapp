@@ -166,7 +166,9 @@ export default function ProfileScreen({ navigation }) {
         { id: 2, title: 'Privacy and community', icon: 'guard.svg' },
         { id: 3, title: 'Quality of media files', icon: 'list.svg' },
         { id: 4, title: 'Statistics', icon: 'chart.svg' },
-        { id: 5, title: 'About us', icon: 'info.svg' },
+        { id: 5, title: 'Downloads', icon: 'download.svg' },
+        { id: 6, title: 'Listening history', icon: 'chart.svg' },
+        { id: 7, title: 'About us', icon: 'info.svg' },
     ];
 
     if (loading && !username) {
@@ -258,6 +260,12 @@ export default function ProfileScreen({ navigation }) {
                                                     break;
                                                 case 'About us':
                                                     navigation.navigate('AboutUs');
+                                                    break;
+                                                case 'Downloads':
+                                                    navigation.navigate('Downloads');
+                                                    break;
+                                                case 'Listening history':
+                                                    navigation.navigate('ListeningHistory');
                                                     break;
                                                 default:
                                                     console.log('No route for', item.title);

@@ -1,5 +1,6 @@
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as FileSystem from 'expo-file-system/legacy';
 import { jwtDecode } from 'jwt-decode';
 import 'core-js/stable/atob';
 import { Dimensions, Image } from 'react-native';
@@ -120,6 +121,29 @@ export const registerUser = async (username, email, phone, password) => {
     }
 };
 
+export const confirmEmailCode = async (email, code) => {
+    try {
+        const res = await api.post('/api/Auth/confirm', {
+            email,
+            code,
+        });
+
+        if (res.data?.token) {
+            await AsyncStorage.setItem('userToken', res.data.token);
+
+            if (res.data.username) {
+                await AsyncStorage.setItem('username', res.data.username);
+            }
+
+            await saveUserIdFromToken(res.data.token);
+        }
+
+        return { success: true, data: res.data };
+    } catch (e) {
+        return { error: e?.response?.data || 'Email confirmation failed' };
+    }
+};
+
 export const loginUser = async (email, password) => {
     try {
         const res = await api.post('/api/Auth/login', {
@@ -162,6 +186,144 @@ export const googleLogin = async (idToken) => {
         return res.data;
     } catch (e) {
         return { error: e.response?.data || 'Google auth error' };
+    }
+};
+
+export const requestPasswordReset = async (email) => {
+    try {
+        const res = await api.post('/api/Auth/forgot-password', { email });
+        const data = res?.data;
+        return { success: true, data };
+    } catch (e) {
+        return { error: e?.response?.data || 'Password reset request failed' };
+    }
+};
+
+export const confirmPasswordReset = async ({ email, code, newPassword }) => {
+    try {
+        const res = await api.post('/api/Auth/reset-password', {
+            email,
+            code,
+            newPassword,
+        });
+        const data = res?.data;
+        return { success: true, data };
+    } catch (e) {
+        return { error: e?.response?.data || 'Password reset failed' };
+    }
+};
+
+export const verifyPasswordResetCode = async ({ email, code }) => {
+    try {
+        const res = await api.post('/api/Auth/verify-reset-code', {
+            email,
+            code,
+        });
+        return { success: true, data: res?.data };
+    } catch (e) {
+        return { error: e?.response?.data || 'Invalid or expired code' };
+    }
+};
+
+export const getCountries = async () => {
+    try {
+        const res = await api.get('/api/countries');
+        return Array.isArray(res?.data) ? res.data : [];
+    } catch (e) {
+        return [];
+    }
+};
+
+export const becomeAuthor = async ({ country }) => {
+    try {
+        const res = await api.post('/api/Auth/become-author', { country });
+        return { success: true, data: res?.data };
+    } catch (e) {
+        return { error: e?.response?.data || 'Become author request failed' };
+    }
+};
+
+export const saveFavoriteGenres = async (genreIds) => {
+    try {
+        await api.post('/api/radio/favorite-genres', {
+            genreIds: Array.isArray(genreIds) ? genreIds : [],
+        });
+        return { success: true };
+    } catch (e) {
+        return {
+            error: e?.response?.data || e?.message || 'Save favorite genres failed',
+            status: e?.response?.status || null,
+        };
+    }
+};
+
+const OFFLINE_DOWNLOADS_KEY = 'offline_downloads_v1';
+const OFFLINE_STORAGE_DIR = `${FileSystem.documentDirectory}offline`;
+const OFFLINE_DOWNLOADS_MANIFEST = `${OFFLINE_STORAGE_DIR}/downloads.json`;
+
+const ensureOfflineStorageDir = async () => {
+    const dirInfo = await FileSystem.getInfoAsync(OFFLINE_STORAGE_DIR);
+    if (!dirInfo.exists) {
+        await FileSystem.makeDirectoryAsync(OFFLINE_STORAGE_DIR, { intermediates: true });
+    }
+};
+
+const readOfflineDownloadsManifest = async () => {
+    try {
+        await ensureOfflineStorageDir();
+        const fileInfo = await FileSystem.getInfoAsync(OFFLINE_DOWNLOADS_MANIFEST);
+        if (!fileInfo.exists) return null;
+
+        const raw = await FileSystem.readAsStringAsync(OFFLINE_DOWNLOADS_MANIFEST);
+        if (!raw) return [];
+
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [];
+    } catch (_) {
+        return null;
+    }
+};
+
+const writeOfflineDownloadsManifest = async (items) => {
+    await ensureOfflineStorageDir();
+    await FileSystem.writeAsStringAsync(
+        OFFLINE_DOWNLOADS_MANIFEST,
+        JSON.stringify(Array.isArray(items) ? items : [])
+    );
+};
+
+export const getOfflineDownloads = async () => {
+    try {
+        const fileData = await readOfflineDownloadsManifest();
+        if (Array.isArray(fileData)) {
+            return fileData;
+        }
+
+        // Міграція зі старого AsyncStorage формату
+        const raw = await AsyncStorage.getItem(OFFLINE_DOWNLOADS_KEY);
+        const parsed = raw ? JSON.parse(raw) : [];
+        const safeParsed = Array.isArray(parsed) ? parsed : [];
+        await writeOfflineDownloadsManifest(safeParsed);
+        return safeParsed;
+    } catch (_) {
+        return [];
+    }
+};
+
+export const saveOfflineDownload = async (track) => {
+    try {
+        if (!track?.id && !track?._id) return { error: 'Invalid track' };
+
+        const current = await getOfflineDownloads();
+        const trackId = String(track.id || track._id);
+        const next = [track, ...current.filter((t) => String(t.id || t._id) !== trackId)];
+
+        await writeOfflineDownloadsManifest(next);
+        // Back-compat на перехідний період
+        await AsyncStorage.setItem(OFFLINE_DOWNLOADS_KEY, JSON.stringify(next));
+        return { success: true };
+    } catch (e) {
+        return { error: e?.message || 'Failed to save offline track' };
     }
 };
 
@@ -512,6 +674,18 @@ export const getTracks = async () => {
     return tracksRequest;
 };
 
+export const getTrackDetails = async (trackId) => {
+    const id = String(trackId || '').trim();
+    if (!id) return null;
+
+    try {
+        const res = await api.get(`/api/Tracks/${id}`);
+        return res?.data || null;
+    } catch {
+        return null;
+    }
+};
+
 export const getMyTracks = async () => {
     try {
         const res = await api.get('/api/Tracks/my');
@@ -741,9 +915,9 @@ export const getAllArtists = async () => {
 };
 
 // 3. Нещодавно програні (Квадрати)
-export const getRecentlyPlayed = async () => {
-    if (recentPlayedCache) return recentPlayedCache;
-    if (recentPlayedRequest) return recentPlayedRequest;
+export const getRecentlyPlayed = async (forceRefresh = false) => {
+    if (!forceRefresh && recentPlayedCache) return recentPlayedCache;
+    if (!forceRefresh && recentPlayedRequest) return recentPlayedRequest;
 
     recentPlayedRequest = (async () => {
         try {
@@ -811,4 +985,34 @@ export const getTrackCoverUrl = (track) => {
     }
 
     return null;
+};
+
+const TRACK_COVER_CACHE_DIR = `${FileSystem.cacheDirectory}track-covers`;
+
+export const getCachedTrackCoverUri = async (trackId) => {
+    const id = String(trackId || '').trim();
+    if (!id) return null;
+
+    try {
+        const dirInfo = await FileSystem.getInfoAsync(TRACK_COVER_CACHE_DIR);
+        if (!dirInfo.exists) {
+            await FileSystem.makeDirectoryAsync(TRACK_COVER_CACHE_DIR, { intermediates: true });
+        }
+
+        const localPath = `${TRACK_COVER_CACHE_DIR}/${id}.jpg`;
+        const localInfo = await FileSystem.getInfoAsync(localPath);
+        if (localInfo.exists) {
+            return localPath;
+        }
+
+        const token = await AsyncStorage.getItem('userToken');
+        const remoteUrl = `${API_URL}/api/Tracks/${id}/cover`;
+        await FileSystem.downloadAsync(remoteUrl, localPath, {
+            headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        });
+
+        return localPath;
+    } catch (_) {
+        return null;
+    }
 };

@@ -24,6 +24,11 @@ import OnboardingScreen from './screens/auth/OnboardingScreen';
 import AuthChoiceScreen from './screens/auth/AuthChoiceScreen';
 import LoginScreen from './screens/auth/LoginScreen';
 import RegisterScreen from './screens/auth/HomeScreen';
+import FavoriteGenresScreen from './screens/auth/FavoriteGenresScreen';
+import ConfirmEmailScreen from './screens/auth/ConfirmEmailScreen';
+import ForgotPasswordScreen from './screens/auth/ForgotPasswordScreen';
+import ResetCodeScreen from './screens/auth/ResetCodeScreen';
+import CreateNewPasswordScreen from './screens/auth/CreateNewPasswordScreen';
 import SearchScreen from './screens/SearchScreen';
 import GenreDetailScreen from './screens/GenreDetailScreen';
 import MusicScreen from './screens/MusicScreen';
@@ -41,6 +46,8 @@ import PrivacyAndCommunityScreen from './screens/profile/PrivacyAndCommunityScre
 import QualityOfMediaFilesScreen from './screens/profile/QualityOfMediaFilesScreen';
 import StatisticsScreen from './screens/profile/StatisticsScreen';
 import AboutUsScreen from './screens/profile/AboutUsScreen';
+import DownloadsScreen from './screens/profile/DownloadsScreen';
+import ListeningHistoryScreen from './screens/profile/ListeningHistoryScreen';
 import ProScreen from './screens/ProScreen';
 import ChoosePodcastScreen from './screens/library/ChoosePodcastScreen';
 import ChooseArtistScreen from './screens/library/ChooseArtistScreen';
@@ -295,6 +302,11 @@ export default function App() {
                 <Stack.Screen name="AuthChoice" component={AuthChoiceScreen} />
                 <Stack.Screen name="Login" component={LoginScreen} />
                 <Stack.Screen name="Register" component={RegisterScreen} />
+                <Stack.Screen name="FavoriteGenres" component={FavoriteGenresScreen} />
+                <Stack.Screen name="ConfirmEmail" component={ConfirmEmailScreen} />
+                <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
+                <Stack.Screen name="ResetCode" component={ResetCodeScreen} />
+                <Stack.Screen name="CreateNewPassword" component={CreateNewPasswordScreen} />
 
                 {/* 👇 ГОЛОВНИЙ ЕКРАН З МЕНЮ (Тут живуть Home, Search, Library) */}
                 <Stack.Screen name="MainTabs" component={MainTabs} />
@@ -321,6 +333,8 @@ export default function App() {
                 <Stack.Screen name="QualityOfMediaFiles" component={QualityOfMediaFilesScreen} />
                 <Stack.Screen name="Statistics" component={StatisticsScreen} />
                 <Stack.Screen name="AboutUs" component={AboutUsScreen} />
+                <Stack.Screen name="Downloads" component={DownloadsScreen} />
+                <Stack.Screen name="ListeningHistory" component={ListeningHistoryScreen} />
                 <Stack.Screen name="ProScreen" component={ProScreen} />
                 <Stack.Screen name="ChoosePodcast" component={ChoosePodcastScreen} />
                 <Stack.Screen name="ChooseArtist" component={ChooseArtistScreen} />

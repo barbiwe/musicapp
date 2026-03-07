@@ -153,6 +153,11 @@ export default function LoginScreen({ navigation }) {
         setLoading(false);
 
         if (result?.error) {
+            const errText = String(result.error || '').toLowerCase();
+            if (errText.includes('confirm your email first')) {
+                navigation.navigate('ConfirmEmail', { email: email.trim() });
+                return;
+            }
             setError('Invalid email or password');
             return;
         }
@@ -284,7 +289,7 @@ export default function LoginScreen({ navigation }) {
 
                     {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
-                    <TouchableOpacity onPress={() => Alert.alert("Reset Password", "Coming soon")}>
+                    <TouchableOpacity onPress={() => navigation.navigate('ForgotPassword')}>
                         <Text style={styles.forgot}>Forgot password?</Text>
                     </TouchableOpacity>
 

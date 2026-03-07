@@ -17,6 +17,7 @@ import {
     StatusBar,
 } from 'react-native';
 import { Audio } from 'expo-av';
+import * as FileSystem from 'expo-file-system/legacy';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -38,6 +39,7 @@ import {
     getColoredSvgXml,
     peekColoredSvgXml,
     resolveArtistName,
+    saveOfflineDownload,
 } from '../api/api';
 
 
@@ -478,8 +480,10 @@ export default function PlayerScreen({ navigation, route }) {
 
 
     const handleViewInfo = () => {
-        setModalVisible(false);
-        navigation.navigate('SongInfo', { track: currentTrack });
+        closeModal();
+        setTimeout(() => {
+            navigation.navigate('SongInfo', { track: currentTrack });
+        }, 180);
     };
 
 
@@ -571,9 +575,76 @@ export default function PlayerScreen({ navigation, route }) {
         showNotification('Queue cleared');
     };
 
-    const handleDownload = () => {
-        // Логіка скачування...
-        showNotification('Downloading...', 'View', () => console.log('View Downloads'));
+    const handleDownload = async () => {
+        const sourceTrack = currentTrack?.track || currentTrack;
+        const trackId = sourceTrack?.id || sourceTrack?._id;
+        if (!trackId) {
+            closeModal();
+            showNotification('Track ID is missing');
+            return;
+        }
+
+        try {
+            closeModal();
+            showNotification('Downloading...');
+            const token = await AsyncStorage.getItem('userToken');
+            const authHeaders = token ? { Authorization: `Bearer ${token}` } : undefined;
+
+            const downloadsDir = `${FileSystem.documentDirectory}downloads`;
+            const dirInfo = await FileSystem.getInfoAsync(downloadsDir);
+            if (!dirInfo.exists) {
+                await FileSystem.makeDirectoryAsync(downloadsDir, { intermediates: true });
+            }
+
+            const fileUri = `${downloadsDir}/${trackId}.mp3`;
+            const existing = await FileSystem.getInfoAsync(fileUri);
+            if (!existing.exists) {
+                await FileSystem.downloadAsync(getStreamUrl(trackId), fileUri, {
+                    headers: authHeaders,
+                });
+            }
+
+            let localCoverUri = null;
+            const coverUrl = getTrackCoverUrl(sourceTrack);
+            if (coverUrl) {
+                const coverFile = `${downloadsDir}/${trackId}_cover.jpg`;
+                const coverExists = await FileSystem.getInfoAsync(coverFile);
+                if (!coverExists.exists) {
+                    try {
+                        await FileSystem.downloadAsync(coverUrl, coverFile, {
+                            headers: authHeaders,
+                        });
+                    } catch (_) {
+                        // keep null
+                    }
+                }
+                const coverInfo = await FileSystem.getInfoAsync(coverFile);
+                if (coverInfo.exists) {
+                    localCoverUri = coverFile;
+                }
+            }
+
+            const payload = {
+                ...sourceTrack,
+                id: sourceTrack.id || sourceTrack._id,
+                title: sourceTrack.title || 'Unknown title',
+                artistName: resolveArtistName(sourceTrack, 'Unknown Artist'),
+                localUri: fileUri,
+                localCoverUri,
+                downloadedAt: new Date().toISOString(),
+            };
+
+            const saveResult = await saveOfflineDownload(payload);
+            if (saveResult?.error) {
+                showNotification('Save download failed');
+                return;
+            }
+            showNotification('Downloaded', 'View', () => navigation.navigate('Downloads'));
+        } catch (e) {
+            const rawMessage = typeof e?.message === 'string' ? e.message : '';
+            const shortMessage = rawMessage ? rawMessage.replace(/\s+/g, ' ').slice(0, 64) : '';
+            showNotification(shortMessage ? `Download failed: ${shortMessage}` : 'Download failed');
+        }
     };
 
     const handleAddToPlaylist = () => {
@@ -654,18 +725,20 @@ export default function PlayerScreen({ navigation, route }) {
     };
     // --- HELPER COMPONENTS ---
     const TopAction = ({ label, iconName }) => (
-        <TouchableOpacity style={styles.topActionContainer}>
+        <View style={styles.topActionContainer}>
             <View style={styles.topActionCircle}>
                 {renderIcon(iconName, '', { width: 24, height: 24 }, '#F5D8CB')}
             </View>
             <Text style={styles.topActionText}>{label}</Text>
-        </TouchableOpacity>
+        </View>
     );
 
     const MenuItem = ({ label, iconName, onPress }) => (
         <TouchableOpacity
             style={styles.menuItemCapsule}
             onPress={onPress}
+            activeOpacity={0.8}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
             <View style={styles.menuItemIconCircle}>
                 {renderIcon(iconName, '', { width: 24, height: 24 }, '#F5D8CB')}
@@ -1460,6 +1533,7 @@ const styles = StyleSheet.create({
     menuItemCapsule: {
         flexDirection: 'row',
         alignItems: 'center',
+        width: '100%',
         height: 48,
         borderRadius: 24,
         borderWidth: 1,
@@ -1539,9 +1613,9 @@ const styles = StyleSheet.create({
         width: '23%', // 4 елементи в ряд
     },
     artistAvatar: {
-        width: 64,
-        height: 64,
-        borderRadius: 32, // Круглі
+        width: 80,
+        height: 80,
+        borderRadius: 40, // Круглі
         backgroundColor: '#2A1414',
         marginBottom: 8,
     },

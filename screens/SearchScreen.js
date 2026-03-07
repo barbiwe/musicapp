@@ -240,23 +240,69 @@ export default function SearchScreen({ navigation }) {
         const timeoutId = setTimeout(async () => {
             const lq = q.toLowerCase();
             const backendTracks = await searchTracksCombined(q);
+            const artistsById = new Map(
+                (Array.isArray(artists) ? artists : [])
+                    .map((artist) => {
+                        const id = artist?.id || artist?._id;
+                        const name = String(getArtistName(artist) || '').trim();
+                        return id && name ? [String(id), name] : null;
+                    })
+                    .filter(Boolean)
+            );
+            const tracksById = new Map(
+                (Array.isArray(tracks) ? tracks : [])
+                    .map((t) => {
+                        const id = t?.id || t?._id;
+                        return id ? [String(id), t] : null;
+                    })
+                    .filter(Boolean)
+            );
+
+            const resolveSearchArtistName = (track) => {
+                const direct = resolveArtistName(track, '').trim();
+                if (direct && direct.toLowerCase() !== 'unknown artist') return direct;
+
+                const id = String(track?.id || track?._id || '');
+                const cachedTrack = id ? tracksById.get(id) : null;
+                const fromCachedTrack = resolveArtistName(cachedTrack, '').trim();
+                if (fromCachedTrack && fromCachedTrack.toLowerCase() !== 'unknown artist') return fromCachedTrack;
+
+                const artistId = track?.ownerId || track?.artistId || track?.artist?.id || track?.artist?._id;
+                if (artistId) {
+                    const fromArtistList = artistsById.get(String(artistId));
+                    if (fromArtistList) return fromArtistList;
+                }
+
+                return 'Unknown Artist';
+            };
 
             const trackItems = (Array.isArray(backendTracks) ? backendTracks : [])
-                .map((track) => ({
-                    type: 'track',
-                    id: track.id || track._id,
-                    title: track.title || 'Unknown',
-                    subtitle: resolveArtistName(track, 'Unknown Artist'),
-                    imageUrl: getTrackCoverUrl(track),
-                    payload: track,
-                }));
+                .map((track) => {
+                    const artist = resolveSearchArtistName(track);
+
+                    return {
+                        type: 'track',
+                        id: track.id || track._id,
+                        title: track.title || 'Unknown',
+                        subtitle: artist,
+                        imageUrl: getTrackCoverUrl(track),
+                        payload: {
+                            ...track,
+                            artistName: artist,
+                            artist: (typeof track?.artist === 'object' && track?.artist !== null)
+                                ? { ...track.artist, name: track.artist.name || artist }
+                                : { name: artist },
+                        },
+                    };
+                });
 
             const artistItemsFromTracksMap = new Map();
             (Array.isArray(backendTracks) ? backendTracks : []).forEach((track, idx) => {
-                const artistName = resolveArtistName(track, '').trim();
+                const artistName = resolveSearchArtistName(track).trim();
                 const artistId = track.ownerId || track.artistId || track.artist?.id || track.artist?._id || null;
                 if (!artistName) return;
-                if (!artistName.toLowerCase().includes(lq)) return;
+                if (artistName.toLowerCase() === 'unknown artist') return;
+                if (!artistName.toLowerCase().startsWith(lq)) return;
 
                 const key = String(artistId || `${artistName}-${idx}`).toLowerCase();
                 if (!artistItemsFromTracksMap.has(key)) {
@@ -276,7 +322,7 @@ export default function SearchScreen({ navigation }) {
             const artistItemsFromTracks = [...artistItemsFromTracksMap.values()];
 
             const albumItems = (Array.isArray(albums) ? albums : [])
-                .filter((album) => String(album?.title || '').toLowerCase().includes(lq))
+                .filter((album) => String(album?.title || '').toLowerCase().startsWith(lq))
                 .map((album) => {
                     const albumId = album.id || album._id || album.albumId || album.AlbumId;
                     return {
@@ -290,7 +336,7 @@ export default function SearchScreen({ navigation }) {
                 });
 
             const artistItems = (Array.isArray(artists) ? artists : [])
-                .filter((artist) => String(getArtistName(artist)).toLowerCase().includes(lq))
+                .filter((artist) => String(getArtistName(artist)).toLowerCase().startsWith(lq))
                 .map((artist) => {
                     const artistId = artist.id || artist._id;
                     const artistName = getArtistName(artist);
@@ -304,25 +350,8 @@ export default function SearchScreen({ navigation }) {
                     };
                 });
 
-            // Артистів ставимо першими, щоб їх не витісняли треки в top-8
+            // Артистів ставимо першими, щоб їх не витісняли треки
             let result = [...artistItemsFromTracks, ...artistItems, ...albumItems, ...trackItems];
-            if (result.length === 0) {
-                const localTrackItems = (tracks || [])
-                    .filter((track) => {
-                        const title = String(track?.title || '').toLowerCase();
-                        const artist = String(resolveArtistName(track, '')).toLowerCase();
-                        return title.includes(lq) || artist.includes(lq);
-                    })
-                    .map((track) => ({
-                        type: 'track',
-                        id: track.id || track._id,
-                        title: track.title || 'Unknown',
-                        subtitle: resolveArtistName(track, 'Unknown Artist'),
-                        imageUrl: getTrackCoverUrl(track),
-                        payload: track,
-                    }));
-                result = localTrackItems;
-            }
 
             const used = new Set();
             result = result.filter((item) => {
@@ -333,7 +362,7 @@ export default function SearchScreen({ navigation }) {
             });
 
             if (searchReqIdRef.current === reqId) {
-                setSearchResults(result.slice(0, 8));
+                setSearchResults(result.slice(0, 20));
             }
         }, 260);
 

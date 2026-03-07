@@ -34,7 +34,7 @@ export const usePlayerStore = create((set, get) => ({
 
         try {
             const trackId = track.id || track._id;
-            const uri = getStreamUrl(trackId);
+            const uri = track.localUri || getStreamUrl(trackId);
             let trackRecorded = false;
 
             const { sound } = await Audio.Sound.createAsync(

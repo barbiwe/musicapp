@@ -126,7 +126,7 @@ export default function RegisterScreen({ navigation }) {
         if (result?.error) {
             Alert.alert("Error", typeof result.error === 'string' ? result.error : 'Google registration failed');
         } else {
-            navigation.replace('MainTabs');
+            navigation.replace('FavoriteGenres');
         }
     };
 
@@ -144,7 +144,7 @@ export default function RegisterScreen({ navigation }) {
         if (res?.error) {
             Alert.alert("Error", typeof res.error === 'string' ? res.error : "Registration failed");
         } else {
-            navigation.replace('MainTabs');
+            navigation.replace('ConfirmEmail', { email: email.trim() });
         }
     };
 

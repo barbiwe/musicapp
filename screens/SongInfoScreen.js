@@ -15,7 +15,8 @@ import {
     getIcons,
     getTrackCoverUrl,
     scale,
-    getAlbumDetails
+    getAlbumDetails,
+    getTrackDetails,
 } from '../api/api';
 import { SvgUri, SvgXml } from 'react-native-svg';
 const { height } = Dimensions.get('window');
@@ -75,12 +76,11 @@ export default function TrackInfoScreen({ navigation, route }) {
     // Отримуємо трек з параметрів навігації
     const { track } = route.params || {};
 
-    console.log("TRACK DATA FROM BACKEND:", JSON.stringify(track, null, 2));
-
     const [loading, setLoading] = useState(true);
     const [icons, setIcons] = useState({});
 
     const [albumName, setAlbumName] = useState('Single');
+    const [trackDetails, setTrackDetails] = useState(null);
 
     useEffect(() => {
         loadData();
@@ -90,6 +90,14 @@ export default function TrackInfoScreen({ navigation, route }) {
         try {
             const iconsRes = await getIcons();
             setIcons(iconsRes || {});
+
+            const trackId = track?.id || track?._id;
+            if (trackId) {
+                const details = await getTrackDetails(trackId);
+                if (details) {
+                    setTrackDetails(details);
+                }
+            }
 
             // 👇 ЛОГІКА ОТРИМАННЯ НАЗВИ АЛЬБОМУ
             if (track?.album?.title) {
@@ -170,6 +178,12 @@ export default function TrackInfoScreen({ navigation, route }) {
 
     const coverUrl = getTrackCoverUrl(track);
     const releaseDate = formatDate(track?.uploadedAt);
+    const sourceTrack = trackDetails || track || {};
+    const artistName = sourceTrack?.artist?.name || sourceTrack?.artistName || sourceTrack?.artist || 'Unknown Artist';
+    const genreText = Array.isArray(sourceTrack?.genres) && sourceTrack.genres.length > 0
+        ? sourceTrack.genres.join(', ')
+        : 'Pop, Synth-pop';
+    const isGenreMock = !Array.isArray(sourceTrack?.genres) || sourceTrack.genres.length === 0;
 
     return (
         <View style={styles.container}>
@@ -214,7 +228,7 @@ export default function TrackInfoScreen({ navigation, route }) {
 
                             {/* 2. Пластинка (зверху) */}
                             <View style={styles.bigVinylOverlay}>
-                                {renderIcon('plastinka.svg', { width: scale(200), height: scale(200) }, null)}
+                                {renderIcon('vinyl.svg', { width: scale(105), height: scale(105) }, null)}
                             </View>
                         </View>
                     </View>
@@ -222,7 +236,7 @@ export default function TrackInfoScreen({ navigation, route }) {
                     {/* --- TITLE & ARTIST --- */}
                     <View style={styles.titleSection}>
                         <Text style={styles.trackTitleText}>{track?.title || 'Unknown Title'}</Text>
-                        <Text style={styles.artistNameText}>{track?.artist?.name || track?.artist || 'Unknown Artist'}</Text>
+                        <Text style={styles.artistNameText}>{artistName}</Text>
                     </View>
 
                     {/* --- INFO ROW (Album | Date) --- */}
@@ -239,35 +253,43 @@ export default function TrackInfoScreen({ navigation, route }) {
 
                         {/* Genre */}
                         <View style={styles.detailBlock}>
-                            <Text style={styles.detailTitle}>Genre:</Text>
-                            <Text style={styles.detailText}>Pop, Synth-pop</Text>
+                            <View style={styles.detailTitleRow}>
+                                <Text style={styles.detailTitle}>Genre:</Text>
+                            </View>
+                            <Text style={[styles.detailText, isGenreMock && styles.detailTextMock]}>{genreText}</Text>
                             <View style={styles.separator} />
                         </View>
 
                         {/* Songwriters */}
                         <View style={styles.detailBlock}>
-                            <Text style={styles.detailTitle}>Songwriters:</Text>
+                            <View style={styles.detailTitleRow}>
+                                <Text style={styles.detailTitle}>Songwriters:</Text>
+                            </View>
                             <View style={styles.bulletList}>
-                                <Text style={styles.detailText}>• {track?.artist?.name || 'Artist Name'}</Text>
-                                <Text style={styles.detailText}>• Unknown Writer</Text>
+                                <Text style={[styles.detailText, styles.detailTextMock]}>• {artistName}</Text>
+                                <Text style={[styles.detailText, styles.detailTextMock]}>• Unknown Writer</Text>
                             </View>
                             <View style={styles.separator} />
                         </View>
 
                         {/* Producers */}
                         <View style={styles.detailBlock}>
-                            <Text style={styles.detailTitle}>Producers:</Text>
+                            <View style={styles.detailTitleRow}>
+                                <Text style={styles.detailTitle}>Producers:</Text>
+                            </View>
                             <View style={styles.bulletList}>
-                                <Text style={styles.detailText}>• Unknown Producer</Text>
+                                <Text style={[styles.detailText, styles.detailTextMock]}>• Unknown Producer</Text>
                             </View>
                             <View style={styles.separator} />
                         </View>
 
                         {/* Label */}
                         <View style={styles.detailBlock}>
-                            <Text style={styles.detailTitle}>Label:</Text>
+                            <View style={styles.detailTitleRow}>
+                                <Text style={styles.detailTitle}>Label:</Text>
+                            </View>
                             <View style={styles.bulletList}>
-                                <Text style={styles.detailText}>• Independent</Text>
+                                <Text style={[styles.detailText, styles.detailTextMock]}>• Independent</Text>
                             </View>
                             <View style={styles.separator} />
                         </View>
@@ -317,7 +339,7 @@ const styles = StyleSheet.create({
     bigInnerCover: {
         width: scale(45.58),
         height: scale(45.58),
-        borderRadius: scale(55),
+        borderRadius: scale(22.79),
         position: 'absolute',
         zIndex: 2,
     },
@@ -386,11 +408,26 @@ const styles = StyleSheet.create({
         fontFamily: 'Unbounded-Regular',
         marginBottom: scale(10),
     },
+    detailTitleRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: scale(10),
+        columnGap: scale(8),
+    },
+    mockTag: {
+        color: '#FF4D4F',
+        fontSize: scale(12),
+        fontFamily: 'Poppins-SemiBold',
+        textTransform: 'uppercase',
+    },
     detailText: {
         color: '#F5D8CB',
         fontSize: scale(14),
         fontFamily: 'Poppins-Regular',
         marginBottom: scale(4),
+    },
+    detailTextMock: {
+        color: '#FF4D4F',
     },
     separator: {
         height: 1,

@@ -314,7 +314,7 @@ export default function DiscoverScreen({ navigation }) {
                                         onPress={() => navigation.navigate('ProScreen')}
                                         activeOpacity={0.7}
                                     >
-                                        {renderIcon('pro.svg', { width: 24, height: 24 }, '#fff')}
+                                        {renderIcon('pro1.svg', { width: 24, height: 24 }, '#fff')}
                                     </TouchableOpacity>
 
                                     <TouchableOpacity

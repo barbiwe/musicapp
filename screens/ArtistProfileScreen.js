@@ -84,6 +84,7 @@ export default function ArtistProfileScreen({ navigation, route }) {
     const [tracks, setTracks] = useState([]);
     const [albums, setAlbums] = useState([]); // 👇 Стейт для альбомів
     const [icons, setIcons] = useState({});
+    const [isFollowingMock, setIsFollowingMock] = useState(false);
 
     useEffect(() => {
         loadData();
@@ -163,6 +164,8 @@ export default function ArtistProfileScreen({ navigation, route }) {
     };
 
     const avatarUrl = artist?.id ? getUserAvatarUrl(artist.id) : null;
+    const artistCountry = artist?.country || artist?.location || artist?.artistCountry || 'USA';
+    const artistRole = artist?.role || artist?.type || 'Rapper';
 
     if (loading) {
         return (
@@ -209,10 +212,24 @@ export default function ArtistProfileScreen({ navigation, route }) {
                         </TouchableOpacity>
 
                         <View style={styles.heroTextContainer}>
-                            <Text style={styles.genreText}>Rapper</Text>
+                            <View style={styles.metaRowMock}>
+                                <Text style={styles.metaTextMock}>{artistRole}</Text>
+                                <Text style={styles.metaDotMock}>•</Text>
+                                <Text style={styles.metaTextMock}>{artistCountry}</Text>
+                            </View>
                             <View style={styles.nameRow}>
                                 <Text style={styles.artistNameText}>{artist?.name || 'Unknown Artist'}</Text>
-                                {renderIcon('profile.svg', { width: 20, height: 20, marginLeft: 10 }, '#fff')}
+                                <TouchableOpacity
+                                    onPress={() => setIsFollowingMock((prev) => !prev)}
+                                    style={styles.followIconButtonMock}
+                                    activeOpacity={0.85}
+                                >
+                                    {renderIcon(
+                                        isFollowingMock ? 'unfollow.svg' : 'follow.svg',
+                                        { width: scale(24), height: scale(24) },
+                                        '#FF4D4F'
+                                    )}
+                                </TouchableOpacity>
                             </View>
                         </View>
                     </View>
@@ -419,12 +436,23 @@ const styles = StyleSheet.create({
         left: scale(16),
         right: scale(16),
     },
-    genreText: {
-        color: '#F5D8CB',
-        fontSize: scale(20),
+    metaRowMock: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: scale(6),
+    },
+    metaTextMock: {
+        color: '#FF4D4F',
+        fontSize: scale(18),
         fontFamily: 'Unbounded-SemiBold',
         textTransform: 'uppercase',
-        marginBottom: 4,
+    },
+    metaDotMock: {
+        color: '#FF4D4F',
+        marginHorizontal: scale(10),
+        fontSize: scale(18),
+        fontFamily: 'Unbounded-SemiBold',
+        lineHeight: scale(18),
     },
     nameRow: {
         flexDirection: 'row',
@@ -436,6 +464,14 @@ const styles = StyleSheet.create({
         fontSize: scale(36),
         fontFamily: 'Unbounded-SemiBold',
 
+    },
+    followIconButtonMock: {
+        marginLeft: scale(10),
+        width: scale(40),
+        height: scale(40),
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginTop: scale(-3),
     },
     statsGlassContainer: {
         borderRadius: scale(100),
