@@ -323,7 +323,9 @@ const styles = StyleSheet.create({
 
     // --- BUTTON ---
     button: {
-        backgroundColor: '#F5D8CB',
+        backgroundColor: 'transparent',
+        borderWidth: 1,
+        borderColor: '#FF4D4F',
         borderRadius: scale(30),
         paddingVertical: scale(14), // Зменшив висоту кнопки
         alignItems: 'center',
@@ -332,7 +334,7 @@ const styles = StyleSheet.create({
         zIndex: 1,
     },
     buttonText: {
-        color: '#300C0A',
+        color: '#FF4D4F',
         fontSize: scale(15),      // Зменшив
         fontFamily: 'Unbounded-Medium',
     }

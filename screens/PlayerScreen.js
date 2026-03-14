@@ -15,8 +15,8 @@ import {
     TouchableWithoutFeedback,
     Image,
     StatusBar,
+    Linking,
 } from 'react-native';
-import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { BlurView } from 'expo-blur';
@@ -150,10 +150,9 @@ export default function PlayerScreen({ navigation, route }) {
     // 1. НАЙПЕРШЕ — ТЯГНЕМО ГЛОБАЛЬНИЙ СТОР
     const {
         currentTrack, isPlaying, position, duration, queue, currentIndex,
-        togglePlay, playNext, playPrev, seekTo, setQueue, addToQueue, clearQueue, setTrack
+        togglePlay, playNext, playPrev, seekTo, setQueue, addToQueue, clearQueue, setTrack,
+        adModalVisible, adData, adPositionMs, adDurationMs, isAdPlaying, toggleAdPlayPause,
     } = usePlayerStore();
-
-    if (!currentTrack) return null;
 
     // 2. ДІСТАЄМО ІНФУ САМЕ З ГЛОБАЛЬНОГО СТОРУ
     const trackTitle = currentTrack?.title || 'No Title';
@@ -178,9 +177,6 @@ export default function PlayerScreen({ navigation, route }) {
     const [relatedVisible, setRelatedVisible] = useState(false);
     const isSeeking = useRef(false);
     const [progressBarWidth, setProgressBarWidth] = useState(0);
-    const [textWidth, setTextWidth] = useState(0);
-    const [containerWidth, setContainerWidth] = useState(0);
-    const animatedValue = useRef(new Animated.Value(0)).current;
     const [likedTrackIds, setLikedTrackIds] = useState([]);
 
     // 4. СИНХРОНІЗАЦІЯ (Якщо відкрили з іншого екрану)
@@ -211,6 +207,17 @@ export default function PlayerScreen({ navigation, route }) {
         const upcomingTracks = queue.slice(currentIndex, currentIndex + 8);
         upcomingTracks.forEach((track) => prefetchImageOnce(getTrackCoverUrl(track)));
     }, [queue, currentIndex]);
+
+    useEffect(() => {
+        if (!adModalVisible || !adData) return;
+        if (adData.imageUrl) {
+            prefetchImageOnce(adData.imageUrl);
+        }
+        showNotification(adData.title || 'VOX Pro', 'View', () => {
+            if (!adData.targetUrl) return;
+            Linking.openURL(adData.targetUrl).catch(() => {});
+        });
+    }, [adModalVisible, adData]);
 
     const loadIconsData = async () => {
         if (Object.keys(icons).length > 0) {
@@ -271,9 +278,14 @@ export default function PlayerScreen({ navigation, route }) {
             const map = new Map();
             allTracks.forEach(t => {
                 const aName = t.artistName || t.artist?.name;
-                const aId = t.ownerId; // Використовуємо ownerId як ID артиста
+                const aId = t.artistId || t.ArtistId || t.artist?.id || t.artist?._id;
                 if (aId && !map.has(aId) && aName) {
-                    map.set(aId, { id: aId, name: aName });
+                    map.set(aId, {
+                        id: aId,
+                        artistId: aId,
+                        ownerId: t.ownerId || t.OwnerId || null,
+                        name: aName,
+                    });
                 }
             });
             const nextRelatedArtists = [...map.values()].slice(0, 4);
@@ -518,7 +530,14 @@ export default function PlayerScreen({ navigation, route }) {
         });
     };
 
-
+    const handleAdPress = async () => {
+        if (!adData?.targetUrl) return;
+        try {
+            await Linking.openURL(adData.targetUrl);
+        } catch (_) {
+            // ignore bad ad URL in test mode
+        }
+    };
 
     // --- MENU ACTIONS ---
 
@@ -527,13 +546,21 @@ export default function PlayerScreen({ navigation, route }) {
         // Перевіряємо, чи є дані артиста
         const artistData = currentTrack.artist || {};
         // Іноді ID артиста лежить в ownerId, якщо це трек
-        const artistId = artistData.id || artistData._id || currentTrack.ownerId;
+        const artistId =
+            artistData.artistId ||
+            artistData.ArtistId ||
+            artistData.id ||
+            artistData._id ||
+            currentTrack.artistId ||
+            currentTrack.ArtistId;
 
         if (artistId) {
             navigation.navigate('ArtistProfile', {
                 artist: {
                     ...artistData,
                     id: artistId,
+                    artistId,
+                    ownerId: currentTrack.ownerId || null,
                     name: artistData.name || currentTrack.artistName || 'Unknown'
                 }
             });
@@ -661,27 +688,7 @@ export default function PlayerScreen({ navigation, route }) {
     };
 
     const progressPercent = duration > 0 ? (position / duration) * 100 : 0;
-
-    // --- MARQUEE ---
-    useEffect(() => {
-        if (textWidth > containerWidth && containerWidth > 0) {
-            const startAnimation = () => {
-                animatedValue.setValue(containerWidth);
-                Animated.timing(animatedValue, {
-                    toValue: -textWidth,
-                    duration: textWidth * 50,
-                    easing: Easing.linear,
-                    useNativeDriver: true,
-                }).start(({ finished }) => {
-                    if (finished) startAnimation();
-                });
-            };
-            startAnimation();
-        } else {
-            animatedValue.stopAnimation();
-            animatedValue.setValue(0);
-        }
-    }, [textWidth, containerWidth, trackTitle]);
+    const visibleQueue = queue.slice(currentIndex);
 
     const renderIcon = (iconName, fallbackText, style, tintColor = '#000000') => {
         const iconUrl = icons[iconName];
@@ -724,28 +731,30 @@ export default function PlayerScreen({ navigation, route }) {
         return <View style={{ width: flatStyle?.width || 24, height: flatStyle?.height || 24 }} />;
     };
     // --- HELPER COMPONENTS ---
-    const TopAction = ({ label, iconName }) => (
+    const TopAction = ({ label, iconName, isStub = false }) => (
         <View style={styles.topActionContainer}>
-            <View style={styles.topActionCircle}>
-                {renderIcon(iconName, '', { width: 24, height: 24 }, '#F5D8CB')}
+            <View style={[styles.topActionCircle, isStub && styles.stubOutline]}>
+                {renderIcon(iconName, '', { width: 24, height: 24 }, isStub ? '#FF4D4F' : '#F5D8CB')}
             </View>
-            <Text style={styles.topActionText}>{label}</Text>
+            <Text style={[styles.topActionText, isStub && styles.stubText]}>{label}</Text>
         </View>
     );
 
-    const MenuItem = ({ label, iconName, onPress }) => (
+    const MenuItem = ({ label, iconName, onPress, isStub = false }) => (
         <TouchableOpacity
-            style={styles.menuItemCapsule}
+            style={[styles.menuItemCapsule, isStub && styles.stubOutline]}
             onPress={onPress}
             activeOpacity={0.8}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
-            <View style={styles.menuItemIconCircle}>
-                {renderIcon(iconName, '', { width: 24, height: 24 }, '#F5D8CB')}
+            <View style={[styles.menuItemIconCircle, isStub && styles.stubOutline]}>
+                {renderIcon(iconName, '', { width: 24, height: 24 }, isStub ? '#FF4D4F' : '#F5D8CB')}
             </View>
-            <Text style={styles.menuItemText}>{label}</Text>
+            <Text style={[styles.menuItemText, isStub && styles.stubText]}>{label}</Text>
         </TouchableOpacity>
     );
+
+    if (!currentTrack) return null;
 
 
     return (
@@ -781,6 +790,125 @@ export default function PlayerScreen({ navigation, route }) {
 
             {/* 2. КОНТЕНТ (Header, Cover, Controls) */}
             <View style={styles.contentContainer}>
+                {adModalVisible ? (
+                    <View style={styles.adPlayerContent}>
+                        <View style={styles.header}>
+                            <TouchableOpacity
+                                onPress={() => navigation.goBack()}
+                                hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
+                            >
+                                {renderIcon('arrow-left.svg', 'Back', { width: 24, height: 24 }, '#F5D8CB')}
+                            </TouchableOpacity>
+                        </View>
+
+                        <View style={styles.adHeroCard}>
+                            {adData?.imageUrl ? (
+                                <TouchableOpacity activeOpacity={0.92} onPress={handleAdPress} style={styles.adImageWrap}>
+                                    <Image
+                                        source={{ uri: adData.imageUrl, cache: 'force-cache' }}
+                                        style={styles.adImage}
+                                        resizeMode="cover"
+                                    />
+                                </TouchableOpacity>
+                            ) : (
+                                <View style={styles.adLoadingWrap}>
+                                    <Text style={styles.adNoContentText}>No active ad found</Text>
+                                </View>
+                            )}
+                        </View>
+
+                        <View style={styles.adTitleWrap}>
+                            <Text style={styles.adNowPlayingTitle}>Advertisement</Text>
+                            <Text style={styles.adNowPlayingArtist}>{adData?.title || 'VOX'}</Text>
+                        </View>
+
+                        <View style={[styles.progressBarWrapper, styles.adProgressBarWrapper]}>
+                            <View style={styles.adProgressTrackWrap}>
+                                <View style={styles.progressLineBg}>
+                                    <View
+                                        style={[styles.progressLineFill, { width: `${Math.min(adDurationMs > 0 ? (adPositionMs / adDurationMs) * 100 : 0, 100)}%` }]}
+                                        pointerEvents="none"
+                                    />
+                                </View>
+                                <View
+                                    style={[
+                                        styles.adProgressKnobContainer,
+                                        { left: `${Math.min(adDurationMs > 0 ? (adPositionMs / adDurationMs) * 100 : 0, 100)}%` }
+                                    ]}
+                                    pointerEvents="none"
+                                >
+                                    <View style={styles.adProgressKnobVisual} />
+                                </View>
+                            </View>
+                            <View style={styles.adProgressTimeRow}>
+                                <Text style={styles.adTimeText}>{formatTime(adPositionMs)}</Text>
+                                <Text style={styles.adTimeText}>{formatTime(adDurationMs)}</Text>
+                            </View>
+                        </View>
+
+                        <View style={[styles.controlsSection, styles.adControlsSection]}>
+                            <TouchableOpacity hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                                {renderIcon('shuffle.svg', 'Mix', { width: 24, height: 24 }, '#F5D8CB')}
+                            </TouchableOpacity>
+
+                            <View style={styles.mainControlsWrapper}>
+                                <LinearGradient
+                                    colors={['rgba(255, 255, 255, 0.15)', 'rgba(255, 255, 255, 0.1)', 'rgba(255, 255, 255, 0.05)']}
+                                    locations={[0, 0.2, 1]}
+                                    start={{ x: 0.5, y: 0 }}
+                                    end={{ x: 0.5, y: 1 }}
+                                    style={{
+                                        width: '100%',
+                                        height: 60,
+                                        borderRadius: 30,
+                                        padding: 1.5,
+                                    }}
+                                >
+                                    <BlurView intensity={15} tint="light" style={styles.controlsCapsule}>
+                                        <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(48, 12, 10, 0.1)' }]} />
+                                        <View style={styles.controlsContent}>
+                                            <TouchableOpacity hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}>
+                                                {renderIcon('previous.svg', 'Prev', { width: 28, height: 28 }, '#F5D8CB')}
+                                            </TouchableOpacity>
+                                            <View style={{ width: 60 }} />
+                                            <TouchableOpacity hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}>
+                                                {renderIcon('next.svg', 'Next', { width: 28, height: 28 }, '#F5D8CB')}
+                                            </TouchableOpacity>
+                                        </View>
+                                    </BlurView>
+                                </LinearGradient>
+
+                                <TouchableOpacity
+                                    style={styles.playCircle}
+                                    activeOpacity={0.8}
+                                    onPress={toggleAdPlayPause}
+                                >
+                                    {!isAdPlaying
+                                        ? renderIcon('play.svg', '>', { width: 32, height: 32 }, '#300C0A')
+                                        : renderIcon('pause.svg', '||', { width: 32, height: 32 }, '#300C0A')
+                                    }
+                                </TouchableOpacity>
+                            </View>
+
+                            <TouchableOpacity hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                                {renderIcon('previous-1.svg', 'Rep', { width: 24, height: 24 }, '#F5D8CB')}
+                            </TouchableOpacity>
+                        </View>
+
+                        <View style={styles.footer}>
+                            <TouchableOpacity onPress={() => openModal('queue')}>
+                                <Text style={styles.footerTab}>Queue</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity>
+                                <Text style={[styles.footerTab, styles.stubText]}>Lyrics</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity onPress={() => openModal('related')}>
+                                <Text style={styles.footerTab}>Related</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                ) : (
+                    <>
 
                 {/* HEADER */}
                 <View style={styles.header}>
@@ -791,26 +919,25 @@ export default function PlayerScreen({ navigation, route }) {
                         {renderIcon('arrow-left.svg', 'Back', { width: 24, height: 24 }, '#F5D8CB')}
                     </TouchableOpacity>
 
-                    <View style={{ flex: 1 }} />
-
-                    <TouchableOpacity
-                        style={{ marginRight: 20 }}
-                        hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
-                        // Використовуємо універсальну функцію
-                        onPress={() => handleItemLikeToggle(currentTrack)}
-                    >
-                        {/* Перевіряємо наявність в масиві */}
-                        {likedTrackIds.includes(currentTrack.id || currentTrack._id)
-                            ? renderIcon('added.svg', 'Lik', { width: 24, height: 24 }, '#F5D8CB')
-                            : renderIcon('add to another playlist.svg', 'Lik', { width: 24, height: 24 }, '#F5D8CB')
-                        }
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                        hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
-                        onPress={() => openModal('menu')}
-                    >
-                        {renderIcon('more.svg', '•••', { width: 24, height: 24 }, '#F5D8CB')}
-                    </TouchableOpacity>
+                    <View style={styles.headerActions}>
+                        <TouchableOpacity
+                            style={styles.headerActionButton}
+                            hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
+                            onPress={() => handleItemLikeToggle(currentTrack)}
+                        >
+                            {likedTrackIds.includes(currentTrack.id || currentTrack._id)
+                                ? renderIcon('added.svg', 'Lik', { width: 24, height: 24 }, '#F5D8CB')
+                                : renderIcon('add.svg', 'Lik', { width: 24, height: 24 }, '#F5D8CB')
+                            }
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                            style={styles.headerActionButton}
+                            hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
+                            onPress={() => openModal('menu')}
+                        >
+                            {renderIcon('more.svg', '•••', { width: 24, height: 24 }, '#F5D8CB')}
+                        </TouchableOpacity>
+                    </View>
                 </View>
 
                 {/* ALBUM COVER (CENTER) */}
@@ -836,34 +963,16 @@ export default function PlayerScreen({ navigation, route }) {
 
                 {/* TITLE & ARTIST */}
                 <View style={styles.textBlock}>
-                    <View
-                        style={styles.titleContainer}
-                        onLayout={(e) => setContainerWidth(e.nativeEvent.layout.width)}
-                    >
-                        <Animated.Text
-                            style={[
-                                styles.title,
-                                {
-                                    transform: [{ translateX: animatedValue }],
-                                    textAlign: (textWidth > containerWidth) ? 'left' : 'center',
-                                    width: (textWidth > containerWidth) ? textWidth + 50 : '100%',
-                                    position: (textWidth > containerWidth) ? 'absolute' : 'relative',
-                                }
-                            ]}
-                            numberOfLines={1}
-                            onLayout={(e) => setTextWidth(e.nativeEvent.layout.width)}
-                        >
-                            {trackTitle}
-                        </Animated.Text>
-                    </View>
+                    <Text style={styles.title} numberOfLines={1} ellipsizeMode="tail">
+                        {trackTitle}
+                    </Text>
                     <Text style={styles.artist}>{trackArtist}</Text>
                 </View>
 
                 {/* PROGRESS BAR */}
-                <View style={styles.progressBarWrapper}>
-                    <Text style={styles.timeText}>{formatTime(position)}</Text>
+                <View style={[styles.progressBarWrapper, styles.playerProgressBarWrapper]}>
                     <View
-                        style={styles.progressTouchArea}
+                        style={styles.playerProgressTrackWrap}
                         onLayout={(e) => setProgressBarWidth(e.nativeEvent.layout.width)}
                         onStartShouldSetResponder={() => true}
                         onResponderGrant={handleGrant}
@@ -877,20 +986,23 @@ export default function PlayerScreen({ navigation, route }) {
                             />
                         </View>
                         <View
-                            style={[styles.progressKnobContainer, { left: `${progressPercent}%` }]}
+                            style={[styles.adProgressKnobContainer, { left: `${progressPercent}%` }]}
                             pointerEvents="none"
                         >
-                            <View style={styles.progressKnobVisual} />
+                            <View style={styles.adProgressKnobVisual} />
                         </View>
                     </View>
-                    <Text style={styles.timeText}>{formatTime(duration)}</Text>
+                    <View style={styles.playerProgressTimeRow}>
+                        <Text style={styles.playerTimeText}>{formatTime(position)}</Text>
+                        <Text style={styles.playerTimeText}>{formatTime(duration)}</Text>
+                    </View>
                 </View>
 
                 {/* CONTROLS */}
                 <View style={styles.controlsSection}>
                     {/* Shuffle Button (Ліва кнопка) */}
                     <TouchableOpacity hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                        {renderIcon('shuffle.svg', 'Mix', { width: 24, height: 24 }, '#F5D8CB')}
+                        {renderIcon('shuffle.svg', 'Mix', { width: 24, height: 24 }, '#FF4D4F')}
                     </TouchableOpacity>
 
                     {/* CAPSULE CONTROLS with LIQUID GLASS (Центральна пігулка) */}
@@ -960,12 +1072,14 @@ export default function PlayerScreen({ navigation, route }) {
                         <Text style={styles.footerTab}>Queue</Text>
                     </TouchableOpacity>
                     <TouchableOpacity>
-                        <Text style={styles.footerTab}>Lyrics</Text>
+                        <Text style={[styles.footerTab, styles.stubText]}>Lyrics</Text>
                     </TouchableOpacity>
                     <TouchableOpacity onPress={() => openModal('related')}>
                         <Text style={styles.footerTab}>Related</Text>
                     </TouchableOpacity>
                 </View>
+                    </>
+                )}
             </View>
 
             {/* --- NOTIFICATION PILL --- */}
@@ -1021,7 +1135,7 @@ export default function PlayerScreen({ navigation, route }) {
                                                 </TouchableOpacity>
 
                                                 <TouchableOpacity onPress={() => console.log('Share')}>
-                                                    <TopAction label="Share" iconName="share.svg" />
+                                                    <TopAction label="Share" iconName="share.svg" isStub />
                                                 </TouchableOpacity>
 
                                                 <TouchableOpacity onPress={handlePlayNext}>
@@ -1034,6 +1148,7 @@ export default function PlayerScreen({ navigation, route }) {
                                                     label="Add to another playlist"
                                                     iconName="add to another playlist.svg"
                                                     onPress={handleAddToPlaylist}
+                                                    isStub
                                                 />
                                                 <MenuItem
                                                     label="Add to queue"
@@ -1113,8 +1228,8 @@ export default function PlayerScreen({ navigation, route }) {
 
                                             {/* 👇 ОНОВЛЕНИЙ FLATLIST БЕЗ ПОМИЛОК */}
                                             <FlatList
-                                                data={queue}
-                                                keyExtractor={(item) => item.id || item._id}
+                                                data={visibleQueue}
+                                                keyExtractor={(item, idx) => `${item.id || item._id || 'track'}-${idx}`}
 
                                                 renderItem={({ item, index }) => (
                                                     <View>
@@ -1122,7 +1237,11 @@ export default function PlayerScreen({ navigation, route }) {
                                                             item={item}
                                                             currentTrack={currentTrack}
                                                             isPlaying={isPlaying}
-                                                            playFromQueue={(track) => { const i = queue.findIndex(t => t.id === track.id); if(i !== -1) setQueue(queue, i); }}
+                                                            playFromQueue={(track) => {
+                                                                const trackId = track.id || track._id;
+                                                                const i = queue.findIndex((t) => (t.id || t._id) === trackId);
+                                                                if (i !== -1) setQueue(queue, i);
+                                                            }}
                                                             handlePlayPause={togglePlay}
                                                             renderIcon={renderIcon}
 
@@ -1277,9 +1396,22 @@ const styles = StyleSheet.create({
     header: {
         flexDirection: 'row',
         alignItems: 'center',
+        justifyContent: 'space-between',
         paddingHorizontal: 20,
         width: '100%',
         height: 50,
+    },
+    headerActions: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginLeft: 'auto',
+    },
+    headerActionButton: {
+        width: 24,
+        height: 24,
+        marginLeft: 20,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     headerText: {
         fontSize: 16,
@@ -1323,15 +1455,12 @@ const styles = StyleSheet.create({
         height: 60,
         justifyContent: 'center',
     },
-    titleContainer: {
-        width: '100%',
-        alignItems: 'center',
-        overflow: 'hidden',
-    },
     title: {
         fontSize: 24,
         fontFamily: 'Unbounded-SemiBold',
         color: '#F5D8CB',
+        width: '100%',
+        textAlign: 'center',
     },
     artist: {
         fontSize: 14,
@@ -1346,6 +1475,31 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         width: '85%',
         justifyContent: 'space-between',
+    },
+    playerProgressBarWrapper: {
+        width: '92%',
+        flexDirection: 'column',
+        alignItems: 'stretch',
+        justifyContent: 'flex-start',
+    },
+    playerProgressTrackWrap: {
+        width: '100%',
+        height: 18,
+        justifyContent: 'center',
+        position: 'relative',
+    },
+    playerProgressTimeRow: {
+        width: '100%',
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginTop: 6,
+    },
+    playerTimeText: {
+        fontSize: 12,
+        color: '#F5D8CB',
+        fontFamily: 'Unbounded-Regular',
+        lineHeight: 16,
     },
     timeText: {
         fontSize: 12,
@@ -1458,6 +1612,113 @@ const styles = StyleSheet.create({
         color: '#F5D8CB',
     },
 
+    /* --- AD PLAYER MODE --- */
+    adPlayerContent: {
+        flex: 1,
+        width: '100%',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingBottom: 0,
+    },
+    adHeroCard: {
+        width: SCREEN_WIDTH - 32,
+        height: SCREEN_WIDTH - 32,
+        borderRadius: 24,
+        overflow: 'hidden',
+        backgroundColor: 'rgba(48, 12, 10, 0.45)',
+        borderWidth: 1,
+        borderColor: 'rgba(245,216,203,0.35)',
+        marginTop: 0,
+    },
+    adTitleWrap: {
+        alignItems: 'center',
+        marginTop: 0,
+        marginBottom: 0,
+    },
+    adProgressBarWrapper: {
+        width: '92%',
+        flexDirection: 'column',
+        alignItems: 'stretch',
+        justifyContent: 'flex-start',
+        marginBottom: 0,
+    },
+    adProgressTrackWrap: {
+        width: '100%',
+        height: 18,
+        justifyContent: 'center',
+        position: 'relative',
+    },
+    adProgressKnobContainer: {
+        position: 'absolute',
+        width: 18,
+        height: 18,
+        marginLeft: -9,
+        justifyContent: 'center',
+        alignItems: 'center',
+        top: 0,
+    },
+    adProgressKnobVisual: {
+        width: 10,
+        height: 10,
+        borderRadius: 5,
+        backgroundColor: '#300C0A',
+    },
+    adProgressTimeRow: {
+        width: '100%',
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginTop: 6,
+    },
+    adTimeText: {
+        fontSize: 12,
+        color: '#F5D8CB',
+        fontFamily: 'Unbounded-Regular',
+        lineHeight: 16,
+    },
+    adControlsSection: {
+        marginTop: 0,
+    },
+    adNowPlayingTitle: {
+        fontSize: 24,
+        lineHeight: 30,
+        fontFamily: 'Unbounded-SemiBold',
+        color: '#F5D8CB',
+    },
+    adNowPlayingArtist: {
+        fontSize: 14,
+        fontFamily: 'Poppins-Regular',
+        color: '#F5D8CB',
+        opacity: 0.9,
+        marginTop: 11,
+    },
+    adImageWrap: {
+        width: '100%',
+        height: '100%',
+        borderRadius: 0,
+        overflow: 'hidden',
+        backgroundColor: '#3A1A18',
+        marginBottom: 0,
+    },
+    adImage: {
+        width: '100%',
+        height: '100%',
+    },
+    adLoadingWrap: {
+        width: '100%',
+        height: '100%',
+        borderRadius: 0,
+        backgroundColor: '#3A1A18',
+        marginBottom: 0,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    adNoContentText: {
+        fontSize: 14,
+        fontFamily: 'Poppins-Regular',
+        color: 'rgba(245,216,203,0.8)',
+    },
+
     /* --- MODAL COMMON --- */
     modalOverlay: {
         flex: 1,
@@ -1557,6 +1818,12 @@ const styles = StyleSheet.create({
         fontFamily: 'Poppins-Regular',
         color: '#F5D8CB',
         fontWeight: '400',
+    },
+    stubText: {
+        color: '#FF4D4F',
+    },
+    stubOutline: {
+        borderColor: '#FF4D4F',
     },
 
     /* --- QUEUE MODAL --- */

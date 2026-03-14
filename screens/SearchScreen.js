@@ -267,7 +267,7 @@ export default function SearchScreen({ navigation }) {
                 const fromCachedTrack = resolveArtistName(cachedTrack, '').trim();
                 if (fromCachedTrack && fromCachedTrack.toLowerCase() !== 'unknown artist') return fromCachedTrack;
 
-                const artistId = track?.ownerId || track?.artistId || track?.artist?.id || track?.artist?._id;
+                const artistId = track?.artistId || track?.ArtistId || track?.artist?.id || track?.artist?._id;
                 if (artistId) {
                     const fromArtistList = artistsById.get(String(artistId));
                     if (fromArtistList) return fromArtistList;
@@ -299,7 +299,8 @@ export default function SearchScreen({ navigation }) {
             const artistItemsFromTracksMap = new Map();
             (Array.isArray(backendTracks) ? backendTracks : []).forEach((track, idx) => {
                 const artistName = resolveSearchArtistName(track).trim();
-                const artistId = track.ownerId || track.artistId || track.artist?.id || track.artist?._id || null;
+                const artistId = track.artistId || track.ArtistId || track.artist?.id || track.artist?._id || null;
+                const ownerId = track.ownerId || track.OwnerId || null;
                 if (!artistName) return;
                 if (artistName.toLowerCase() === 'unknown artist') return;
                 if (!artistName.toLowerCase().startsWith(lq)) return;
@@ -311,9 +312,11 @@ export default function SearchScreen({ navigation }) {
                         id: artistId || key,
                         title: artistName,
                         subtitle: '',
-                        imageUrl: artistId ? getUserAvatarUrl(artistId) : null,
+                        imageUrl: getUserAvatarUrl(ownerId || artistId),
                         payload: {
                             id: artistId || key,
+                            artistId: artistId || null,
+                            ownerId: ownerId || null,
                             name: artistName,
                         },
                     });
@@ -338,14 +341,15 @@ export default function SearchScreen({ navigation }) {
             const artistItems = (Array.isArray(artists) ? artists : [])
                 .filter((artist) => String(getArtistName(artist)).toLowerCase().startsWith(lq))
                 .map((artist) => {
-                    const artistId = artist.id || artist._id;
+                    const artistId = artist.artistId || artist.ArtistId || artist.id || artist._id;
+                    const ownerId = artist.ownerId || artist.OwnerId || null;
                     const artistName = getArtistName(artist);
                     return {
                         type: 'artist',
                         id: artistId,
                         title: artistName || 'Artist',
                         subtitle: '',
-                        imageUrl: artistId ? getUserAvatarUrl(artistId) : null,
+                        imageUrl: getUserAvatarUrl(ownerId || artistId),
                         payload: artist,
                     };
                 });
@@ -416,11 +420,18 @@ export default function SearchScreen({ navigation }) {
             return;
         }
         if (item.type === 'artist') {
-            const artistId = item.payload?.id || item.payload?._id;
+            const artistId =
+                item.payload?.artistId ||
+                item.payload?.ArtistId ||
+                item.payload?.id ||
+                item.payload?._id;
+            const ownerId = item.payload?.ownerId || item.payload?.OwnerId || null;
             navigation.navigate('ArtistProfile', {
                 artist: {
                     ...item.payload,
                     id: artistId,
+                    artistId: artistId,
+                    ownerId: ownerId,
                     name: item.payload?.name || item.title,
                 },
             });

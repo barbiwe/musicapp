@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
     View,
     Text,
@@ -20,6 +20,12 @@ import {
     getTrackCoverUrl,
     getAlbums,       // 👇 Додано
     getAlbumCoverUrl, // 👇 Додано
+    subscribeToArtist,
+    unsubscribeFromArtist,
+    getArtistSubscriptionStatus,
+    getArtistFollowersCount,
+    getSubscriptions,
+    resolveArtistName,
     scale
 } from '../api/api';
 const { width, height } = Dimensions.get('window');
@@ -77,20 +83,110 @@ const ColoredSvg = ({ uri, width, height, color }) => {
     );
 };
 
+const resolveArtistId = (artist) =>
+    artist?.artistId ||
+    artist?.ArtistId ||
+    artist?.artist?.artistId ||
+    artist?.artist?.ArtistId ||
+    artist?.artist?.id ||
+    artist?.artist?._id ||
+    artist?.id ||
+    artist?.Id ||
+    artist?._id ||
+    null;
+
+const formatFollowers = (value) => {
+    const num = Number(value) || 0;
+    if (num >= 1000000000) return `${(num / 1000000000).toFixed(1)}B`;
+    if (num >= 1000000) return `${(num / 1000000).toFixed(1)}M`;
+    if (num >= 1000) return `${(num / 1000).toFixed(1)}K`;
+    return String(num);
+};
+
+const normalizeName = (value) => String(value || '').trim().toLowerCase();
+
+const extractSubscriptionIds = (item) => (
+    [
+        item?.artistId,
+        item?.ArtistId,
+        item?.artist?.artistId,
+        item?.artist?.ArtistId,
+        item?.artist?.id,
+        item?.artist?._id,
+        item?.id,
+        item?.Id,
+        item?._id,
+    ]
+        .filter(Boolean)
+        .map((id) => String(id))
+);
+
+const resolveSubscriptionArtistFromItem = (item) => {
+    if (!item || typeof item !== 'object') return null;
+
+    const ids = [...new Set(extractSubscriptionIds(item))];
+    const id = ids[0] || null;
+
+    const name =
+        item.artistName ||
+        item.name ||
+        item.username ||
+        item.displayName ||
+        item.artist?.name ||
+        null;
+
+    if (!id && !name) return null;
+    return { id: id ? String(id) : null, ids, name };
+};
+
+const collectArtistIdCandidates = (artist, artistTracks, explicitArtistId) => {
+    const ids = [
+        explicitArtistId,
+        artist?.Id,
+        artist?.artistId,
+        artist?.ArtistId,
+        artist?.artist?.id,
+        artist?.artist?._id,
+        artist?.artist?.artistId,
+        artist?.artist?.ArtistId,
+    ];
+
+    (artistTracks || []).forEach((t) => {
+        ids.push(
+            t?.artistId,
+            t?.ArtistId,
+            t?.artist?.id,
+            t?.artist?._id
+        );
+    });
+
+    return [...new Set(ids.filter(Boolean).map((id) => String(id)))];
+};
+
 export default function ArtistProfileScreen({ navigation, route }) {
     const { artist } = route.params || {};
+    const artistId = resolveArtistId(artist);
 
     const [loading, setLoading] = useState(true);
     const [tracks, setTracks] = useState([]);
     const [albums, setAlbums] = useState([]); // 👇 Стейт для альбомів
     const [icons, setIcons] = useState({});
-    const [isFollowingMock, setIsFollowingMock] = useState(false);
+    const [isFollowing, setIsFollowing] = useState(false);
+    const [followersCount, setFollowersCount] = useState(0);
+    const [followBusy, setFollowBusy] = useState(false);
+    const [subscriptionArtistId, setSubscriptionArtistId] = useState(artistId ? String(artistId) : null);
+    const loadReqIdRef = useRef(0);
 
     useEffect(() => {
-        loadData();
-    }, []);
+        loadData({ withLoader: true });
+    }, [artistId, artist?.name]);
 
-    const loadData = async () => {
+    const loadData = async ({ withLoader = false } = {}) => {
+        const reqId = ++loadReqIdRef.current;
+        if (withLoader) {
+            setLoading(true);
+        }
+
         try {
             // 👇 Завантажуємо треки, АЛЬБОМИ та іконки
             const [tracksRes, albumsRes, iconsRes] = await Promise.all([
@@ -99,27 +195,102 @@ export default function ArtistProfileScreen({ navigation, route }) {
                 getIcons()
             ]);
 
+            if (reqId !== loadReqIdRef.current) return;
+
             setIcons(iconsRes || {});
+            const artistNameKey = normalizeName(artist?.name);
 
             // 1. Фільтруємо ТРЕКИ артиста
             const artistTracks = tracksRes.filter(t =>
-                (t.ownerId && t.ownerId === artist?.id) ||
-                (t.artist?.name === artist?.name)
+                (t.artistId && String(t.artistId) === String(artistId)) ||
+                (t.ArtistId && String(t.ArtistId) === String(artistId)) ||
+                normalizeName(resolveArtistName(t, '')) === artistNameKey
             );
-            setTracks(artistTracks.length > 0 ? artistTracks : tracksRes);
+            setTracks(artistTracks);
 
             // 2. Фільтруємо АЛЬБОМИ артиста (за ownerId або artist name)
             const artistAlbums = Array.isArray(albumsRes) ? albumsRes.filter(a =>
-                (a.ownerId && a.ownerId === artist?.id) ||
-                (a.artist === artist?.name)
+                (a.artistId && String(a.artistId) === String(artistId)) ||
+                (a.ArtistId && String(a.ArtistId) === String(artistId)) ||
+                normalizeName(a.artist || a.artistName || a.artist?.name || '') === artistNameKey
             ) : [];
             setAlbums(artistAlbums);
+
+            const subscriptionsRaw = await getSubscriptions();
+            const subscriptions = (Array.isArray(subscriptionsRaw) ? subscriptionsRaw : [])
+                .map(resolveSubscriptionArtistFromItem)
+                .filter(Boolean);
+
+            const matchedSubscription =
+                subscriptions.find((s) => artistId && s.ids.includes(String(artistId))) ||
+                subscriptions.find((s) => normalizeName(s.name) === artistNameKey) ||
+                null;
+
+            const candidateIds = collectArtistIdCandidates(artist, artistTracks, artistId);
+            if (matchedSubscription?.ids?.length) {
+                matchedSubscription.ids.forEach((id) => {
+                    if (!candidateIds.includes(String(id))) {
+                        candidateIds.unshift(String(id));
+                    }
+                });
+            }
+
+            let detectedSubscribed = !!matchedSubscription;
+            let detectedArtistId = matchedSubscription?.id || candidateIds[0] || null;
+
+            if (!detectedSubscribed) {
+                for (const candidateId of candidateIds) {
+                    const candidateSubscribed = await getArtistSubscriptionStatus(candidateId);
+                    if (candidateSubscribed) {
+                        detectedSubscribed = true;
+                        detectedArtistId = candidateId;
+                        break;
+                    }
+                }
+            }
+
+            const countIds = [...new Set([detectedArtistId, ...candidateIds].filter(Boolean).map((id) => String(id)))];
+            let nextFollowers = 0;
+            for (const countId of countIds) {
+                const candidateCount = Number(await getArtistFollowersCount(countId)) || 0;
+                if (candidateCount > nextFollowers) {
+                    nextFollowers = candidateCount;
+                }
+            }
+
+            if (reqId !== loadReqIdRef.current) return;
+
+            setSubscriptionArtistId(detectedArtistId || null);
+            setIsFollowing(detectedSubscribed);
+            setFollowersCount(Number(nextFollowers) || 0);
 
         } catch (e) {
             console.log('Profile load error', e);
         } finally {
-            setLoading(false);
+            if (withLoader && reqId === loadReqIdRef.current) {
+                setLoading(false);
+            }
         }
+    };
+
+    const handleToggleFollow = async () => {
+        const targetArtistId = subscriptionArtistId || (artistId ? String(artistId) : null);
+        if (!targetArtistId || followBusy) return;
+
+        setFollowBusy(true);
+
+        const result = !isFollowing
+            ? await subscribeToArtist(targetArtistId)
+            : await unsubscribeFromArtist(targetArtistId);
+
+        if (result?.error) {
+            setFollowBusy(false);
+            return;
+        }
+
+        await loadData({ withLoader: false });
+
+        setFollowBusy(false);
     };
 
     // 👇 ВИПРАВЛЕНА ФУНКЦІЯ (3 аргументи замість 4)
@@ -163,7 +334,13 @@ export default function ArtistProfileScreen({ navigation, route }) {
         return null;
     };
 
-    const avatarUrl = artist?.id ? getUserAvatarUrl(artist.id) : null;
+    const avatarSourceUserId =
+        artist?.ownerId ||
+        artist?.OwnerId ||
+        artist?.userId ||
+        artist?.UserId ||
+        artistId;
+    const avatarUrl = avatarSourceUserId ? getUserAvatarUrl(avatarSourceUserId) : null;
     const artistCountry = artist?.country || artist?.location || artist?.artistCountry || 'USA';
     const artistRole = artist?.role || artist?.type || 'Rapper';
 
@@ -220,14 +397,15 @@ export default function ArtistProfileScreen({ navigation, route }) {
                             <View style={styles.nameRow}>
                                 <Text style={styles.artistNameText}>{artist?.name || 'Unknown Artist'}</Text>
                                 <TouchableOpacity
-                                    onPress={() => setIsFollowingMock((prev) => !prev)}
-                                    style={styles.followIconButtonMock}
+                                    onPress={handleToggleFollow}
+                                    style={styles.followIconButton}
                                     activeOpacity={0.85}
+                                    disabled={!(subscriptionArtistId || artistId) || followBusy}
                                 >
                                     {renderIcon(
-                                        isFollowingMock ? 'unfollow.svg' : 'follow.svg',
+                                        isFollowing ? 'unfollow.svg' : 'follow.svg',
                                         { width: scale(24), height: scale(24) },
-                                        '#FF4D4F'
+                                        '#F5D8CB'
                                     )}
                                 </TouchableOpacity>
                             </View>
@@ -266,8 +444,8 @@ export default function ArtistProfileScreen({ navigation, route }) {
                             {/* Контент */}
                             <View style={styles.statsContentRow}>
                                 <View style={styles.statItem}>
-                                    <Text style={styles.statNumber}>12.3 M</Text>
-                                    <Text style={styles.statLabel}>followers</Text>
+                                    <Text style={[styles.statNumber, styles.realStatNumber]}>{formatFollowers(followersCount)}</Text>
+                                    <Text style={[styles.statLabel, styles.realStatLabel]}>followers</Text>
                                 </View>
                                 <View style={styles.statItem}>
                                     <Text style={styles.statNumber}>18.6 M</Text>
@@ -465,7 +643,7 @@ const styles = StyleSheet.create({
         fontFamily: 'Unbounded-SemiBold',
 
     },
-    followIconButtonMock: {
+    followIconButton: {
         marginLeft: scale(10),
         width: scale(40),
         height: scale(40),
@@ -488,17 +666,23 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     statNumber: {
-        color: '#FFFFFF',
+        color: '#FF4D4F',
         fontSize: scale(20),
         fontFamily: 'Unbounded-Regular',
     },
+    realStatNumber: {
+        color: '#F5D8CB',
+    },
     statLabel: {
-        color: '#FFFFFF',
+        color: '#FF4D4F',
         fontSize: scale(14),
         fontFamily: 'Poppins-Regular',
     },
-    bioText: {
+    realStatLabel: {
         color: '#F5D8CB',
+    },
+    bioText: {
+        color: '#FF4D4F',
         fontSize: scale(14),
         fontFamily: 'Poppins-Regular',
         lineHeight: scale(20),

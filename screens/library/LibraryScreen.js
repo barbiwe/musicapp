@@ -171,7 +171,7 @@ export default function LibraryScreen({ navigation }) {
             case 'Playlist': return <LibraryPlaylist />;
             case 'Songs': return <LibrarySongs navigation={navigation} setTrack={setTrack} />;
             case 'Album': return <LibraryAlbum />;
-            case 'Artist': return <LibraryArtist />;
+            case 'Artist': return <LibraryArtist navigation={navigation} />;
             default: return <LibraryAll navigation={navigation} setTrack={setTrack} />;
         }
     };
@@ -311,23 +311,6 @@ export default function LibraryScreen({ navigation }) {
                                                     <View style={styles.plusVertical} />
                                                 </View>
                                                 <Text style={styles.modalItemText}>Add podcast or show</Text>
-                                            </TouchableOpacity>
-
-                                            {/* Item 4: Add album */}
-                                            <TouchableOpacity
-                                                style={styles.modalItem}
-                                                onPress={() => {
-                                                    closeModal();
-                                                    setTimeout(() => {
-                                                        navigation.navigate('AlbumList');
-                                                    }, 300);
-                                                }}
-                                            >
-                                                <View style={styles.circlePlus}>
-                                                    <View style={styles.plusHorizontal} />
-                                                    <View style={styles.plusVertical} />
-                                                </View>
-                                                <Text style={styles.modalItemText}>Add album</Text>
                                             </TouchableOpacity>
 
                                         </View>

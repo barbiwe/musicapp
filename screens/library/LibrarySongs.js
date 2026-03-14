@@ -163,13 +163,13 @@ const styles = StyleSheet.create({
         paddingRight: scale(10),
     },
     title: {
-        color: '#F5D8CB',
+        color: '#FF4D4F',
         fontSize: scale(16),
         fontFamily: 'Unbounded-Medium',
         marginBottom: scale(4),
     },
     subtitle: {
-        color: 'rgba(245, 216, 203, 0.7)',
+        color: '#FF4D4F',
         fontSize: scale(14),
         fontFamily: 'Poppins-Regular',
     },

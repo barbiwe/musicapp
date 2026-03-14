@@ -8,29 +8,15 @@
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/App.js" beforeDir="false" afterPath="$PROJECT_DIR$/App.js" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/api/api.js" beforeDir="false" afterPath="$PROJECT_DIR$/api/api.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/components/MiniPlayer.js" beforeDir="false" afterPath="$PROJECT_DIR$/components/MiniPlayer.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/screens/AboutUsScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/profile/AboutUsScreen.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/screens/AlbumDetailScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/AlbumDetailScreen.js" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/screens/ArtistProfileScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/ArtistProfileScreen.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/screens/AuthChoiceScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/auth/AuthChoiceScreen.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/screens/ChooseArtistScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/library/ChooseArtistScreen.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/screens/ChoosePodcastScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/library/ChoosePodcastScreen.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/screens/ContentAndDisplayScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/profile/ContentAndDisplayScreen.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/screens/HomeScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/auth/HomeScreen.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/screens/LibraryAlbum.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/library/LibraryAlbum.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/screens/LibraryAll.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/library/LibraryAll.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/screens/LibraryArtist.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/library/LibraryArtist.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/screens/LibraryPlaylist.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/library/LibraryPlaylist.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/screens/LibraryPodcast.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/library/LibraryPodcast.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/screens/LibraryScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/library/LibraryScreen.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/screens/LibrarySongs.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/library/LibrarySongs.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/screens/LoginScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/auth/LoginScreen.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/screens/OnboardingScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/auth/OnboardingScreen.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/screens/DiscoverScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/DiscoverScreen.js" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/screens/PlayerScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/PlayerScreen.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/screens/PrivacyAndCommunityScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/profile/PrivacyAndCommunityScreen.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/screens/ProfileScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/profile/ProfileScreen.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/screens/QualityOfMediaFilesScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/profile/QualityOfMediaFilesScreen.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/screens/StatisticsScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/profile/StatisticsScreen.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/screens/SongInfoScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/SongInfoScreen.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/screens/auth/HomeScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/auth/HomeScreen.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/screens/auth/LoginScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/auth/LoginScreen.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/screens/profile/AboutUsScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/profile/AboutUsScreen.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/screens/profile/ProfileScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/profile/ProfileScreen.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/store/usePlayerStore.js" beforeDir="false" afterPath="$PROJECT_DIR$/store/usePlayerStore.js" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -112,7 +98,7 @@
       <workItem from="1766753091543" duration="151185000" />
       <workItem from="1769623141804" duration="15065000" />
       <workItem from="1770243507170" duration="106491000" />
-      <workItem from="1771780919967" duration="50934000" />
+      <workItem from="1771780919967" duration="59840000" />
     </task>
     <servers />
   </component>

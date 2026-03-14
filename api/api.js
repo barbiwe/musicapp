@@ -6,6 +6,7 @@ import 'core-js/stable/atob';
 import { Dimensions, Image } from 'react-native';
 
 const API_URL = 'http://localhost:8080';
+const AD_STREAM_COUNT_KEY = 'ad_stream_count_v1';
 const iconsPrefetchCache = new Set();
 let iconsMapCache = null;
 let iconsMapRequest = null;
@@ -95,6 +96,113 @@ export const resolveArtistName = (track, fallback = 'Unknown Artist') => {
 
     const found = candidates.find((value) => typeof value === 'string' && value.trim().length > 0);
     return found ? found.trim() : fallback;
+};
+
+const parseRoleFromToken = (token) => {
+    if (!token) return null;
+
+    try {
+        const decoded = jwtDecode(token);
+        return (
+            decoded['http://schemas.microsoft.com/ws/2008/06/identity/claims/role'] ||
+            decoded['http://schemas.xmlsoap.org/ws/2005/05/identity/claims/role'] ||
+            decoded.role ||
+            null
+        );
+    } catch (_) {
+        return null;
+    }
+};
+
+export const isPremiumUser = async () => {
+    try {
+        const token = await AsyncStorage.getItem('userToken');
+        const role = parseRoleFromToken(token);
+        if (!role) return false;
+        return String(role).toLowerCase() === 'premium' || String(role) === '3';
+    } catch (_) {
+        return false;
+    }
+};
+
+export const shouldShowAdBeforeStream = async () => {
+    try {
+        const premium = await isPremiumUser();
+        if (premium) return false;
+
+        const raw = await AsyncStorage.getItem(AD_STREAM_COUNT_KEY);
+        const current = Number.parseInt(raw || '0', 10) || 0;
+        const next = current + 1;
+
+        if (next >= 3) {
+            await AsyncStorage.setItem(AD_STREAM_COUNT_KEY, '0');
+            return true;
+        }
+
+        await AsyncStorage.setItem(AD_STREAM_COUNT_KEY, String(next));
+        return false;
+    } catch (_) {
+        return false;
+    }
+};
+
+export const getRandomAd = async () => {
+    try {
+        const res = await api.get('/api/ads/random');
+        if (!res?.data || !res.data.id) return null;
+
+        const rawImageUrl = res.data.imageUrl;
+        const rawAudioUrl = res.data.audioUrl;
+        const imageUrl =
+            typeof rawImageUrl === 'string'
+                ? (rawImageUrl.startsWith('http') ? rawImageUrl : `${API_URL}${rawImageUrl}`)
+                : `${API_URL}/api/ads/${res.data.id}/image`;
+        const audioUrl =
+            typeof rawAudioUrl === 'string' && rawAudioUrl.length > 0
+                ? (rawAudioUrl.startsWith('http') ? rawAudioUrl : `${API_URL}${rawAudioUrl}`)
+                : `${API_URL}/api/ads/${res.data.id}/audio`;
+
+        return {
+            id: res.data.id,
+            title: res.data.title || 'Advertisement',
+            targetUrl: res.data.targetUrl || null,
+            imageUrl,
+            audioUrl,
+        };
+    } catch (e) {
+        return null;
+    }
+};
+
+export const getBanners = async () => {
+    try {
+        const res = await api.get('/api/banners');
+        return Array.isArray(res?.data) ? res.data : [];
+    } catch (_) {
+        return [];
+    }
+};
+
+export const getBannerImageUrl = (banner) => {
+    if (!banner) return null;
+
+    const toAbsolute = (raw) => {
+        if (!raw || typeof raw !== 'string') return null;
+        if (raw.startsWith('http')) return raw;
+        return raw.startsWith('/') ? `${API_URL}${raw}` : `${API_URL}/${raw}`;
+    };
+
+    if (typeof banner === 'string') return toAbsolute(banner);
+
+    const directUrl =
+        toAbsolute(banner.imageUrl) ||
+        toAbsolute(banner.image) ||
+        toAbsolute(banner.bannerImageUrl);
+    if (directUrl) return directUrl;
+
+    const id = banner.id || banner.bannerId;
+    if (!id) return null;
+    return `${API_URL}/api/banners/image/${id}`;
 };
 /* =========================
    AUTH
@@ -911,6 +1019,123 @@ export const getAllArtists = async () => {
     } catch (e) {
         console.log('Get artists error:', e);
         return [];
+    }
+};
+
+export const subscribeToArtist = async (artistId) => {
+    const id = String(artistId || '').trim();
+    if (!id) return { error: 'Invalid artistId' };
+
+    try {
+        await api.post(`/api/Auth/subscribe/${id}`);
+        return { success: true };
+    } catch (e) {
+        return {
+            error: e?.response?.data || e?.message || 'Subscribe failed',
+            status: e?.response?.status || null,
+        };
+    }
+};
+
+export const unsubscribeFromArtist = async (artistId) => {
+    const id = String(artistId || '').trim();
+    if (!id) return { error: 'Invalid artistId' };
+
+    try {
+        await api.delete(`/api/Auth/unsubscribe/${id}`);
+        return { success: true };
+    } catch (e) {
+        return {
+            error: e?.response?.data || e?.message || 'Unsubscribe failed',
+            status: e?.response?.status || null,
+        };
+    }
+};
+
+export const getSubscriptions = async () => {
+    try {
+        const res = await api.get('/api/Auth/subscriptions');
+        return Array.isArray(res?.data) ? res.data : [];
+    } catch (_) {
+        return [];
+    }
+};
+
+export const getArtistSubscriptionStatus = async (artistId) => {
+    const id = String(artistId || '').trim();
+    if (!id) return false;
+
+    try {
+        const res = await api.get(`/api/Auth/subscriptions/${id}`);
+        const data = res?.data;
+
+        if (typeof data === 'boolean') return data;
+        if (typeof data?.isSubscribed === 'boolean') return data.isSubscribed;
+        if (typeof data?.subscribed === 'boolean') return data.subscribed;
+        if (typeof data?.value === 'boolean') return data.value;
+
+        return !!data;
+    } catch (_) {
+        return false;
+    }
+};
+
+export const getArtistFollowersCount = async (artistId) => {
+    const id = String(artistId || '').trim();
+    if (!id) return 0;
+
+    try {
+        const res = await api.get(`/api/Auth/artists/${id}/followers-count`);
+        const data = res?.data;
+
+        const parseAnyNumber = (value, depth = 0) => {
+            if (depth > 3 || value === null || value === undefined) return null;
+
+            if (typeof value === 'number' && Number.isFinite(value)) return value;
+
+            if (typeof value === 'string') {
+                const cleaned = value.trim();
+                if (!cleaned) return null;
+                const parsed = Number(cleaned);
+                return Number.isFinite(parsed) ? parsed : null;
+            }
+
+            if (typeof value === 'object') {
+                const preferredKeys = [
+                    'count',
+                    'Count',
+                    'followersCount',
+                    'FollowersCount',
+                    'followers',
+                    'Followers',
+                    'total',
+                    'Total',
+                    'value',
+                    'Value',
+                    'data',
+                    'Data',
+                ];
+
+                for (const key of preferredKeys) {
+                    if (Object.prototype.hasOwnProperty.call(value, key)) {
+                        const nested = parseAnyNumber(value[key], depth + 1);
+                        if (nested !== null) return nested;
+                    }
+                }
+
+                for (const key of Object.keys(value)) {
+                    const nested = parseAnyNumber(value[key], depth + 1);
+                    if (nested !== null) return nested;
+                }
+            }
+
+            return null;
+        };
+
+        const parsed = parseAnyNumber(data);
+        return parsed !== null ? parsed : 0;
+    } catch (_) {
+        return 0;
     }
 };
 

@@ -332,13 +332,21 @@ export default function AlbumDetailScreen({ route, navigation }) {
     const handleViewArtist = () => {
         closeModal();
         const artistData = album?.artist || {};
-        const artistId = artistData.id || artistData._id || album?.ownerId;
+        const artistId =
+            artistData.artistId ||
+            artistData.ArtistId ||
+            artistData.id ||
+            artistData._id ||
+            album?.artistId ||
+            album?.ArtistId;
         if (!artistId) return;
 
         navigation.navigate('ArtistProfile', {
             artist: {
                 ...artistData,
                 id: artistId,
+                artistId,
+                ownerId: album?.ownerId || null,
                 name: resolveArtistName(
                     { artist: artistData, artistName: album?.artistName || routeAlbum?.artistName },
                     'Unknown Artist'
@@ -607,29 +615,29 @@ export default function AlbumDetailScreen({ route, navigation }) {
 
                                             <ScrollView style={styles.modalScroll} showsVerticalScrollIndicator={false}>
                                                 <TouchableOpacity
-                                                    style={styles.menuItemCapsule}
+                                                    style={[styles.menuItemCapsule, styles.menuItemCapsuleStub]}
                                                     onPress={() => {
                                                         closeModal();
                                                         Alert.alert('Playlist', 'Function coming soon');
                                                     }}
                                                 >
-                                                    <View style={styles.menuItemIconCircle}>
-                                                        {renderIcon('add to another playlist.svg', '', { width: scale(24), height: scale(24) }, '#F5D8CB')}
+                                                    <View style={[styles.menuItemIconCircle, styles.menuItemIconCircleStub]}>
+                                                        {renderIcon('add to another playlist.svg', '', { width: scale(24), height: scale(24) }, '#FF4D4F')}
                                                     </View>
-                                                    <Text style={styles.menuItemText}>Add to another playlist</Text>
+                                                    <Text style={[styles.menuItemText, styles.menuItemTextStub]}>Add to another playlist</Text>
                                                 </TouchableOpacity>
 
                                                 <TouchableOpacity
-                                                    style={styles.menuItemCapsule}
+                                                    style={[styles.menuItemCapsule, styles.menuItemCapsuleStub]}
                                                     onPress={() => {
                                                         closeModal();
                                                         Alert.alert('Queue', 'Function coming soon');
                                                     }}
                                                 >
-                                                    <View style={styles.menuItemIconCircle}>
-                                                        {renderIcon('add to queue.svg', '', { width: scale(24), height: scale(24) }, '#F5D8CB')}
+                                                    <View style={[styles.menuItemIconCircle, styles.menuItemIconCircleStub]}>
+                                                        {renderIcon('add to queue.svg', '', { width: scale(24), height: scale(24) }, '#FF4D4F')}
                                                     </View>
-                                                    <Text style={styles.menuItemText}>Add to queue</Text>
+                                                    <Text style={[styles.menuItemText, styles.menuItemTextStub]}>Add to queue</Text>
                                                 </TouchableOpacity>
 
                                                 <TouchableOpacity style={styles.menuItemCapsule} onPress={handleViewArtist}>
@@ -640,16 +648,16 @@ export default function AlbumDetailScreen({ route, navigation }) {
                                                 </TouchableOpacity>
 
                                                 <TouchableOpacity
-                                                    style={styles.menuItemCapsule}
+                                                    style={[styles.menuItemCapsule, styles.menuItemCapsuleStub]}
                                                     onPress={() => {
                                                         closeModal();
                                                         Alert.alert('Radio', 'Function coming soon');
                                                     }}
                                                 >
-                                                    <View style={styles.menuItemIconCircle}>
-                                                        {renderIcon('radio.svg', '', { width: scale(24), height: scale(24) }, '#F5D8CB')}
+                                                    <View style={[styles.menuItemIconCircle, styles.menuItemIconCircleStub]}>
+                                                        {renderIcon('radio.svg', '', { width: scale(24), height: scale(24) }, '#FF4D4F')}
                                                     </View>
-                                                    <Text style={styles.menuItemText}>Go to radio based on album</Text>
+                                                    <Text style={[styles.menuItemText, styles.menuItemTextStub]}>Go to radio based on album</Text>
                                                 </TouchableOpacity>
                                             </ScrollView>
                                         </View>
@@ -874,5 +882,14 @@ const styles = StyleSheet.create({
         fontSize: scale(16),
         fontFamily: 'Poppins-Regular',
         fontWeight: '400',
+    },
+    menuItemCapsuleStub: {
+        borderColor: '#FF4D4F',
+    },
+    menuItemIconCircleStub: {
+        borderColor: '#FF4D4F',
+    },
+    menuItemTextStub: {
+        color: '#FF4D4F',
     },
 });

@@ -89,7 +89,7 @@ export default function AboutUsScreen({ navigation }) {
                                 iconName="instagram.svg"
                                 width={scale(24)}
                                 height={scale(24)}
-                                color="#F5D8CB"
+                                color="#FF4D4F"
                                 fallback="IG"
                             />
                         </TouchableOpacity>
@@ -105,7 +105,7 @@ export default function AboutUsScreen({ navigation }) {
                                 iconName="telegram.svg"
                                 width={scale(24)}
                                 height={scale(24)}
-                                color="#F5D8CB"
+                                color="#FF4D4F"
                                 fallback="TG"
                             />
                         </TouchableOpacity>
@@ -121,7 +121,7 @@ export default function AboutUsScreen({ navigation }) {
                                 iconName="discord.svg"
                                 width={scale(24)}
                                 height={scale(24)}
-                                color="#F5D8CB"
+                                color="#FF4D4F"
                                 fallback="D"
                             />
                         </TouchableOpacity>
@@ -194,7 +194,7 @@ const styles = StyleSheet.create({
         height: scale(37),
         borderRadius: scale(18.5),
         borderWidth: 1,
-        borderColor: 'rgba(245, 216, 203, 0.9)',
+        borderColor: '#FF4D4F',
         alignItems: 'center',
         justifyContent: 'center',
     },

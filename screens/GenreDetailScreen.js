@@ -98,10 +98,15 @@ export default function GenreDetailScreen({ navigation, route }) {
 
             const fromTracks = new Map();
             tracks.forEach((t) => {
-                const ownerId = t.ownerId || t.artistId;
+                const artistId = t.artistId || t.ArtistId || t.artist?.id || t.artist?._id;
                 const artistName = resolveArtistName(t, '');
-                if (ownerId && artistName && !fromTracks.has(String(ownerId))) {
-                    fromTracks.set(String(ownerId), { id: String(ownerId), name: artistName });
+                if (artistId && artistName && !fromTracks.has(String(artistId))) {
+                    fromTracks.set(String(artistId), {
+                        id: String(artistId),
+                        artistId: String(artistId),
+                        ownerId: t.ownerId || t.OwnerId || null,
+                        name: artistName,
+                    });
                 }
             });
             setArtists([...fromTracks.values()].slice(0, 16));
@@ -185,7 +190,17 @@ export default function GenreDetailScreen({ navigation, route }) {
             <TouchableOpacity
                 key={`${id}-${index}`}
                 style={styles.circleArtistItem}
-                onPress={() => navigation.navigate('ArtistProfile', { artist: { ...item, id, name } })}
+                onPress={() =>
+                    navigation.navigate('ArtistProfile', {
+                        artist: {
+                            ...item,
+                            id,
+                            artistId: item.artistId || id,
+                            ownerId: item.ownerId || null,
+                            name,
+                        },
+                    })
+                }
                 activeOpacity={0.85}
             >
                 {avatar ? (

@@ -327,11 +327,11 @@ export default function LoginScreen({ navigation }) {
 
                         {/* APPLE / OTHER (Stub) */}
                         <TouchableOpacity
-                            style={styles.socialButton}
+                            style={[styles.socialButton, styles.stubSocialButton]}
                             onPress={() => Alert.alert("Apple Auth", "Coming soon")}
                         >
                             {/* Заглушка або іконка Apple */}
-                            {renderIcon('discord.svg', { width: scale(24), height: scale(24) }, '#F5D8CB')}
+                            {renderIcon('discord.svg', { width: scale(24), height: scale(24) }, '#FF4D4F')}
                         </TouchableOpacity>
                     </View>
 
@@ -463,6 +463,9 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         marginBottom: scale(36),
+    },
+    stubSocialButton: {
+        borderColor: '#FF4D4F',
     },
     footerContainer: {
         flexDirection: 'row',

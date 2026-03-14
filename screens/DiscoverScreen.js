@@ -10,7 +10,8 @@ import {
     SafeAreaView,
     StatusBar,
     ActivityIndicator,
-    Platform
+    Platform,
+    Linking,
 } from 'react-native';
 import { SvgXml } from 'react-native-svg';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -26,6 +27,8 @@ import {
     getRecentlyPlayed,
     getRecommendations,
     getIcons,
+    getBanners,
+    getBannerImageUrl,
     scale
 } from '../api/api';
 
@@ -86,7 +89,7 @@ const ArtistCard = ({ artist, onPress, getAvatar, bgColor }) => {
                 </View>
 
                 <Image
-                    source={{ uri: getAvatar(artist.id) }}
+                    source={{ uri: getAvatar(artist.userId || artist.ownerId || artist.id) }}
                     style={styles.artistCardImage}
                     resizeMode="cover"
                 />
@@ -143,7 +146,7 @@ const ColoredSvg = ({ uri, width, height, color }) => {
 };
 
 export default function DiscoverScreen({ navigation }) {
-    const { setTrack } = usePlayerStore();
+    const setTrack = usePlayerStore((state) => state.setTrack);
     const [loading, setLoading] = useState(true);
     const [tracks, setTracks] = useState([]);
     const [recentTracks, setRecentTracks] = useState([]);
@@ -151,6 +154,7 @@ export default function DiscoverScreen({ navigation }) {
     const [artists, setArtists] = useState([]);
     const [albums, setAlbums] = useState([]);
     const [icons, setIcons] = useState({});
+    const [discoverBanner, setDiscoverBanner] = useState(null);
     const [myId, setMyId] = useState(null);
 
 
@@ -163,12 +167,13 @@ export default function DiscoverScreen({ navigation }) {
             const currentUserId = await AsyncStorage.getItem('userId');
             if (currentUserId) setMyId(currentUserId);
 
-            const [tracksRes, albumsRes, iconsRes, recentRes, recsRes] = await Promise.all([
+            const [tracksRes, albumsRes, iconsRes, recentRes, recsRes, bannersRes] = await Promise.all([
                 getTracks(),
                 getAlbums(),
                 getIcons(),
                 getRecentlyPlayed(),
-                getRecommendations()
+                getRecommendations(),
+                getBanners()
             ]);
 
             setTracks(tracksRes || []);
@@ -189,10 +194,13 @@ export default function DiscoverScreen({ navigation }) {
             const map = new Map();
             (tracksRes || []).forEach(t => {
                 const artistName = t.artistName || t.artist?.name || 'Unknown Artist';
-                if (t.ownerId && !map.has(t.ownerId)) {
-                    map.set(t.ownerId, {
-                        id: t.ownerId,
-                        name: artistName
+                const backendArtistId = t.artistId || t.ArtistId || t.artist?.id || t.artist?._id;
+                if (backendArtistId && !map.has(String(backendArtistId))) {
+                    map.set(String(backendArtistId), {
+                        id: String(backendArtistId),
+                        artistId: String(backendArtistId),
+                        name: artistName,
+                        userId: t.ownerId || t.OwnerId || null,
                     });
                 }
             });
@@ -208,6 +216,9 @@ export default function DiscoverScreen({ navigation }) {
             }));
             setRecommendations(formattedRecs);
 
+            const firstBanner = (bannersRes || []).find((banner) => !!getBannerImageUrl(banner)) || null;
+            setDiscoverBanner(firstBanner);
+
         } catch (e) {
             console.log('Discover load error', e);
         } finally {
@@ -216,8 +227,43 @@ export default function DiscoverScreen({ navigation }) {
     };
 
 
-    const getAvatar = (userId) =>
-        `${getUserAvatarUrl(userId)}?t=${new Date().getTime()}`;
+    const getAvatar = (userId) => getUserAvatarUrl(userId);
+
+    const normalizeExternalUrl = (rawUrl) => {
+        if (!rawUrl || typeof rawUrl !== 'string') return null;
+        const trimmed = rawUrl.trim();
+        if (!trimmed) return null;
+
+        if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) {
+            return trimmed;
+        }
+
+        return `https://${trimmed}`;
+    };
+
+    const discoverBannerLink = normalizeExternalUrl(
+        discoverBanner?.link ||
+        discoverBanner?.Link ||
+        discoverBanner?.url ||
+        discoverBanner?.Url ||
+        discoverBanner?.targetUrl ||
+        discoverBanner?.TargetUrl ||
+        discoverBanner?.targetURL ||
+        discoverBanner?.TargetURL ||
+        null
+    );
+
+    const handleDiscoverBannerPress = async () => {
+        if (!discoverBannerLink) return;
+        try {
+            const supported = await Linking.canOpenURL(discoverBannerLink);
+            if (supported) {
+                await Linking.openURL(discoverBannerLink);
+            }
+        } catch (_) {
+            // ignore invalid link from backend
+        }
+    };
 
     const renderIcon = (iconName, style, tintColor = '#000000') => {
         const iconUrl = icons[iconName];
@@ -408,6 +454,25 @@ export default function DiscoverScreen({ navigation }) {
                         </View>
 
 
+                        {/* DISCOVER BANNER */}
+                        {discoverBanner ? (
+                            <View style={styles.bannerSection}>
+                                <TouchableOpacity
+                                    activeOpacity={0.9}
+                                    onPress={handleDiscoverBannerPress}
+                                    disabled={!discoverBannerLink}
+                                    style={styles.bannerTouch}
+                                >
+                                    <Image
+                                        source={{ uri: getBannerImageUrl(discoverBanner) }}
+                                        style={styles.discoverBannerImage}
+                                        resizeMode="cover"
+                                    />
+                                </TouchableOpacity>
+                            </View>
+                        ) : null}
+
+
                         {/* POPULAR SONGS */}
                         <View style={styles.section}>
                             <Text style={styles.sectionTitle}>
@@ -442,7 +507,7 @@ export default function DiscoverScreen({ navigation }) {
                                                     }}>
                                                         <BlurView intensity={60} tint="dark" style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
                                                             <Text style={{
-                                                                color: '#fff',
+                                                                color: '#FF4D4F',
                                                                 fontSize: scale(9),
                                                                 fontFamily: 'Poppins-Medium',
                                                                 textAlign: 'center'
@@ -482,7 +547,7 @@ export default function DiscoverScreen({ navigation }) {
                                             onPress={() => navigation.navigate('ArtistProfile', { artist: a })}
                                         >
                                             <ArtistAvatar
-                                                uri={getAvatar(a.id)}
+                                                uri={getAvatar(a.userId || a.ownerId || a.id)}
                                                 name={a.name}
                                             />
                                             <Text style={styles.artistName} numberOfLines={1}>
@@ -592,6 +657,19 @@ const styles = StyleSheet.create({
     section: {
         marginBottom: scale(32)
     },
+    bannerSection: {
+        marginBottom: scale(32),
+        alignItems: 'center',
+    },
+    bannerTouch: {
+        width: scale(341),
+        height: scale(160),
+    },
+    discoverBannerImage: {
+        width: scale(341),
+        height: scale(160),
+        borderRadius: scale(24),
+    },
     sectionTitle: {
         marginLeft: scale(20),
         marginBottom: scale(16),
@@ -629,7 +707,7 @@ const styles = StyleSheet.create({
     artistCardListeners: {
         fontSize: scale(14),
         fontFamily: 'Poppins-Regular',
-        color: 'rgba(255,255,255,0.65)',
+        color: '#FF4D4F',
         fontWeight: '500',
     },
     artistCardImage: {

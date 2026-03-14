@@ -373,7 +373,7 @@ const styles = StyleSheet.create({
     periodTitle: {
         fontSize: scale(22),
         fontFamily: 'Unbounded-SemiBold',
-        color: '#F5D8CB',
+        color: '#FF4D4F',
         marginBottom: scale(15),
     },
 
@@ -409,13 +409,13 @@ const styles = StyleSheet.create({
     labelText: {
         fontSize: scale(12),
         fontFamily: 'Poppins-Regular',
-        color: 'rgba(245, 216, 203, 0.8)',
+        color: '#FF4D4F',
         marginBottom: scale(2),
     },
     valueText: {
         fontSize: scale(12),
         fontFamily: 'Unbounded-Regular',
-        color: '#F5D8CB',
+        color: '#FF4D4F',
     },
 
     /* Картка 2: Main Stats */
@@ -439,7 +439,7 @@ const styles = StyleSheet.create({
     listenCountText: {
         fontSize: scale(19),
         fontFamily: 'Unbounded-Regular',
-        color: '#F5D8CB',
+        color: '#FF4D4F',
         textAlign: 'center',
         marginBottom: scale(5),
     },
@@ -471,12 +471,12 @@ const styles = StyleSheet.create({
     waveSongTitle: {
         fontSize: scale(14),
         fontFamily: 'Unbounded-Regular',
-        color: '#F5D8CB',
+        color: '#FF4D4F',
         marginBottom: scale(2),
     },
     waveSongArtist: {
         fontSize: scale(10),
         fontFamily: 'Poppins-Light',
-        color: '#F5D8CB',
+        color: '#FF4D4F',
     },
 });

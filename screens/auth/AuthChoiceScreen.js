@@ -243,11 +243,11 @@ export default function AuthChoiceScreen({ navigation }) {
 
                         {/* DISCORD BUTTON (Placeholder logic) */}
                         <TouchableOpacity
-                            style={styles.socialButton}
+                            style={[styles.socialButton, styles.stubSocialButton]}
                             onPress={() => Alert.alert("Discord", "Coming soon!")}
                         >
                             {/* Припускаємо, що іконка називається 'discord.svg' */}
-                            {renderIcon('discord.svg', 'D', { width: scale(24), height: scale(24) }, '#F5D8CB')}
+                            {renderIcon('discord.svg', 'D', { width: scale(24), height: scale(24) }, '#FF4D4F')}
                         </TouchableOpacity>
                     </View>
                 </View>
@@ -361,5 +361,8 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         backgroundColor: 'transparent'
+    },
+    stubSocialButton: {
+        borderColor: '#FF4D4F',
     },
 });

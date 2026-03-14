@@ -326,10 +326,10 @@ export default function RegisterScreen({ navigation }) {
 
                         {/* DISCORD BUTTON */}
                         <TouchableOpacity
-                            style={styles.socialButton}
+                            style={[styles.socialButton, styles.stubSocialButton]}
                             onPress={() => Alert.alert("Discord", "Coming soon")}
                         >
-                            {renderIcon('discord.svg', 'D', { width: scale(24), height: scale(24) }, '#F5D8CB')}
+                            {renderIcon('discord.svg', 'D', { width: scale(24), height: scale(24) }, '#FF4D4F')}
                         </TouchableOpacity>
                     </View>
 
@@ -452,6 +452,9 @@ const styles = StyleSheet.create({
         borderColor: '#F5D8CB',
         alignItems: 'center',
         justifyContent: 'center'
+    },
+    stubSocialButton: {
+        borderColor: '#FF4D4F',
     },
 
     /* FOOTER */

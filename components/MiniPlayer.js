@@ -32,7 +32,15 @@ const ColoredSvg = ({ uri, width, height, color }) => {
 
 export default function MiniPlayer({ bottomOffset = scale(100) }) {
     const navigation = useNavigation();
-    const { currentTrack, isPlaying, togglePlay } = usePlayerStore();
+    const {
+        currentTrack,
+        isPlaying,
+        togglePlay,
+        adModalVisible,
+        adData,
+        isAdPlaying,
+        toggleAdPlayPause,
+    } = usePlayerStore();
     const [icons, setIcons] = useState(() => getCachedIcons() || {});
 
     useEffect(() => {
@@ -76,7 +84,7 @@ export default function MiniPlayer({ bottomOffset = scale(100) }) {
     if (!currentTrack) return null;
 
     const openFullPlayer = () => {
-        const coverUrl = getTrackCoverUrl(currentTrack);
+        const coverUrl = adModalVisible ? adData?.imageUrl : getTrackCoverUrl(currentTrack);
         const playerBackgroundUrl =
             icons['playerbg.png'] ||
             icons['bg.png'] ||
@@ -91,34 +99,40 @@ export default function MiniPlayer({ bottomOffset = scale(100) }) {
 
     const artistName = resolveArtistName(currentTrack, 'Unknown Artist');
     const coverUrl = getTrackCoverUrl(currentTrack);
+    const adCoverUrl = adData?.imageUrl || null;
+    const displayedTitle = adModalVisible ? 'Advertisement' : (currentTrack.title || 'Unknown Song');
 
     return (
         <TouchableOpacity style={[styles.container, { bottom: bottomOffset }]} activeOpacity={0.95} onPress={openFullPlayer}>
             <View style={styles.content}>
-                <View style={styles.vinylContainer}>
-                    <View style={styles.vinylBackground}>
-                        {renderIcon('vinyl.svg', { width: scale(46), height: scale(46) }, null)}
+                {adModalVisible ? (
+                    <Image source={{ uri: adCoverUrl || 'https://via.placeholder.com/150' }} style={styles.adArtwork} />
+                ) : (
+                    <View style={styles.vinylContainer}>
+                        <View style={styles.vinylBackground}>
+                            {renderIcon('vinyl.svg', { width: scale(46), height: scale(46) }, null)}
+                        </View>
+                        <Image source={{ uri: coverUrl || 'https://via.placeholder.com/150' }} style={styles.artwork} />
                     </View>
-                    <Image source={{ uri: coverUrl || 'https://via.placeholder.com/150' }} style={styles.artwork} />
-                </View>
+                )}
 
                 <View style={styles.info}>
                     <Text style={styles.title} numberOfLines={1}>
-                        {currentTrack.title || 'Unknown Song'}
+                        {displayedTitle}
                     </Text>
                     <Text style={styles.artist} numberOfLines={1}>
-                        {artistName}
+                        {adModalVisible ? (adData?.title || 'VOX') : artistName}
                     </Text>
                 </View>
 
                 <TouchableOpacity
                     style={styles.playButton}
-                    onPress={togglePlay}
+                    onPress={adModalVisible ? toggleAdPlayPause : togglePlay}
                     hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
                 >
-                    {isPlaying
-                        ? renderIcon('pause.svg', { width: scale(12), height: scale(12) }, '#F5D8CB')
-                        : renderIcon('play.svg', { width: scale(12), height: scale(12) }, '#F5D8CB')}
+                    {(adModalVisible ? isAdPlaying : isPlaying)
+                        ? renderIcon('pause.svg', { width: scale(12), height: scale(12) }, '#FFFFFF')
+                        : renderIcon('play.svg', { width: scale(12), height: scale(12) }, '#FFFFFF')}
                 </TouchableOpacity>
             </View>
         </TouchableOpacity>
@@ -159,20 +173,25 @@ const styles = StyleSheet.create({
         borderRadius: scale(10),
         backgroundColor: '#59221A',
     },
+    adArtwork: {
+        width: scale(46),
+        height: scale(46),
+        borderRadius: scale(8),
+        backgroundColor: '#59221A',
+    },
     info: {
         flex: 1,
         marginLeft: scale(12),
         justifyContent: 'center',
     },
     title: {
-        color: '#59221A',
+        color: '#300C0A',
         fontSize: scale(15),
         fontFamily: 'Unbounded-Bold',
-        textTransform: 'uppercase',
         marginBottom: Platform.OS === 'ios' ? 0 : scale(-2),
     },
     artist: {
-        color: '#59221A',
+        color: '#300C0A',
         fontSize: scale(13),
         fontFamily: 'Poppins-Regular',
         marginTop: scale(2),
@@ -181,7 +200,7 @@ const styles = StyleSheet.create({
         width: scale(36),
         height: scale(36),
         borderRadius: scale(23),
-        backgroundColor: '#59221A',
+        backgroundColor: '#300C0A',
         justifyContent: 'center',
         alignItems: 'center',
         marginLeft: scale(10),

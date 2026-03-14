@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
     View,
     Text,
@@ -6,55 +6,138 @@ import {
     ScrollView,
     Image,
     TouchableOpacity,
-    Dimensions
+    Dimensions,
+    ActivityIndicator,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { scale } from '../../api/api';
+import { useIsFocused } from '@react-navigation/native';
+import { getSubscriptions, getUserAvatarUrl, scale } from '../../api/api';
 
 const { width, height } = Dimensions.get('window');
-
-// Ширина одного елемента (3 колонки з відступами)
 const ITEM_WIDTH = (width - scale(60)) / 3;
 
+const resolveArtistFromSubscription = (item, index) => {
+    const id =
+        item?.artistId ||
+        item?.ArtistId ||
+        item?.id ||
+        item?._id ||
+        item?.artist?.id ||
+        item?.artist?._id ||
+        item?.ownerId ||
+        item?.userId ||
+        null;
+
+    const name =
+        item?.artistName ||
+        item?.name ||
+        item?.username ||
+        item?.displayName ||
+        item?.artist?.name ||
+        `Artist ${index + 1}`;
+
+    const country =
+        item?.country ||
+        item?.artistCountry ||
+        item?.artist?.country ||
+        null;
+
+    return {
+        id: id ? String(id) : null,
+        name,
+        country,
+        avatarUrl:
+            item?.avatarUrl ||
+            item?.artistAvatarUrl ||
+            (id ? getUserAvatarUrl(id) : null),
+    };
+};
+
 export default function LibraryArtist({ navigation }) {
-    // Розширені дані для демонстрації сітки як на макеті
-    const DATA = [
-        { id: '1', title: 'The Weeknd', image: 'https://images.unsplash.com/photo-1520333789090-1afc82db536a?q=80&w=300&auto=format&fit=crop' },
-        { id: '2', title: 'Nikov', image: 'https://images.unsplash.com/photo-1570295999919-56ceb5ecca61?q=80&w=300&auto=format&fit=crop' },
-        { id: '3', title: 'Rihanna', image: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?q=80&w=300&auto=format&fit=crop' },
-        { id: '4', title: 'Lady Gaga', image: 'https://images.unsplash.com/photo-1500917293891-ef795e70e1f6?q=80&w=300&auto=format&fit=crop' },
-        { id: '5', title: 'INNA', image: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?q=80&w=300&auto=format&fit=crop' },
-        { id: '6', title: 'LOBODA', image: 'https://images.unsplash.com/photo-1531746020798-e6953c6e8e04?q=80&w=300&auto=format&fit=crop' },
-        { id: '7', title: 'ASAP Rocky', image: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?q=80&w=300&auto=format&fit=crop' },
-        { id: '8', title: 'MONATIK', image: 'https://www.chipublib.org/wp-content/uploads/sites/3/2022/09/36079964425_7b3042d5e1_k.jpg' },
-        { id: '9', title: 'Justien Biber', image: 'https://images.unsplash.com/photo-1493225255756-d9584f8606e9?q=80&w=300&auto=format&fit=crop' },
-        { id: '10', title: 'Eminem', image: 'https://images.unsplash.com/photo-1529626455594-4ff0802cfb7e?q=80&w=300&auto=format&fit=crop' },
-        { id: '11', title: 'T-Fest', image: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?q=80&w=300&auto=format&fit=crop' },
-        { id: '12', title: 'Drake', image: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=300&auto=format&fit=crop' },
-    ];
+    const isFocused = useIsFocused();
+    const [loading, setLoading] = useState(true);
+    const [artists, setArtists] = useState([]);
+    const [brokenImages, setBrokenImages] = useState({});
 
-    const renderCard = (item) => {
-        return (
-            <TouchableOpacity
-                key={item.id}
-                style={styles.cardContainer}
-                activeOpacity={0.7}
-                onPress={() => {}}
-            >
-                <View style={styles.imageWrapper}>
-                    <Image
-                        source={{ uri: item.image }}
-                        style={styles.image}
-                        resizeMode="cover"
-                    />
+    useEffect(() => {
+        if (isFocused) {
+            loadSubscriptions();
+        }
+    }, [isFocused]);
+
+    const loadSubscriptions = async () => {
+        setLoading(true);
+        try {
+            const raw = await getSubscriptions();
+            const normalized = (Array.isArray(raw) ? raw : [])
+                .map((item, index) => resolveArtistFromSubscription(item, index))
+                .filter((artist) => !!artist.id);
+
+            const seen = new Set();
+            const unique = normalized.filter((artist) => {
+                const key = String(artist.id);
+                if (seen.has(key)) return false;
+                seen.add(key);
+                return true;
+            });
+
+            setArtists(unique);
+        } catch (_) {
+            setArtists([]);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const renderAvatar = (artist) => {
+        const avatarUri = artist.avatarUrl;
+        const imageBroken = brokenImages[artist.id];
+
+        if (!avatarUri || imageBroken) {
+            return (
+                <View style={[styles.image, styles.fallbackAvatar]}>
+                    <Text style={styles.fallbackAvatarText}>
+                        {(artist.name || '?').charAt(0).toUpperCase()}
+                    </Text>
                 </View>
+            );
+        }
 
-                <Text style={styles.title} numberOfLines={1}>
-                    {item.title}
-                </Text>
-            </TouchableOpacity>
+        return (
+            <Image
+                source={{ uri: avatarUri }}
+                style={styles.image}
+                resizeMode="cover"
+                onError={() =>
+                    setBrokenImages((prev) => ({ ...prev, [artist.id]: true }))
+                }
+            />
         );
     };
+
+    const renderCard = (artist) => (
+        <TouchableOpacity
+            key={artist.id}
+            style={styles.cardContainer}
+            activeOpacity={0.8}
+            onPress={() =>
+                navigation?.navigate('ArtistProfile', {
+                    artist: {
+                        id: artist.id,
+                        name: artist.name,
+                        country: artist.country,
+                    },
+                })
+            }
+        >
+            <View style={styles.imageWrapper}>
+                {renderAvatar(artist)}
+            </View>
+            <Text style={styles.title} numberOfLines={1}>
+                {artist.name}
+            </Text>
+        </TouchableOpacity>
+    );
 
     return (
         <View style={styles.container}>
@@ -65,22 +148,29 @@ export default function LibraryArtist({ navigation }) {
                 end={{ x: 0.5, y: 1 }}
                 style={styles.gradient}
             >
-                {/* Відступ під хедер */}
                 <View style={{ height: scale(220) }} />
 
-                <ScrollView
-                    style={{ flex: 1 }}
-                    contentContainerStyle={styles.scrollContent}
-                    showsVerticalScrollIndicator={false}
-                >
-                    {/* Контейнер сітки */}
-                    <View style={styles.gridContainer}>
-                        {DATA.map((item) => renderCard(item))}
+                {loading ? (
+                    <View style={styles.loadingWrap}>
+                        <ActivityIndicator size="small" color="#F5D8CB" />
                     </View>
+                ) : (
+                    <ScrollView
+                        style={{ flex: 1 }}
+                        contentContainerStyle={styles.scrollContent}
+                        showsVerticalScrollIndicator={false}
+                    >
+                        {artists.length > 0 ? (
+                            <View style={styles.gridContainer}>
+                                {artists.map(renderCard)}
+                            </View>
+                        ) : (
+                            <Text style={styles.emptyText}>No subscribed artists yet</Text>
+                        )}
 
-                    {/* Відступ знизу (для міні-плеєра та меню) */}
-                    <View style={{ height: scale(150) }} />
-                </ScrollView>
+                        <View style={{ height: scale(150) }} />
+                    </ScrollView>
+                )}
             </LinearGradient>
         </View>
     );
@@ -92,49 +182,63 @@ const styles = StyleSheet.create({
     },
     gradient: {
         flex: 1,
-        width: width,
-        height: height,
+        width,
+        height,
+    },
+    loadingWrap: {
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     scrollContent: {
-        paddingHorizontal: scale(20), // Відступи по боках екрану
+        paddingHorizontal: scale(20),
         paddingTop: scale(10),
     },
-
-    // --- GRID STYLES ---
     gridContainer: {
         flexDirection: 'row',
-        flexWrap: 'wrap', // Дозволяє переносити елементи на новий рядок
-        justifyContent: 'space-between', // Рівномірно розподіляє 3 колонки
+        flexWrap: 'wrap',
+        justifyContent: 'space-between',
     },
-
-    // --- ITEM STYLES ---
     cardContainer: {
         width: ITEM_WIDTH,
-        alignItems: 'center', // Вирівнювання по центру вертикально
-        marginBottom: scale(24), // Відступ між рядками
+        alignItems: 'center',
+        marginBottom: scale(24),
     },
-
     imageWrapper: {
-        shadowColor: "#000",
+        marginBottom: scale(10),
+        shadowColor: '#000',
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.3,
         shadowRadius: 5,
         elevation: 5,
-        marginBottom: scale(10), // Відступ між картинкою і текстом
     },
-
     image: {
-        width: scale(96), // Великий розмір як на макеті
+        width: scale(96),
         height: scale(96),
-        borderRadius: scale(48), // Ідеальне коло (половина від 96)
+        borderRadius: scale(48),
         backgroundColor: '#333',
     },
-
+    fallbackAvatar: {
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    fallbackAvatarText: {
+        color: '#F5D8CB',
+        fontSize: scale(24),
+        fontFamily: 'Unbounded-SemiBold',
+    },
     title: {
         color: '#F5D8CB',
         fontSize: scale(13),
         fontFamily: 'Poppins-Regular',
         textAlign: 'center',
         paddingHorizontal: scale(4),
+    },
+    emptyText: {
+        color: '#F5D8CB',
+        textAlign: 'center',
+        fontFamily: 'Poppins-Regular',
+        fontSize: scale(14),
+        marginTop: scale(30),
     },
 });
