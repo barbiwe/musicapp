@@ -51,6 +51,9 @@ import ListeningHistoryScreen from './screens/profile/ListeningHistoryScreen';
 import ProScreen from './screens/ProScreen';
 import ChoosePodcastScreen from './screens/library/ChoosePodcastScreen';
 import ChooseArtistScreen from './screens/library/ChooseArtistScreen';
+import RequestScreen from './screens/request/RequestScreen';
+import RequestTermsScreen from './screens/request/RequestTermsScreen';
+import RequestDetailsScreen from './screens/request/RequestDetailsScreen';
 
 // MINI PLAYER
 
@@ -338,6 +341,9 @@ export default function App() {
                 <Stack.Screen name="ProScreen" component={ProScreen} />
                 <Stack.Screen name="ChoosePodcast" component={ChoosePodcastScreen} />
                 <Stack.Screen name="ChooseArtist" component={ChooseArtistScreen} />
+                <Stack.Screen name="Request" component={RequestScreen} />
+                <Stack.Screen name="RequestTerms" component={RequestTermsScreen} />
+                <Stack.Screen name="RequestDetails" component={RequestDetailsScreen} />
 
             </Stack.Navigator>
         </NavigationContainer>

@@ -222,7 +222,11 @@ export default function ProfileScreen({ navigation }) {
                                 {/* Інформація: Ім'я та бейдж */}
                                 <View style={styles.profileInfo}>
                                     <Text style={styles.username} numberOfLines={1}>{username}</Text>
-                                    <TouchableOpacity style={styles.singerBadge} activeOpacity={0.7}>
+                                    <TouchableOpacity
+                                        style={styles.singerBadge}
+                                        activeOpacity={0.7}
+                                        onPress={() => navigation.navigate('Request')}
+                                    >
                                         <Text style={styles.singerBadgeText}>Become a singer</Text>
                                     </TouchableOpacity>
                                 </View>
