@@ -246,11 +246,6 @@ export default function ChooseArtistScreen({ navigation }) {
                             {ARTISTS_ROWS.map((row, rowIndex) => (
                                 <View key={rowIndex} style={styles.rowContainer}>
                                     {row.map((item) => renderCard(item))}
-
-                                    {/* Додаємо пусті блоки, якщо в рядку менше 3 елементів (щоб сітка не поїхала) */}
-                                    {row.length < 3 && Array.from({ length: 3 - row.length }).map((_, i) => (
-                                        <View key={`empty-${i}`} style={styles.cardContainer} />
-                                    ))}
                                 </View>
                             ))}
                         </View>
@@ -335,7 +330,8 @@ const styles = StyleSheet.create({
     },
     rowContainer: {
         flexDirection: 'row',
-        justifyContent: 'space-between',
+        justifyContent: 'flex-start',
+        gap: scale(10),
         marginBottom: scale(20),
     },
 

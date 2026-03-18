@@ -166,9 +166,9 @@ export default function LibraryScreen({ navigation }) {
 
     const renderContent = () => {
         switch (activeTab) {
-            case 'Podcast': return <LibraryPodcast />;
+            case 'Podcast': return <LibraryPodcast navigation={navigation} />;
             case 'All': return <LibraryAll navigation={navigation} setTrack={setTrack} />;
-            case 'Playlist': return <LibraryPlaylist />;
+            case 'Playlist': return <LibraryPlaylist navigation={navigation} />;
             case 'Songs': return <LibrarySongs navigation={navigation} setTrack={setTrack} />;
             case 'Album': return <LibraryAlbum />;
             case 'Artist': return <LibraryArtist navigation={navigation} />;
@@ -284,8 +284,10 @@ export default function LibraryScreen({ navigation }) {
                                             <TouchableOpacity
                                                 style={styles.modalItem}
                                                 onPress={() => {
-                                                    console.log('Add Playlist');
                                                     closeModal();
+                                                    setTimeout(() => {
+                                                        navigation.navigate('CreatePlaylist');
+                                                    }, 300);
                                                 }}
                                             >
                                                 <View style={styles.circlePlus}>
@@ -360,14 +362,14 @@ const styles = StyleSheet.create({
         padding: scale(4),
     },
     tabsContainer: {
-        height: scale(50),
+        height: scale(40),
     },
     scrollContent: {
         paddingHorizontal: scale(20),
         alignItems: 'center',
     },
     tabButton: {
-        paddingVertical: scale(10),
+        paddingVertical: scale(8),
         paddingHorizontal: scale(24),
         borderRadius: scale(30),
         borderWidth: 1,
@@ -384,7 +386,7 @@ const styles = StyleSheet.create({
         borderColor: 'rgba(255, 255, 255, 0.2)',
     },
     tabText: {
-        fontSize: scale(16),
+        fontSize: scale(14),
         fontFamily: 'Poppins-Regular',
     },
     activeTabText: {

@@ -17,6 +17,7 @@ import { SvgXml } from 'react-native-svg';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useIsFocused } from '@react-navigation/native';
 import { usePlayerStore } from '../store/usePlayerStore';
 
 import {
@@ -29,6 +30,7 @@ import {
     getIcons,
     getBanners,
     getBannerImageUrl,
+    isPremiumUser,
     scale
 } from '../api/api';
 
@@ -146,6 +148,7 @@ const ColoredSvg = ({ uri, width, height, color }) => {
 };
 
 export default function DiscoverScreen({ navigation }) {
+    const isFocused = useIsFocused();
     const setTrack = usePlayerStore((state) => state.setTrack);
     const [loading, setLoading] = useState(true);
     const [tracks, setTracks] = useState([]);
@@ -155,26 +158,31 @@ export default function DiscoverScreen({ navigation }) {
     const [albums, setAlbums] = useState([]);
     const [icons, setIcons] = useState({});
     const [discoverBanner, setDiscoverBanner] = useState(null);
+    const [isPremium, setIsPremium] = useState(false);
     const [myId, setMyId] = useState(null);
 
 
     useEffect(() => {
-        load();
-    }, []);
+        if (isFocused) {
+            load();
+        }
+    }, [isFocused]);
 
     const load = async () => {
         try {
             const currentUserId = await AsyncStorage.getItem('userId');
             if (currentUserId) setMyId(currentUserId);
 
-            const [tracksRes, albumsRes, iconsRes, recentRes, recsRes, bannersRes] = await Promise.all([
+            const [tracksRes, albumsRes, iconsRes, recentRes, recsRes, premium] = await Promise.all([
                 getTracks(),
                 getAlbums(),
                 getIcons(),
                 getRecentlyPlayed(),
                 getRecommendations(),
-                getBanners()
+                isPremiumUser(),
             ]);
+
+            setIsPremium(!!premium);
 
             setTracks(tracksRes || []);
             setAlbums(albumsRes || []);
@@ -216,8 +224,13 @@ export default function DiscoverScreen({ navigation }) {
             }));
             setRecommendations(formattedRecs);
 
-            const firstBanner = (bannersRes || []).find((banner) => !!getBannerImageUrl(banner)) || null;
-            setDiscoverBanner(firstBanner);
+            if (premium) {
+                setDiscoverBanner(null);
+            } else {
+                const bannersRes = await getBanners();
+                const firstBanner = (bannersRes || []).find((banner) => !!getBannerImageUrl(banner)) || null;
+                setDiscoverBanner(firstBanner);
+            }
 
         } catch (e) {
             console.log('Discover load error', e);
@@ -455,7 +468,7 @@ export default function DiscoverScreen({ navigation }) {
 
 
                         {/* DISCOVER BANNER */}
-                        {discoverBanner ? (
+                        {discoverBanner && !isPremium ? (
                             <View style={styles.bannerSection}>
                                 <TouchableOpacity
                                     activeOpacity={0.9}

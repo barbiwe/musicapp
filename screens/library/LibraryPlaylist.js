@@ -1,5 +1,4 @@
-import React, { useEffect, useState } from 'react';
-import { SvgUri } from 'react-native-svg';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
     View,
     Text,
@@ -7,60 +6,169 @@ import {
     ScrollView,
     Image,
     TouchableOpacity,
-    Dimensions
+    Dimensions,
+    ActivityIndicator,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { getIcons, scale } from '../../api/api';
-import InsetShadow from 'react-native-inset-shadow';
+import { useIsFocused } from '@react-navigation/native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getMyPlaylists, getPlaylistCoverUrl, getTrackCoverUrl, scale } from '../../api/api';
+
 const { width, height } = Dimensions.get('window');
 
+const getPlaylistId = (playlist) =>
+    String(
+        playlist?.id ||
+        playlist?._id ||
+        playlist?.playlistId ||
+        playlist?.PlaylistId ||
+        ''
+    ).trim();
+
+const getPlaylistName = (playlist, index) =>
+    String(
+        playlist?.name ||
+        playlist?.Name ||
+        playlist?.title ||
+        playlist?.Title ||
+        `Playlist ${index + 1}`
+    ).trim();
+
+const getPlaylistTracks = (playlist) => {
+    if (Array.isArray(playlist?.tracks)) return playlist.tracks;
+    if (Array.isArray(playlist?.Tracks)) return playlist.Tracks;
+    if (Array.isArray(playlist?.playlistTracks)) {
+        return playlist.playlistTracks.map((item) => item?.track || item).filter(Boolean);
+    }
+    if (Array.isArray(playlist?.PlaylistTracks)) {
+        return playlist.PlaylistTracks.map((item) => item?.track || item).filter(Boolean);
+    }
+    return [];
+};
+
+const getTrackCount = (playlist, tracks) => {
+    const directCount =
+        playlist?.tracksCount ??
+        playlist?.TracksCount ??
+        playlist?.trackCount ??
+        playlist?.TrackCount ??
+        null;
+
+    if (typeof directCount === 'number' && Number.isFinite(directCount)) return directCount;
+    return Array.isArray(tracks) ? tracks.length : 0;
+};
+
+const getCoverUri = (playlist, tracks) => {
+    const direct =
+        playlist?.coverUrl ||
+        playlist?.CoverUrl ||
+        playlist?.imageUrl ||
+        playlist?.ImageUrl ||
+        null;
+    if (direct && typeof direct === 'string') return direct;
+
+    const firstTrack = Array.isArray(tracks) && tracks.length > 0 ? tracks[0] : null;
+    return firstTrack ? getTrackCoverUrl(firstTrack) : null;
+};
+
 export default function LibraryPlaylist({ navigation }) {
-    // Дані згідно зі скріншотом (Playlist tab)
-    const DATA = [
-        {
-            id: '1',
-            title: 'For car',
-            subtitle: 'Playlist / Unknown',
-            // Картинка: дівчина в машині/рука на кермі
-            image: 'https://images.unsplash.com/photo-1511553677255-ba939e5537e0?q=80&w=300&auto=format&fit=crop'
-        },
-        {
-            id: '2',
-            title: 'Mix of the day',
-            subtitle: 'Playlist / For this user',
-            // Картинка: книга/ранок
-            image: 'https://images.unsplash.com/photo-1515378791036-0648a3ef77b2?q=80&w=300&auto=format&fit=crop'
-        },
-        {
-            id: '3',
-            title: 'My summer',
-            subtitle: 'Playlist / QWS',
-            // Картинка: пальми
-            image: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?q=80&w=300&auto=format&fit=crop'
-        },
-        {
-            id: '4',
-            title: 'Magic city',
-            subtitle: 'Playlist / S-star',
-            // Картинка: леопард/лапа
-            image: 'https://images.unsplash.com/photo-1534234828569-1d37803d5268?q=80&w=300&auto=format&fit=crop'
-        },
-    ];
+    const isFocused = useIsFocused();
+    const [loading, setLoading] = useState(true);
+    const [playlists, setPlaylists] = useState([]);
+    const [failedPrimaryCovers, setFailedPrimaryCovers] = useState({});
+    const [brokenCovers, setBrokenCovers] = useState({});
+    const [userToken, setUserToken] = useState(null);
+
+    useEffect(() => {
+        if (isFocused) {
+            loadPlaylists();
+        }
+    }, [isFocused]);
+
+    const loadPlaylists = async () => {
+        setLoading(true);
+        try {
+            const [raw, token] = await Promise.all([
+                getMyPlaylists(),
+                AsyncStorage.getItem('userToken'),
+            ]);
+            const list = (Array.isArray(raw) ? raw : [])
+                .map((item, index) => {
+                    const id = getPlaylistId(item);
+                    if (!id) return null;
+
+                    const tracks = getPlaylistTracks(item);
+                    const count = getTrackCount(item, tracks);
+
+                    return {
+                        id,
+                        title: getPlaylistName(item, index),
+                        subtitle: `${count} ${count === 1 ? 'track' : 'tracks'}`,
+                        imagePrimary: getPlaylistCoverUrl(id),
+                        imageFallback: getCoverUri(item, tracks),
+                    };
+                })
+                .filter(Boolean);
+
+            setPlaylists(list);
+            setUserToken(token || null);
+            setFailedPrimaryCovers({});
+            setBrokenCovers({});
+        } catch (_) {
+            setPlaylists([]);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const sortedPlaylists = useMemo(() => {
+        return [...playlists].sort((a, b) => a.title.localeCompare(b.title));
+    }, [playlists]);
 
     const renderCard = (item) => {
+        const failedPrimary = failedPrimaryCovers[item.id];
+        const broken = brokenCovers[item.id];
+        const imageUri = failedPrimary ? item.imageFallback : item.imagePrimary;
+        const hasImage = imageUri && !broken;
+
         return (
             <TouchableOpacity
                 key={item.id}
-                style={styles.cardContainer} // Стиль точно як у твоєму коді
-                activeOpacity={0.7}
-                onPress={() => {}}
+                style={styles.cardContainer}
+                activeOpacity={0.8}
+                onPress={() =>
+                    navigation?.navigate('PlaylistDetail', {
+                        playlistId: item.id,
+                        playlistName: item.title,
+                    })
+                }
             >
                 <View style={styles.imageWrapper}>
-                    <Image
-                        source={{ uri: item.image }}
-                        style={styles.image}
-                        resizeMode="cover"
-                    />
+                    {hasImage ? (
+                        <Image
+                            source={
+                                userToken && !failedPrimary
+                                    ? {
+                                        uri: imageUri,
+                                        headers: { Authorization: `Bearer ${userToken}` },
+                                    }
+                                    : { uri: imageUri }
+                            }
+                            style={styles.image}
+                            resizeMode="cover"
+                            onError={() => {
+                                if (!failedPrimary && item.imageFallback) {
+                                    setFailedPrimaryCovers((prev) => ({ ...prev, [item.id]: true }));
+                                } else {
+                                    setBrokenCovers((prev) => ({ ...prev, [item.id]: true }));
+                                }
+                            }}
+                        />
+                    ) : (
+                        <View style={[styles.image, styles.imageFallback]}>
+                            <Text style={styles.fallbackNote}>P</Text>
+                        </View>
+                    )}
                 </View>
 
                 <View style={styles.textContainer}>
@@ -84,19 +192,27 @@ export default function LibraryPlaylist({ navigation }) {
                 end={{ x: 0.5, y: 1 }}
                 style={styles.gradient}
             >
-                {/* Відступ під хедер (як у прикладі) */}
-                <View style={{ height: 220 }} />
+                <View style={{ height: 208 }} />
 
-                <ScrollView
-                    style={{ flex: 1 }}
-                    contentContainerStyle={styles.scrollContent}
-                    showsVerticalScrollIndicator={false}
-                >
-                    {DATA.map((item) => renderCard(item))}
+                {loading ? (
+                    <View style={styles.loader}>
+                        <ActivityIndicator size="small" color="#F5D8CB" />
+                    </View>
+                ) : (
+                    <ScrollView
+                        style={{ flex: 1 }}
+                        contentContainerStyle={styles.scrollContent}
+                        showsVerticalScrollIndicator={false}
+                    >
+                        {sortedPlaylists.length > 0 ? (
+                            sortedPlaylists.map(renderCard)
+                        ) : (
+                            <Text style={styles.emptyText}>No playlists yet</Text>
+                        )}
 
-                    {/* Відступ знизу */}
-                    <View style={{ height: scale(100) }} />
-                </ScrollView>
+                        <View style={{ height: scale(100) }} />
+                    </ScrollView>
+                )}
             </LinearGradient>
         </View>
     );
@@ -108,16 +224,19 @@ const styles = StyleSheet.create({
     },
     gradient: {
         flex: 1,
-        width: width,
-        height: height,
+        width,
+        height,
+    },
+    loader: {
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     scrollContent: {
         paddingHorizontal: scale(16),
-        paddingTop: scale(20),
+        paddingTop: scale(8),
         paddingBottom: scale(100),
     },
-
-    // --- CARD STYLES (Скопійовано з твого коду 1 в 1) ---
     cardContainer: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -125,44 +244,55 @@ const styles = StyleSheet.create({
         borderRadius: scale(20),
         marginBottom: scale(16),
         width: '100%',
-        // Ті самі скруглення зліва, що ти скинув
         borderTopLeftRadius: scale(50),
         borderBottomLeftRadius: scale(50),
-
-        shadowColor: "#000",
+        shadowColor: '#000',
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.3,
         shadowRadius: 4,
     },
-
     imageWrapper: {
         marginRight: scale(16),
         justifyContent: 'center',
         alignItems: 'center',
     },
-
     image: {
         width: scale(80),
         height: scale(80),
         borderRadius: scale(15),
         backgroundColor: '#333',
     },
-
-    // --- TEXT STYLES ---
+    imageFallback: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'rgba(30, 10, 8, 0.9)',
+    },
+    fallbackNote: {
+        color: '#F5D8CB',
+        fontFamily: 'Unbounded-SemiBold',
+        fontSize: scale(26),
+    },
     textContainer: {
         flex: 1,
         justifyContent: 'center',
         paddingRight: scale(10),
     },
     title: {
-        color: '#FF4D4F',
+        color: '#F5D8CB',
         fontSize: scale(16),
         fontFamily: 'Unbounded-Medium',
         marginBottom: scale(4),
     },
     subtitle: {
-        color: '#FF4D4F',
+        color: 'rgba(245, 216, 203, 0.8)',
         fontSize: scale(14),
         fontFamily: 'Poppins-Regular',
+    },
+    emptyText: {
+        color: '#F5D8CB',
+        fontSize: scale(14),
+        fontFamily: 'Poppins-Regular',
+        textAlign: 'center',
+        marginTop: scale(20),
     },
 });

@@ -59,6 +59,17 @@ const prefetchImageOnce = (uri) => {
     });
 };
 
+const buildPodcastNowPlayingTitle = (track) => {
+    const podcastTitle = String(track?.podcastTitle || '').trim();
+    const episodeTitle = String(track?.episodeTitle || track?.title || '').trim();
+
+    if (podcastTitle && episodeTitle) {
+        if (podcastTitle.toLowerCase() === episodeTitle.toLowerCase()) return podcastTitle;
+        return `${podcastTitle}, ${episodeTitle}`;
+    }
+    return podcastTitle || episodeTitle || 'Podcast';
+};
+
 // 👇 Цей компонент завантажує SVG, чистить, фарбує і КЕШУЄ результат
 const ColoredSvg = React.memo(({ uri, width, height, color }) => {
     const [xml, setXml] = useState(peekColoredSvgXml(uri, color));
@@ -95,24 +106,37 @@ const ColoredSvg = React.memo(({ uri, width, height, color }) => {
 const QueueItem = React.memo(({ item, currentTrack, isPlaying, playFromQueue, handlePlayPause, renderIcon, isLiked, onLike, hidePlayButton = false }) => {
     const isCurrent = (item.id || item._id) === (currentTrack.id || currentTrack._id);
     const itemCoverUrl = getTrackCoverUrl(item);
+    const isPodcastItem = Boolean(item?.isPodcast);
 
     return (
         <TouchableOpacity
             style={styles.queueItemContainer}
             onPress={() => playFromQueue(item)}
         >
-            <View style={styles.vinylContainer}>
-                {itemCoverUrl ? (
-                    <Image source={{ uri: itemCoverUrl, cache: 'force-cache' }} style={styles.innerCover} resizeMode="cover" />
+            {isPodcastItem ? (
+                itemCoverUrl ? (
+                    <Image
+                        source={{ uri: itemCoverUrl, cache: 'force-cache' }}
+                        style={styles.queuePodcastCover}
+                        resizeMode="cover"
+                    />
                 ) : (
-                    <View style={[styles.innerCover, { backgroundColor: '#2A1414', justifyContent: 'center', alignItems: 'center' }]}>
-                        {renderIcon('VOX.svg', '♪', { width: 14, height: 14 }, '#FFFFFF')}
+                    <View style={[styles.queuePodcastCover, styles.queuePodcastCoverFallback]} />
+                )
+            ) : (
+                <View style={styles.vinylContainer}>
+                    {itemCoverUrl ? (
+                        <Image source={{ uri: itemCoverUrl, cache: 'force-cache' }} style={styles.innerCover} resizeMode="cover" />
+                    ) : (
+                        <View style={[styles.innerCover, { backgroundColor: '#2A1414', justifyContent: 'center', alignItems: 'center' }]}>
+                            {renderIcon('VOX.svg', '♪', { width: 14, height: 14 }, '#FFFFFF')}
+                        </View>
+                    )}
+                    <View style={styles.vinylOverlayWrapper}>
+                        {renderIcon('vinyl.svg', '', { width: 50, height: 50 }, null)}
                     </View>
-                )}
-                <View style={styles.vinylOverlayWrapper}>
-                    {renderIcon('vinyl.svg', '', { width: 50, height: 50 }, null)}
                 </View>
-            </View>
+            )}
 
             <View style={styles.queueInfo}>
                 <Text style={[styles.queueTitle, isCurrent && styles.queueTitleActive]} numberOfLines={1}>
@@ -131,16 +155,18 @@ const QueueItem = React.memo(({ item, currentTrack, isPlaying, playFromQueue, ha
                 )}
 
                 {/* 👇 КНОПКА ЛАЙКУ */}
-                <TouchableOpacity
-                    style={styles.heartButton}
-                    onPress={() => onLike(item)}
-                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                >
-                    {isLiked
-                        ? renderIcon('added.svg', '♥', { width: 24, height: 24 }, '#F5D8CB') // Заповнене (або галочка, як у хедері)
-                        : renderIcon('add.svg', '♡', { width: 24, height: 24 }, '#F5D8CB') // Пусте
-                    }
-                </TouchableOpacity>
+                {!item?.isPodcast && (
+                    <TouchableOpacity
+                        style={styles.heartButton}
+                        onPress={() => onLike(item)}
+                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                    >
+                        {isLiked
+                            ? renderIcon('added.svg', '♥', { width: 24, height: 24 }, '#F5D8CB')
+                            : renderIcon('add.svg', '♡', { width: 24, height: 24 }, '#F5D8CB')
+                        }
+                    </TouchableOpacity>
+                )}
             </View>
         </TouchableOpacity>
     );
@@ -155,7 +181,10 @@ export default function PlayerScreen({ navigation, route }) {
     } = usePlayerStore();
 
     // 2. ДІСТАЄМО ІНФУ САМЕ З ГЛОБАЛЬНОГО СТОРУ
-    const trackTitle = currentTrack?.title || 'No Title';
+    const isPodcastTrack = Boolean(currentTrack?.isPodcast) && !adModalVisible;
+    const trackTitle = isPodcastTrack
+        ? buildPodcastNowPlayingTitle(currentTrack)
+        : (currentTrack?.title || 'No Title');
     const trackArtist = resolveArtistName(currentTrack, 'Unknown Artist');
     const coverUrl = getTrackCoverUrl(currentTrack);
 
@@ -920,20 +949,26 @@ export default function PlayerScreen({ navigation, route }) {
                     </TouchableOpacity>
 
                     <View style={styles.headerActions}>
+                        {!isPodcastTrack && (
+                            <TouchableOpacity
+                                style={styles.headerActionButton}
+                                hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
+                                onPress={() => handleItemLikeToggle(currentTrack)}
+                            >
+                                {likedTrackIds.includes(currentTrack.id || currentTrack._id)
+                                    ? renderIcon('added.svg', 'Lik', { width: 24, height: 24 }, '#F5D8CB')
+                                    : renderIcon('add.svg', 'Lik', { width: 24, height: 24 }, '#F5D8CB')
+                                }
+                            </TouchableOpacity>
+                        )}
                         <TouchableOpacity
-                            style={styles.headerActionButton}
+                            style={[styles.headerActionButton, isPodcastTrack && styles.controlDisabled]}
                             hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
-                            onPress={() => handleItemLikeToggle(currentTrack)}
-                        >
-                            {likedTrackIds.includes(currentTrack.id || currentTrack._id)
-                                ? renderIcon('added.svg', 'Lik', { width: 24, height: 24 }, '#F5D8CB')
-                                : renderIcon('add.svg', 'Lik', { width: 24, height: 24 }, '#F5D8CB')
-                            }
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                            style={styles.headerActionButton}
-                            hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
-                            onPress={() => openModal('menu')}
+                            disabled={isPodcastTrack}
+                            onPress={() => {
+                                if (isPodcastTrack) return;
+                                openModal('menu');
+                            }}
                         >
                             {renderIcon('more.svg', '•••', { width: 24, height: 24 }, '#F5D8CB')}
                         </TouchableOpacity>
@@ -942,23 +977,37 @@ export default function PlayerScreen({ navigation, route }) {
 
                 {/* ALBUM COVER (CENTER) */}
                 <View style={styles.albumCoverPlaceholder}>
-                    {/* 1. Шар Вінілу (Фон) */}
-                    <View style={styles.mainVinylLayer}>
-                        {renderIcon(
-                            'vinyl.svg',
-                            'No Vinyl',
-                            { width: SCREEN_WIDTH * 0.8, height: SCREEN_WIDTH * 0.8 }, // Передаємо тільки розміри
-                            null
-                        )}
-                    </View>
+                    {isPodcastTrack ? (
+                        coverUrl ? (
+                            <Image
+                                source={{ uri: coverUrl, cache: 'force-cache' }}
+                                style={styles.podcastCoverImage}
+                                resizeMode="cover"
+                            />
+                        ) : (
+                            <View style={styles.podcastCoverImage} />
+                        )
+                    ) : (
+                        <>
+                            {/* 1. Шар Вінілу (Фон) */}
+                            <View style={styles.mainVinylLayer}>
+                                {renderIcon(
+                                    'vinyl.svg',
+                                    'No Vinyl',
+                                    { width: SCREEN_WIDTH * 0.8, height: SCREEN_WIDTH * 0.8 },
+                                    null
+                                )}
+                            </View>
 
-                    {/* 2. Шар Обкладинки (Центр) */}
-                    {coverUrl ? (
-                        <Image
-                            source={{ uri: coverUrl, cache: 'force-cache' }}
-                            style={styles.albumCoverImage}
-                        />
-                    ) : null}
+                            {/* 2. Шар Обкладинки (Центр) */}
+                            {coverUrl ? (
+                                <Image
+                                    source={{ uri: coverUrl, cache: 'force-cache' }}
+                                    style={styles.albumCoverImage}
+                                />
+                            ) : null}
+                        </>
+                    )}
                 </View>
 
                 {/* TITLE & ARTIST */}
@@ -1001,7 +1050,11 @@ export default function PlayerScreen({ navigation, route }) {
                 {/* CONTROLS */}
                 <View style={styles.controlsSection}>
                     {/* Shuffle Button (Ліва кнопка) */}
-                    <TouchableOpacity hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                    <TouchableOpacity
+                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                        disabled={isPodcastTrack}
+                        style={isPodcastTrack && styles.controlDisabled}
+                    >
                         {renderIcon('shuffle.svg', 'Mix', { width: 24, height: 24 }, '#FF4D4F')}
                     </TouchableOpacity>
 
@@ -1061,7 +1114,11 @@ export default function PlayerScreen({ navigation, route }) {
                     </View>
 
                     {/* Repeat Button (Права кнопка) */}
-                    <TouchableOpacity hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                    <TouchableOpacity
+                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                        disabled={isPodcastTrack}
+                        style={isPodcastTrack && styles.controlDisabled}
+                    >
                         {renderIcon('previous-1.svg', 'Rep', { width: 24, height: 24 }, '#F5D8CB')}
                     </TouchableOpacity>
                 </View>
@@ -1071,11 +1128,17 @@ export default function PlayerScreen({ navigation, route }) {
                     <TouchableOpacity onPress={() => openModal('queue')}>
                         <Text style={styles.footerTab}>Queue</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity>
-                        <Text style={[styles.footerTab, styles.stubText]}>Lyrics</Text>
+                    <TouchableOpacity disabled={isPodcastTrack}>
+                        <Text style={[styles.footerTab, styles.stubText, isPodcastTrack && styles.controlDisabledText]}>Lyrics</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity onPress={() => openModal('related')}>
-                        <Text style={styles.footerTab}>Related</Text>
+                    <TouchableOpacity
+                        disabled={isPodcastTrack}
+                        onPress={() => {
+                            if (isPodcastTrack) return;
+                            openModal('related');
+                        }}
+                    >
+                        <Text style={[styles.footerTab, isPodcastTrack && styles.controlDisabledText]}>Related</Text>
                     </TouchableOpacity>
                 </View>
                     </>
@@ -1447,6 +1510,13 @@ const styles = StyleSheet.create({
         borderRadius: 1000, // Кругла
         zIndex: 2,          // Верхній шар (щоб лежала НА вінілі)
         // position: 'absolute' тут не потрібен, бо Flexbox батька вже тримає її в центрі
+    },
+    podcastCoverImage: {
+        width: '100%',
+        height: '100%',
+        borderRadius: 24,
+        backgroundColor: '#3A1A18',
+        zIndex: 2,
     },
     textBlock: {
         alignItems: 'center',
@@ -1825,6 +1895,12 @@ const styles = StyleSheet.create({
     stubOutline: {
         borderColor: '#FF4D4F',
     },
+    controlDisabled: {
+        opacity: 0.35,
+    },
+    controlDisabledText: {
+        opacity: 0.35,
+    },
 
     /* --- QUEUE MODAL --- */
     queueInnerContent: {
@@ -1957,6 +2033,16 @@ const styles = StyleSheet.create({
         padding: 5,
         justifyContent: 'center',
         alignItems: 'center',
+    },
+    queuePodcastCover: {
+        width: 58,
+        height: 58,
+        borderRadius: 10,
+        backgroundColor: '#2A1414',
+    },
+    queuePodcastCoverFallback: {
+        borderWidth: 1,
+        borderColor: 'rgba(245, 216, 203, 0.3)',
     },
     /* --- NOTIFICATION STYLES --- */
     /* --- NOTIFICATION STYLES (ОНОВЛЕНО) --- */

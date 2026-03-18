@@ -17,6 +17,9 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.fidanuka.mussicapp",
       "infoPlist": {
+        "UIBackgroundModes": [
+          "audio"
+        ],
         "NSAppTransportSecurity": {
           "NSAllowsArbitraryLoads": true
         },

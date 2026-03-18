@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from 'react';
-
 import {
     View,
     Text,
@@ -7,82 +6,106 @@ import {
     ScrollView,
     Image,
     TouchableOpacity,
-    Dimensions
+    Dimensions,
+    ActivityIndicator,
 } from 'react-native';
-import { SvgUri } from 'react-native-svg';
 import { LinearGradient } from 'expo-linear-gradient';
-import { getIcons, scale } from '../../api/api';
-import InsetShadow from 'react-native-inset-shadow';
+import { useIsFocused } from '@react-navigation/native';
+import {
+    getAllPodcasts,
+    getPodcastCoverUrl,
+    isPodcastLiked,
+    scale,
+} from '../../api/api';
+
 const { width, height } = Dimensions.get('window');
 
+const normalizePodcast = (item) => {
+    const id = String(item?.id ?? item?._id ?? item?.podcastId ?? '').trim();
+    if (!id) return null;
+
+    const title = String(item?.title ?? item?.name ?? 'Untitled podcast').trim() || 'Untitled podcast';
+    const author = String(item?.author ?? item?.artistName ?? item?.ownerName ?? 'Unknown').trim() || 'Unknown';
+    const status = String(item?.status ?? '').toLowerCase();
+
+    return {
+        id,
+        title,
+        subtitle: `Podcast / ${author}`,
+        image: getPodcastCoverUrl(item),
+        status,
+        raw: item,
+    };
+};
+
 export default function LibraryPodcast({ navigation }) {
-    // Дані згідно зі скріншотом "Podcast"
-    const DATA = [
-        {
-            id: '1',
-            title: 'Топ аудіокниг',
-            subtitle: 'Podcast / Taras Andrushko',
-            // Навушники та книги
-            image: 'https://www.chipublib.org/wp-content/uploads/sites/3/2022/09/36079964425_7b3042d5e1_k.jpg'
-        },
-        {
-            id: '2',
-            title: 'Атомні звички',
-            subtitle: 'Podcast / Andrew Ozarkiv',
-            // Книга на світлому фоні
-            image: 'https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?q=80&w=300&auto=format&fit=crop'
-        },
-        {
-            id: '3',
-            title: 'Книги для розвитку',
-            subtitle: 'Podcast / Dmitrij',
-            // Стопка книг
-            image: 'https://images.unsplash.com/photo-1512820790803-83ca734da794?q=80&w=300&auto=format&fit=crop'
-        },
-        {
-            id: '4',
-            title: 'Подкаст українською',
-            subtitle: 'Podcast / Unknown',
-            // Мінімалістичний текст на білому
-            image: 'https://images.unsplash.com/photo-1589829085413-56de8ae18c73?q=80&w=300&auto=format&fit=crop'
-        },
-        {
-            id: '5',
-            title: 'Подкаст терапія',
-            subtitle: 'Podcast / Spartak Subbota',
-            // Чорно-біле фото чоловіка
-            image: 'https://images.unsplash.com/photo-1531427186611-ecfd6d936c79?q=80&w=300&auto=format&fit=crop'
-        },
-        {
-            id: '6',
-            title: 'Цейво подкаст',
-            subtitle: 'Podcast / Василь Байдак',
-            // Чоловік на синьому фоні
-            image: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=300&auto=format&fit=crop'
-        },
-        {
-            id: '7',
-            title: 'Подкаст',
-            subtitle: 'Podcast / Alla Malkin',
-            // Мозок / ілюстрація
-            image: 'https://images.unsplash.com/photo-1559757175-5700dde675bc?q=80&w=300&auto=format&fit=crop'
-        },
-    ];
+    const isFocused = useIsFocused();
+    const [loading, setLoading] = useState(true);
+    const [podcasts, setPodcasts] = useState([]);
+
+    useEffect(() => {
+        if (isFocused) {
+            loadPodcasts();
+        }
+    }, [isFocused]);
+
+    const loadPodcasts = async () => {
+        setLoading(true);
+
+        try {
+            const allRaw = await getAllPodcasts();
+            const all = (Array.isArray(allRaw) ? allRaw : [])
+                .map(normalizePodcast)
+                .filter(Boolean)
+                .filter((podcast) => !podcast.status || podcast.status === 'approved');
+
+            if (!all.length) {
+                setPodcasts([]);
+                setLoading(false);
+                return;
+            }
+
+            const checks = await Promise.all(
+                all.map(async (podcast) => ({
+                    id: podcast.id,
+                    liked: await isPodcastLiked(podcast.id),
+                }))
+            );
+
+            const likedIds = new Set(checks.filter((item) => item.liked).map((item) => item.id));
+            const likedPodcasts = all.filter((podcast) => likedIds.has(podcast.id));
+
+            setPodcasts(likedPodcasts);
+        } catch (_) {
+            setPodcasts([]);
+        } finally {
+            setLoading(false);
+        }
+    };
 
     const renderCard = (item) => {
         return (
             <TouchableOpacity
                 key={item.id}
-                style={styles.cardContainer} // Стиль ідентичний до Playlist/Album
-                activeOpacity={0.7}
-                onPress={() => {}}
+                style={styles.cardContainer}
+                activeOpacity={0.75}
+                onPress={() => {
+                    navigation?.navigate('PodcastDetail', {
+                        podcastId: item.id,
+                        podcast: item.raw || item,
+                    });
+                }}
             >
                 <View style={styles.imageWrapper}>
-                    <Image
-                        source={{ uri: item.image }}
-                        style={styles.image} // Квадратні з заокругленням (не круглі)
-                        resizeMode="cover"
-                    />
+                    {item.image ? (
+                        <Image
+                            source={{ uri: item.image }}
+                            style={styles.image}
+                            resizeMode="cover"
+                        />
+                    ) : (
+                        <View style={styles.image} />
+                    )}
                 </View>
 
                 <View style={styles.textContainer}>
@@ -106,19 +129,27 @@ export default function LibraryPodcast({ navigation }) {
                 end={{ x: 0.5, y: 1 }}
                 style={styles.gradient}
             >
-                {/* Відступ під хедер */}
-                <View style={{ height: 220 }} />
+                <View style={{ height: 208 }} />
 
-                <ScrollView
-                    style={{ flex: 1 }}
-                    contentContainerStyle={styles.scrollContent}
-                    showsVerticalScrollIndicator={false}
-                >
-                    {DATA.map((item) => renderCard(item))}
+                {loading ? (
+                    <View style={styles.loaderWrap}>
+                        <ActivityIndicator size="large" color="#F5D8CB" />
+                    </View>
+                ) : (
+                    <ScrollView
+                        style={{ flex: 1 }}
+                        contentContainerStyle={styles.scrollContent}
+                        showsVerticalScrollIndicator={false}
+                    >
+                        {podcasts.map((item) => renderCard(item))}
 
-                    {/* Відступ знизу */}
-                    <View style={{ height: scale(100) }} />
-                </ScrollView>
+                        {!podcasts.length && (
+                            <Text style={styles.emptyText}>No added podcasts yet</Text>
+                        )}
+
+                        <View style={{ height: scale(100) }} />
+                    </ScrollView>
+                )}
             </LinearGradient>
         </View>
     );
@@ -130,16 +161,20 @@ const styles = StyleSheet.create({
     },
     gradient: {
         flex: 1,
-        width: width,
-        height: height,
+        width,
+        height,
+    },
+    loaderWrap: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
     },
     scrollContent: {
         paddingHorizontal: scale(16),
-        paddingTop: scale(20),
+        paddingTop: scale(8),
         paddingBottom: scale(100),
     },
 
-    // --- CARD STYLES ---
     cardContainer: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -148,11 +183,10 @@ const styles = StyleSheet.create({
         marginBottom: scale(16),
         width: '100%',
 
-        // Зберігаємо стиль лівого краю як у Playlist
         borderTopLeftRadius: scale(50),
         borderBottomLeftRadius: scale(50),
 
-        shadowColor: "#000",
+        shadowColor: '#000',
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.3,
         shadowRadius: 4,
@@ -167,25 +201,31 @@ const styles = StyleSheet.create({
     image: {
         width: scale(80),
         height: scale(80),
-        borderRadius: scale(15), // Стандартне заокруглення (не коло)
-        backgroundColor: '#333',
+        borderRadius: scale(15),
+        backgroundColor: '#2A1311',
     },
 
-    // --- TEXT STYLES ---
     textContainer: {
         flex: 1,
         justifyContent: 'center',
         paddingRight: scale(10),
     },
     title: {
-        color: '#FF4D4F',
+        color: '#F5D8CB',
         fontSize: scale(16),
         fontFamily: 'Unbounded-Medium',
         marginBottom: scale(4),
     },
     subtitle: {
-        color: '#FF4D4F',
+        color: '#F5D8CB',
         fontSize: scale(14),
         fontFamily: 'Poppins-Regular',
+    },
+    emptyText: {
+        color: 'rgba(245, 216, 203, 0.8)',
+        fontFamily: 'Poppins-Regular',
+        fontSize: scale(14),
+        textAlign: 'center',
+        marginTop: scale(20),
     },
 });

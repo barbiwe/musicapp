@@ -158,7 +158,7 @@ export default function LibraryAlbum({ navigation }) {
                 style={styles.gradient}
             >
                 {/* Відступ під хедер (220, як домовлялися) */}
-                <View style={{ height: 220 }} />
+                <View style={{ height: 208 }} />
 
                 <ScrollView
                     style={{ flex: 1 }}
@@ -186,7 +186,7 @@ const styles = StyleSheet.create({
     },
     scrollContent: {
         paddingHorizontal: scale(16),
-        paddingTop: scale(20),
+        paddingTop: scale(8),
         paddingBottom: scale(100),
     },
 

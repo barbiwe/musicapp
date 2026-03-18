@@ -41,6 +41,9 @@ import DiscoverScreen from './screens/DiscoverScreen.js';
 import ArtistProfileScreen from './screens/ArtistProfileScreen';
 import SongInfoScreen from './screens/SongInfoScreen';
 import LibraryScreen from './screens/library/LibraryScreen';
+import LikedSongsScreen from './screens/library/LikedSongsScreen';
+import CreatePlaylistScreen from './screens/library/CreatePlaylistScreen';
+import PlaylistDetailScreen from './screens/library/PlaylistDetailScreen';
 import ContentAndDisplayScreen from './screens/profile/ContentAndDisplayScreen';
 import PrivacyAndCommunityScreen from './screens/profile/PrivacyAndCommunityScreen';
 import QualityOfMediaFilesScreen from './screens/profile/QualityOfMediaFilesScreen';
@@ -51,6 +54,7 @@ import ListeningHistoryScreen from './screens/profile/ListeningHistoryScreen';
 import ProScreen from './screens/ProScreen';
 import ChoosePodcastScreen from './screens/library/ChoosePodcastScreen';
 import ChooseArtistScreen from './screens/library/ChooseArtistScreen';
+import PodcastDetailScreen from './screens/library/PodcastDetailScreen';
 import RequestScreen from './screens/request/RequestScreen';
 import RequestTermsScreen from './screens/request/RequestTermsScreen';
 import RequestDetailsScreen from './screens/request/RequestDetailsScreen';
@@ -61,6 +65,7 @@ import MiniPlayer from './components/MiniPlayer';
 
 const Stack = createNativeStackNavigator();
 const SearchStack = createNativeStackNavigator();
+const LibraryStack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator(); // 👇 Створюємо Таби
 const tabSvgCache = {};
 
@@ -190,6 +195,16 @@ function SearchStackScreen() {
     );
 }
 
+function LibraryStackScreen() {
+    return (
+        <LibraryStack.Navigator screenOptions={{ headerShown: false }}>
+            <LibraryStack.Screen name="LibraryMain" component={LibraryScreen} />
+            <LibraryStack.Screen name="LikedSongs" component={LikedSongsScreen} />
+            <LibraryStack.Screen name="PlaylistDetail" component={PlaylistDetailScreen} />
+        </LibraryStack.Navigator>
+    );
+}
+
 /* 🔹 MAIN TABS (Група екранів з нерухомим меню) 🔹 */
 function MainTabs() {
     return (
@@ -204,7 +219,7 @@ function MainTabs() {
             >
                 <Tab.Screen name="HomeTab" component={DiscoverScreen} />
                 <Tab.Screen name="SearchTab" component={SearchStackScreen} />
-                <Tab.Screen name="LibraryTab" component={LibraryScreen} />
+                <Tab.Screen name="LibraryTab" component={LibraryStackScreen} />
                 <Tab.Screen name="AlbumsTab" component={MusicScreen} />
             </Tab.Navigator>
 
@@ -340,7 +355,9 @@ export default function App() {
                 <Stack.Screen name="ListeningHistory" component={ListeningHistoryScreen} />
                 <Stack.Screen name="ProScreen" component={ProScreen} />
                 <Stack.Screen name="ChoosePodcast" component={ChoosePodcastScreen} />
+                <Stack.Screen name="PodcastDetail" component={PodcastDetailScreen} />
                 <Stack.Screen name="ChooseArtist" component={ChooseArtistScreen} />
+                <Stack.Screen name="CreatePlaylist" component={CreatePlaylistScreen} />
                 <Stack.Screen name="Request" component={RequestScreen} />
                 <Stack.Screen name="RequestTerms" component={RequestTermsScreen} />
                 <Stack.Screen name="RequestDetails" component={RequestDetailsScreen} />

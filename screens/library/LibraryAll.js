@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 
 import {
     View,
@@ -10,74 +10,174 @@ import {
     Dimensions
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { SvgUri, SvgXml } from 'react-native-svg';
-import { getIcons, scale } from '../../api/api';
+import { SvgXml } from 'react-native-svg';
+import { useIsFocused } from '@react-navigation/native';
+import {
+    getAllArtists,
+    getIcons,
+    getLikedTracks,
+    getSubscriptions,
+    getUserAvatarUrl,
+    scale
+} from '../../api/api';
 
 const { width, height } = Dimensions.get('window');
+const svgCache = {};
+
+const ColoredSvg = ({ uri, width, height, color }) => {
+    const cacheKey = `${uri}_${color || 'original'}`;
+    const [xml, setXml] = useState(svgCache[cacheKey] || null);
+
+    useEffect(() => {
+        let isMounted = true;
+
+        if (svgCache[cacheKey]) {
+            setXml(svgCache[cacheKey]);
+            return () => { isMounted = false; };
+        }
+
+        if (uri) {
+            fetch(uri)
+                .then((response) => response.text())
+                .then((svgContent) => {
+                    if (!isMounted) return;
+                    let cleanXml = svgContent.replace(/fill=['"]none['"]/gi, '###NONE###');
+                    if (color) {
+                        cleanXml = cleanXml.replace(/fill=['"][^'"]*['"]/g, `fill="${color}"`);
+                        cleanXml = cleanXml.replace(/stroke=['"][^'"]*['"]/g, `stroke="${color}"`);
+                    }
+                    cleanXml = cleanXml.replace(/###NONE###/g, 'fill="none"');
+                    svgCache[cacheKey] = cleanXml;
+                    setXml(cleanXml);
+                })
+                .catch(() => {});
+        }
+
+        return () => { isMounted = false; };
+    }, [cacheKey, color, uri]);
+
+    if (!xml) return <View style={{ width, height }} />;
+    return <SvgXml xml={xml} width={width} height={height} />;
+};
 
 // Винесемо висоту хедера в змінну, щоб зручно керувати
 // Якщо хедер займає десь 100-120 пікселів, ставимо це значення тут
 const HEADER_HEIGHT = scale(120);
 
 export default function LibraryAll({ navigation }) {
+    const isFocused = useIsFocused();
     const [icons, setIcons] = useState({});
+    const [likedCount, setLikedCount] = useState(0);
+    const [artistCards, setArtistCards] = useState([]);
 
     // Мокові дані
-    const DATA = [
-        {
-            id: 'liked',
-            type: 'liked',
-            title: 'Liked songs',
-            subtitle: '130 songs',
-            image: null
-        },
-        {
-            id: '1',
-            type: 'podcast',
-            title: 'Стендап для своїх',
-            subtitle: 'Podcast / Andrew Ozarkiv',
-            image: 'https://image-cdn-ak.spotifycdn.com/image/ab67706c0000da84ca966977380ba83ad20f968e'
-        },
-        {
-            id: '2',
-            type: 'playlist',
-            title: 'Mix of the day',
-            subtitle: 'Playlist / For this user',
-            image: 'https://image-cdn-ak.spotifycdn.com/image/ab67706c0000da84ca966977380ba83ad20f968e'
-        },
-        {
-            id: '3',
-            type: 'playlist',
-            title: 'Chill Vibes',
-            subtitle: 'Playlist / For this user',
-            image: 'https://image-cdn-ak.spotifycdn.com/image/ab67706c0000da84ca966977380ba83ad20f968e'
-        },
-        {
-            id: '4',
-            type: 'artist',
-            title: 'MONATIK',
-            subtitle: 'Artist',
-            image: 'https://img.ticketsbox.com/cache/375x500/data/artist/monatik1.jpg'
-        },
-        {
-            id: '5',
-            type: 'artist',
-            title: 'Eminem',
-            subtitle: 'Artist',
-            image: 'https://www.chipublib.org/wp-content/uploads/sites/3/2022/09/36079964425_7b3042d5e1_k.jpg'
-        }
-    ];
+    const DATA = useMemo(() => {
+        const base = [
+            {
+                id: 'liked',
+                type: 'liked',
+                title: 'Liked songs',
+                subtitle: `${likedCount} songs`,
+                image: null
+            },
+            {
+                id: '1',
+                type: 'podcast',
+                title: 'Стендап для своїх',
+                subtitle: 'Podcast / Andrew Ozarkiv',
+                image: 'https://image-cdn-ak.spotifycdn.com/image/ab67706c0000da84ca966977380ba83ad20f968e'
+            },
+            {
+                id: '2',
+                type: 'playlist',
+                title: 'Mix of the day',
+                subtitle: 'Playlist / For this user',
+                image: 'https://image-cdn-ak.spotifycdn.com/image/ab67706c0000da84ca966977380ba83ad20f968e'
+            },
+            {
+                id: '3',
+                type: 'playlist',
+                title: 'Chill Vibes',
+                subtitle: 'Playlist / For this user',
+                image: 'https://image-cdn-ak.spotifycdn.com/image/ab67706c0000da84ca966977380ba83ad20f968e'
+            },
+        ];
+
+        return [...base, ...artistCards];
+    }, [likedCount, artistCards]);
 
     useEffect(() => {
-        loadIcons();
-    }, []);
+        if (isFocused) {
+            loadData();
+        }
+    }, [isFocused]);
 
-    const loadIcons = async () => {
-        const loadedIcons = await getIcons();
+    const loadData = async () => {
+        const [loadedIcons, likedRaw, subscriptionsRaw, allArtistsRaw] = await Promise.all([
+            getIcons(),
+            getLikedTracks(),
+            getSubscriptions(),
+            getAllArtists(),
+        ]);
+
+        const normalizeArtist = (item, index) => {
+            const id = String(
+                item?.artistId ||
+                item?.id ||
+                item?._id ||
+                item?.userId ||
+                item?.ownerId ||
+                ''
+            ).trim();
+
+            const name = String(
+                item?.artistName ||
+                item?.name ||
+                item?.username ||
+                item?.displayName ||
+                item?.artist?.name ||
+                ''
+            ).trim();
+
+            if (!id || !name) return null;
+
+            return {
+                id: `artist-${id}`,
+                type: 'artist',
+                title: name,
+                subtitle: 'Artist',
+                image:
+                    item?.avatarUrl ||
+                    item?.artistAvatarUrl ||
+                    getUserAvatarUrl(id),
+                initial: name.charAt(0).toUpperCase(),
+                artistId: id,
+                order: index,
+            };
+        };
+
+        const subscriptions = Array.isArray(subscriptionsRaw) ? subscriptionsRaw : [];
+        const allArtists = Array.isArray(allArtistsRaw) ? allArtistsRaw : [];
+        const source = subscriptions.length > 0 ? subscriptions : allArtists;
+
+        const normalizedArtists = source
+            .map((item, index) => normalizeArtist(item, index))
+            .filter(Boolean);
+
+        const uniq = [];
+        const used = new Set();
+        normalizedArtists.forEach((artist) => {
+            if (used.has(artist.id)) return;
+            used.add(artist.id);
+            uniq.push(artist);
+        });
+
         setIcons(loadedIcons || {});
+        setLikedCount(Array.isArray(likedRaw) ? likedRaw.length : 0);
+        setArtistCards(uniq.slice(0, 2));
     };
 
-    const renderIcon = (iconName, style, tintColor = '#000000') => {
+    const renderIcon = (iconName, style, tintColor = null) => {
         const iconUrl = icons[iconName];
 
         if (iconUrl) {
@@ -128,31 +228,40 @@ export default function LibraryAll({ navigation }) {
                 activeOpacity={0.7}
                 onPress={() => {
                     if (isArtist) {
+                        navigation?.navigate('ArtistProfile', {
+                            artist: {
+                                id: item.artistId || String(item.id || '').replace('artist-', ''),
+                                name: item.title,
+                            },
+                        });
                     } else if (isLiked) {
+                        navigation?.navigate('LikedSongs');
                     }
                 }}
             >
                 <View style={styles.imageWrapper}>
                     {isLiked ? (
                         <View style={styles.vinylContainer}>
-                            <Image
-                                source={{ uri: icons['vinyl.svg'] }}
-                                style={styles.vinylImage}
-                                resizeMode="cover"
-                            />
+                            {renderIcon('vinyl.svg', styles.vinylImage)}
                             <View style={styles.vinylCenter}>
-                                {renderIcon('hurt.svg', { width: scale(32), height: scale(32), tintColor: '#F5D8CB' })}
+                                {renderIcon('added.svg', { width: scale(65), height: scale(65) }, '#F5D8CB')}
                             </View>
                         </View>
                     ) : (
-                        <Image
-                            source={{ uri: item.image }}
-                            style={[
-                                styles.image,
-                                isArtist && styles.roundImage
-                            ]}
-                            resizeMode="cover"
-                        />
+                        item.image ? (
+                            <Image
+                                source={{ uri: item.image }}
+                                style={[
+                                    styles.image,
+                                    isArtist && styles.roundImage
+                                ]}
+                                resizeMode="cover"
+                            />
+                        ) : (
+                            <View style={[styles.image, styles.roundImage, styles.artistFallback]}>
+                                <Text style={styles.artistFallbackText}>{item.initial || '?'}</Text>
+                            </View>
+                        )
                     )}
                 </View>
 
@@ -182,7 +291,7 @@ export default function LibraryAll({ navigation }) {
                    Хедер (який накладається абсолютом) буде візуально тут.
                    А ScrollView почнеться нижче цього блоку.
                 */}
-                <View style={{ height: 220 }} />
+                <View style={{ height: 208 }} />
 
                 <ScrollView
                     // ЗМІНА 2: ScrollView тепер має flex: 1, щоб зайняти ТІЛЬКИ простір, що залишився
@@ -210,9 +319,7 @@ const styles = StyleSheet.create({
     },
     scrollContent: {
         paddingHorizontal: scale(16),
-        // ЗМІНА 3: Замість величезного scale(200), даємо маленький відступ,
-        // щоб елементи не прилипали впритул до лінії відсікання
-        paddingTop: scale(20),
+        paddingTop: scale(8),
         paddingBottom: scale(100),
     },
 
@@ -248,6 +355,16 @@ const styles = StyleSheet.create({
     roundImage: {
         borderRadius: scale(45),
     },
+    artistFallback: {
+        backgroundColor: 'rgba(30, 10, 8, 0.85)',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    artistFallbackText: {
+        color: '#F5D8CB',
+        fontSize: scale(26),
+        fontFamily: 'Unbounded-SemiBold',
+    },
 
     // --- VINYL STYLE (Liked Songs) ---
     vinylContainer: {
@@ -263,6 +380,7 @@ const styles = StyleSheet.create({
         borderRadius: scale(45),
     },
     vinylCenter: {
+        paddingTop: scale(7),
         position: 'absolute',
         width: scale(40),
         height: scale(40),

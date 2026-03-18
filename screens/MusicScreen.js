@@ -1,9 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
     View,
     Text,
     TextInput,
-    Button,
     StyleSheet,
     Alert,
     ActivityIndicator,
@@ -11,280 +10,538 @@ import {
     Modal,
     FlatList,
     SafeAreaView,
-    ScrollView // Додав ScrollView, бо форма стала довгою
+    ScrollView,
 } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { uploadTrack, getAlbums, getGenres } from '../api/api';
-import { SvgUri, SvgXml } from 'react-native-svg';
+import {
+    createPodcast,
+    getAlbums,
+    getGenres,
+    getPodcastGenres,
+    submitPodcast,
+    uploadTrack,
+} from '../api/api';
 
-
-
-const svgCache = {};
-// 👇 Цей компонент завантажує SVG, чистить, фарбує і КЕШУЄ результат
-const ColoredSvg = ({ uri, width, height, color }) => {
-    const cacheKey = `${uri}_${color || 'original'}`;
-    const [xml, setXml] = useState(svgCache[cacheKey] || null);
-
-    useEffect(() => {
-        let isMounted = true;
-
-        // 1. Якщо у нас вже є правильна картинка в кеші — беремо її і виходимо
-        if (svgCache[cacheKey]) {
-            setXml(svgCache[cacheKey]);
-            return;
-        }
-
-        // 2. Якщо в кеші немає — вантажимо
-        if (uri) {
-            fetch(uri)
-                .then(response => response.text())
-                .then(svgContent => {
-                    if (isMounted) {
-                        let cleanXml = svgContent.replace(/fill=['"]none['"]/gi, '###NONE###');
-
-                        if (color) {
-                            cleanXml = cleanXml.replace(/fill=['"][^'"]*['"]/g, `fill="${color}"`);
-                            cleanXml = cleanXml.replace(/stroke=['"][^'"]*['"]/g, `stroke="${color}"`);
-                        }
-
-                        cleanXml = cleanXml.replace(/###NONE###/g, 'fill="none"');
-
-                        // Зберігаємо в кеш
-                        svgCache[cacheKey] = cleanXml;
-                        setXml(cleanXml);
-                    }
-                })
-                .catch(err => console.log("SVG Error:", err));
-        }
-
-        return () => { isMounted = false; };
-    }, [cacheKey]); // 🔥 Головне: реагуємо на зміну ключа, а не ігноруємо її
-
-    if (!xml) return <View style={{ width, height }} />;
-
-    return (
-        <SvgXml
-            xml={xml}
-            width={width}
-            height={height}
-        />
-    );
+const getEntityId = (item) => String(item?.id || item?._id || item?.podcastId || '').trim();
+const isPendingStatus = (status) => {
+    if (status === null || status === undefined) return false;
+    const raw = String(status).trim().toLowerCase();
+    return raw === 'pending' || raw === '1';
 };
+
 export default function MusicScreen({ navigation }) {
-    const [title, setTitle] = useState('');
-    // 👇 1. Додав стейт для тексту пісні
-    const [lyrics, setLyrics] = useState('');
+    const [mode, setMode] = useState('track');
+    const [artistId, setArtistId] = useState(null);
 
-    const [file, setFile] = useState(null);
-    const [cover, setCover] = useState(null);
-
-    // --- ALBUMS STATE ---
+    // Track upload state
+    const [trackTitle, setTrackTitle] = useState('');
+    const [trackLyrics, setTrackLyrics] = useState('');
+    const [trackFile, setTrackFile] = useState(null);
+    const [trackCover, setTrackCover] = useState(null);
     const [albums, setAlbums] = useState([]);
     const [selectedAlbum, setSelectedAlbum] = useState(null);
+    const [trackGenres, setTrackGenres] = useState([]);
+    const [selectedTrackGenreIds, setSelectedTrackGenreIds] = useState([]);
     const [isAlbumModalVisible, setAlbumModalVisible] = useState(false);
+    const [isTrackGenreModalVisible, setTrackGenreModalVisible] = useState(false);
+    const [trackLoading, setTrackLoading] = useState(false);
 
-    // --- GENRES STATE ---
-    const [genres, setGenres] = useState([]);
-    const [selectedGenreIds, setSelectedGenreIds] = useState([]);
-    const [isGenreModalVisible, setGenreModalVisible] = useState(false);
-
-    const [artistId, setArtistId] = useState(null);
-    const [loading, setLoading] = useState(false);
+    // Podcast upload state (single create flow with N episodes)
+    const [podcastTitle, setPodcastTitle] = useState('');
+    const [podcastDescription, setPodcastDescription] = useState('');
+    const [podcastGenres, setPodcastGenres] = useState([]);
+    const [selectedPodcastGenreIds, setSelectedPodcastGenreIds] = useState([]);
+    const [isPodcastGenreModalVisible, setPodcastGenreModalVisible] = useState(false);
+    const [podcastCover, setPodcastCover] = useState(null);
+    const [podcastAudio, setPodcastAudio] = useState(null); // main audio = episode 1
+    const [episodeDraftTitle, setEpisodeDraftTitle] = useState('');
+    const [episodeDraftDescription, setEpisodeDraftDescription] = useState('');
+    const [podcastEpisodes, setPodcastEpisodes] = useState([]); // additional episodes (episode 2+)
+    const [podcastLoading, setPodcastLoading] = useState(false);
 
     useEffect(() => {
-        fetchData();
-        fetchUserId();
+        void fetchData();
+        void fetchUserId();
     }, []);
 
     const fetchUserId = async () => {
         try {
             const id = await AsyncStorage.getItem('userId');
+
             if (id) {
                 setArtistId(id);
             } else {
-                Alert.alert('Увага', 'Не вдалося знайти ваш ID. Спробуйте перелогінитись.');
+                Alert.alert('Warning', 'User ID not found. Re-login and try again.');
             }
-        } catch (error) {
-            console.error('Failed to load user ID', error);
+        } catch (_) {
+            Alert.alert('Error', 'Failed to read user profile.');
         }
     };
 
     const fetchData = async () => {
-        const [albumsData, genresData] = await Promise.all([
+        const [albumsData, genresData, podcastGenresData] = await Promise.all([
             getAlbums(),
-            getGenres()
+            getGenres(),
+            getPodcastGenres(),
         ]);
+
         setAlbums(Array.isArray(albumsData) ? albumsData : []);
-        setGenres(Array.isArray(genresData) ? genresData : []);
+        setTrackGenres(Array.isArray(genresData) ? genresData : []);
+        setPodcastGenres(Array.isArray(podcastGenresData) ? podcastGenresData : []);
     };
 
-    const pickAudio = async () => {
+    const toggleTrackGenre = (id) => {
+        const value = String(id || '').trim();
+        if (!value) return;
+        setSelectedTrackGenreIds((prev) =>
+            prev.includes(value) ? prev.filter((item) => item !== value) : [...prev, value]
+        );
+    };
+
+    const togglePodcastGenre = (id) => {
+        const value = String(id || '').trim();
+        if (!value) return;
+        setSelectedPodcastGenreIds((prev) =>
+            prev.includes(value) ? prev.filter((item) => item !== value) : [...prev, value]
+        );
+    };
+
+    const pickTrackAudio = async () => {
         try {
             const result = await DocumentPicker.getDocumentAsync({
                 type: 'audio/*',
-                copyToCacheDirectory: true
+                copyToCacheDirectory: true,
             });
-            if (!result.canceled && result.assets) {
-                setFile(result.assets[0]);
+            if (!result.canceled && result.assets?.length) {
+                setTrackFile(result.assets[0]);
             }
-        } catch (e) {
-            console.log(e);
+        } catch (_) {
+            Alert.alert('Error', 'Failed to pick audio file.');
         }
     };
 
-    const pickCover = async () => {
-        const result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.Images,
-            allowsEditing: true,
-            aspect: [1, 1],
-            quality: 0.7
-        });
-        if (!result.canceled) {
-            setCover(result.assets[0]);
+    const pickTrackCover = async () => {
+        try {
+            const result = await ImagePicker.launchImageLibraryAsync({
+                mediaTypes: ImagePicker.MediaTypeOptions.Images,
+                allowsEditing: true,
+                aspect: [1, 1],
+                quality: 0.8,
+            });
+
+            if (!result.canceled && result.assets?.length) {
+                setTrackCover(result.assets[0]);
+            }
+        } catch (_) {
+            Alert.alert('Error', 'Failed to pick track cover.');
         }
     };
 
-    const toggleGenre = (id) => {
-        if (selectedGenreIds.includes(id)) {
-            setSelectedGenreIds(selectedGenreIds.filter(gId => gId !== id));
-        } else {
-            setSelectedGenreIds([...selectedGenreIds, id]);
+    const pickPodcastCover = async () => {
+        try {
+            const result = await ImagePicker.launchImageLibraryAsync({
+                mediaTypes: ImagePicker.MediaTypeOptions.Images,
+                allowsEditing: true,
+                aspect: [1, 1],
+                quality: 0.8,
+            });
+
+            if (!result.canceled && result.assets?.length) {
+                setPodcastCover(result.assets[0]);
+            }
+        } catch (_) {
+            Alert.alert('Error', 'Failed to pick podcast cover.');
         }
     };
 
-    const handleUpload = async () => {
+    const pickPodcastAudio = async () => {
+        try {
+            const result = await DocumentPicker.getDocumentAsync({
+                type: 'audio/*',
+                copyToCacheDirectory: true,
+            });
+            if (!result.canceled && result.assets?.length) {
+                setPodcastAudio(result.assets[0]);
+            }
+        } catch (_) {
+            Alert.alert('Error', 'Failed to pick podcast audio.');
+        }
+    };
+
+    const addEpisodeFromPicker = async () => {
+        try {
+            const result = await DocumentPicker.getDocumentAsync({
+                type: 'audio/*',
+                copyToCacheDirectory: true,
+            });
+            if (result.canceled || !result.assets?.length) return;
+
+            const audio = result.assets[0];
+            const nextEpisodeNumber = podcastEpisodes.length + 2; // Episode 1 = main audio
+            const title = String(episodeDraftTitle || '').trim() || `Episode ${nextEpisodeNumber}`;
+            const description = String(episodeDraftDescription || '').trim();
+            const itemId = `ep-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+            setPodcastEpisodes((prev) => [...prev, { id: itemId, audio, title, description }]);
+            setEpisodeDraftTitle('');
+            setEpisodeDraftDescription('');
+        } catch (_) {
+            Alert.alert('Error', 'Failed to add episode audio.');
+        }
+    };
+
+    const removeEpisode = (id) => {
+        setPodcastEpisodes((prev) => prev.filter((item) => item.id !== id));
+    };
+
+    const handleUploadTrack = async () => {
         if (!artistId) {
-            Alert.alert('Помилка', 'Не знайдено ID виконавця.');
-            return;
-        }
-        if (!file || !title) {
-            Alert.alert('Помилка', 'Заповніть назву та виберіть файл');
-            return;
-        }
-        if (!cover) {
-            Alert.alert('Помилка', 'Виберіть обкладинку (вимога сервера)');
-            return;
-        }
-        if (selectedGenreIds.length === 0) {
-            Alert.alert('Помилка', 'Виберіть хоча б один жанр');
+            Alert.alert('Error', 'Artist profile is not available.');
             return;
         }
 
-        setLoading(true);
+        if (!trackTitle.trim() || !trackFile?.uri) {
+            Alert.alert('Error', 'Enter track title and select audio.');
+            return;
+        }
 
-        const albumId = selectedAlbum ? (selectedAlbum.id || selectedAlbum._id) : null;
+        if (!trackCover?.uri) {
+            Alert.alert('Error', 'Select track cover.');
+            return;
+        }
 
-        // 👇 2. Передаємо lyrics у функцію
+        if (!selectedTrackGenreIds.length) {
+            Alert.alert('Error', 'Select at least one genre.');
+            return;
+        }
+
+        setTrackLoading(true);
+        const albumId = selectedAlbum ? getEntityId(selectedAlbum) : null;
+
         const result = await uploadTrack(
-            file,
-            title,
+            trackFile,
+            trackTitle.trim(),
             artistId,
-            albumId,
-            cover,
-            selectedGenreIds,
-            lyrics
+            albumId || null,
+            trackCover,
+            selectedTrackGenreIds,
+            trackLyrics.trim()
         );
 
-        setLoading(false);
+        setTrackLoading(false);
 
-        if (result.error) {
-            Alert.alert('Помилка', typeof result.error === 'string' ? result.error : 'Не вдалося завантажити трек');
-        } else {
-            Alert.alert('Успіх', 'Трек успішно завантажено');
-            setTitle('');
-            setLyrics(''); // Очищаємо поле тексту
-            setFile(null);
-            setCover(null);
-            setSelectedAlbum(null);
-            setSelectedGenreIds([]);
-            navigation.replace('MainTabs');
+        if (result?.error) {
+            Alert.alert('Upload failed', typeof result.error === 'string' ? result.error : 'Failed to upload track');
+            return;
         }
+
+        Alert.alert('Success', 'Track uploaded successfully');
+        setTrackTitle('');
+        setTrackLyrics('');
+        setTrackFile(null);
+        setTrackCover(null);
+        setSelectedAlbum(null);
+        setSelectedTrackGenreIds([]);
+    };
+
+    const handleCreatePodcast = async () => {
+        if (!podcastTitle.trim()) {
+            Alert.alert('Error', 'Enter podcast title.');
+            return;
+        }
+        if (!podcastCover?.uri) {
+            Alert.alert('Error', 'Select podcast cover.');
+            return;
+        }
+        if (!podcastAudio?.uri) {
+            Alert.alert('Error', 'Select podcast audio.');
+            return;
+        }
+        if (!selectedPodcastGenreIds.length) {
+            Alert.alert('Error', 'Select at least one podcast genre.');
+            return;
+        }
+
+        setPodcastLoading(true);
+
+        const result = await createPodcast({
+            title: podcastTitle.trim(),
+            cover: podcastCover,
+            audio: podcastAudio,
+            genreIds: selectedPodcastGenreIds,
+            episodes: podcastEpisodes,
+            submit: true,
+        });
+
+        setPodcastLoading(false);
+
+        if (result?.error) {
+            Alert.alert('Create failed', typeof result.error === 'string' ? result.error : 'Failed to create podcast');
+            return;
+        }
+
+        const createdPodcast = result?.data || {};
+        const createdId = getEntityId(createdPodcast);
+        const createdStatus = createdPodcast?.status;
+
+        if (createdId && !isPendingStatus(createdStatus)) {
+            const submitResult = await submitPodcast(createdId);
+            if (submitResult?.error) {
+                const msg = String(submitResult.error || '');
+                const likelyAlreadyPending =
+                    msg.toLowerCase().includes('pending') ||
+                    msg.toLowerCase().includes('already') ||
+                    msg.toLowerCase().includes('not draft');
+
+                if (!likelyAlreadyPending) {
+                    Alert.alert('Submit failed', typeof submitResult.error === 'string'
+                        ? submitResult.error
+                        : 'Podcast created, but submit failed');
+                    return;
+                }
+            }
+        }
+
+        Alert.alert(
+            'Success',
+            `Podcast created and submitted (${podcastEpisodes.length + 1} episode${podcastEpisodes.length ? 's' : ''})`
+        );
+
+        setPodcastTitle('');
+        setPodcastDescription('');
+        setPodcastCover(null);
+        setPodcastAudio(null);
+        setSelectedPodcastGenreIds([]);
+        setEpisodeDraftTitle('');
+        setEpisodeDraftDescription('');
+        setPodcastEpisodes([]);
     };
 
     return (
         <SafeAreaView style={styles.container}>
             <ScrollView contentContainerStyle={styles.scrollContent}>
-                <Text style={styles.header}>Upload track</Text>
+                <Text style={styles.header}>Upload content</Text>
 
-                <TextInput
-                    placeholder="Track title"
-                    value={title}
-                    onChangeText={setTitle}
-                    style={styles.input}
-                    placeholderTextColor="#999"
-                />
-
-                {/* 👇 3. Поле для тексту пісні */}
-                <TextInput
-                    placeholder="Lyrics (optional)"
-                    value={lyrics}
-                    onChangeText={setLyrics}
-                    style={[styles.input, styles.textArea]}
-                    placeholderTextColor="#999"
-                    multiline={true}
-                    numberOfLines={4}
-                />
-
-                {/* ALBUM SELECTOR */}
-                <TouchableOpacity
-                    style={styles.selector}
-                    onPress={() => setAlbumModalVisible(true)}
-                >
-                    <Text style={styles.selectorText}>
-                        {selectedAlbum
-                            ? `💿 Album: ${selectedAlbum.title}`
-                            : 'Select album (optional)'}
-                    </Text>
-                </TouchableOpacity>
-
-                {/* GENRE SELECTOR */}
-                <TouchableOpacity
-                    style={styles.selector}
-                    onPress={() => setGenreModalVisible(true)}
-                >
-                    <Text style={styles.selectorText}>
-                        {selectedGenreIds.length > 0
-                            ? `🎵 Genres: ${selectedGenreIds.length} selected`
-                            : 'Select genres (required)'}
-                    </Text>
-                </TouchableOpacity>
-
-                <View style={styles.row}>
-                    <Button
-                        title={file ? `File: ${file.name}` : 'Select audio'}
-                        onPress={pickAudio}
-                    />
-                    <View style={{ width: 10 }} />
-                    <Button
-                        title={cover ? 'Cover selected' : 'Select cover'}
-                        onPress={pickCover}
-                    />
+                <View style={styles.segmentWrap}>
+                    <TouchableOpacity
+                        style={[styles.segmentBtn, mode === 'track' && styles.segmentBtnActive]}
+                        onPress={() => setMode('track')}
+                        activeOpacity={0.85}
+                    >
+                        <Text style={[styles.segmentText, mode === 'track' && styles.segmentTextActive]}>Track</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                        style={[styles.segmentBtn, mode === 'podcast' && styles.segmentBtnActive]}
+                        onPress={() => setMode('podcast')}
+                        activeOpacity={0.85}
+                    >
+                        <Text style={[styles.segmentText, mode === 'podcast' && styles.segmentTextActive]}>Podcast</Text>
+                    </TouchableOpacity>
                 </View>
 
-                {loading ? (
-                    <ActivityIndicator size="large" color="#000" />
+                {mode === 'track' ? (
+                    <>
+                        <Text style={styles.sectionTitle}>Upload track</Text>
+                        <TextInput
+                            placeholder="Track title"
+                            value={trackTitle}
+                            onChangeText={setTrackTitle}
+                            style={styles.input}
+                            placeholderTextColor="#999"
+                        />
+
+                        <TextInput
+                            placeholder="Lyrics (optional)"
+                            value={trackLyrics}
+                            onChangeText={setTrackLyrics}
+                            style={[styles.input, styles.textArea]}
+                            placeholderTextColor="#999"
+                            multiline
+                            numberOfLines={4}
+                        />
+
+                        <TouchableOpacity style={styles.selector} onPress={() => setAlbumModalVisible(true)} activeOpacity={0.85}>
+                            <Text style={styles.selectorText}>
+                                {selectedAlbum ? `Album: ${selectedAlbum.title || 'Selected'}` : 'Select album (optional)'}
+                            </Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                            style={styles.selector}
+                            onPress={() => setTrackGenreModalVisible(true)}
+                            activeOpacity={0.85}
+                        >
+                            <Text style={styles.selectorText}>
+                                {selectedTrackGenreIds.length > 0
+                                    ? `Genres selected: ${selectedTrackGenreIds.length}`
+                                    : 'Select genres (required)'}
+                            </Text>
+                        </TouchableOpacity>
+
+                        <View style={styles.row}>
+                            <TouchableOpacity style={styles.secondaryButton} onPress={pickTrackAudio} activeOpacity={0.85}>
+                                <Text style={styles.secondaryButtonText}>
+                                    {trackFile ? `Audio: ${trackFile.name || 'Selected'}` : 'Select audio'}
+                                </Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={styles.secondaryButton} onPress={pickTrackCover} activeOpacity={0.85}>
+                                <Text style={styles.secondaryButtonText}>
+                                    {trackCover ? 'Cover selected' : 'Select cover'}
+                                </Text>
+                            </TouchableOpacity>
+                        </View>
+
+                        <TouchableOpacity
+                            style={[styles.primaryButton, trackLoading && styles.primaryButtonDisabled]}
+                            disabled={trackLoading}
+                            onPress={handleUploadTrack}
+                            activeOpacity={0.85}
+                        >
+                            {trackLoading ? (
+                                <ActivityIndicator color="#fff" />
+                            ) : (
+                                <Text style={styles.primaryButtonText}>Upload track</Text>
+                            )}
+                        </TouchableOpacity>
+                    </>
                 ) : (
-                    <Button title="Upload Track" onPress={handleUpload} />
+                    <>
+                        <Text style={styles.sectionTitle}>Publish podcast</Text>
+                        <TextInput
+                            placeholder="Podcast title"
+                            value={podcastTitle}
+                            onChangeText={setPodcastTitle}
+                            style={styles.input}
+                            placeholderTextColor="#999"
+                        />
+
+                        <TextInput
+                            placeholder="Podcast description"
+                            value={podcastDescription}
+                            onChangeText={setPodcastDescription}
+                            style={[styles.input, styles.textArea]}
+                            placeholderTextColor="#999"
+                            multiline
+                            numberOfLines={4}
+                        />
+
+                        <TouchableOpacity
+                            style={styles.selector}
+                            onPress={() => setPodcastGenreModalVisible(true)}
+                            activeOpacity={0.85}
+                        >
+                            <Text style={styles.selectorText}>
+                                {selectedPodcastGenreIds.length > 0
+                                    ? `Genres selected: ${selectedPodcastGenreIds.length}`
+                                    : 'Select podcast genres'}
+                            </Text>
+                        </TouchableOpacity>
+
+                        <View style={styles.row}>
+                            <TouchableOpacity style={styles.secondaryButton} onPress={pickPodcastCover} activeOpacity={0.85}>
+                                <Text style={styles.secondaryButtonText}>
+                                    {podcastCover ? 'Cover selected' : 'Select cover'}
+                                </Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity style={styles.secondaryButton} onPress={pickPodcastAudio} activeOpacity={0.85}>
+                                <Text style={styles.secondaryButtonText}>
+                                    {podcastAudio ? `Audio: ${podcastAudio.name || 'Selected'}` : 'Select main audio'}
+                                </Text>
+                            </TouchableOpacity>
+                        </View>
+
+                        <Text style={styles.episodesHint}>Main audio will be saved as Episode 1.</Text>
+
+                        <View style={styles.divider} />
+
+                        <Text style={styles.sectionSubTitle}>Additional episodes</Text>
+                        <TextInput
+                            placeholder={`Episode title (default: Episode ${podcastEpisodes.length + 2})`}
+                            value={episodeDraftTitle}
+                            onChangeText={setEpisodeDraftTitle}
+                            style={styles.input}
+                            placeholderTextColor="#999"
+                        />
+                        <TextInput
+                            placeholder="Episode description (optional)"
+                            value={episodeDraftDescription}
+                            onChangeText={setEpisodeDraftDescription}
+                            style={[styles.input, styles.textAreaSmall]}
+                            placeholderTextColor="#999"
+                            multiline
+                            numberOfLines={3}
+                        />
+
+                        <TouchableOpacity
+                            style={[styles.primaryButtonWide, podcastLoading && styles.primaryButtonDisabled]}
+                            onPress={addEpisodeFromPicker}
+                            disabled={podcastLoading}
+                            activeOpacity={0.85}
+                        >
+                            <Text style={styles.primaryButtonText}>Add episode audio</Text>
+                        </TouchableOpacity>
+
+                        {!!podcastEpisodes.length && (
+                            <View style={styles.episodesList}>
+                                {podcastEpisodes.map((episode, index) => (
+                                    <View key={episode.id} style={styles.episodeCard}>
+                                        <View style={styles.episodeMeta}>
+                                            <Text style={styles.episodeTitle}>
+                                                {episode.title || `Episode ${index + 2}`}
+                                            </Text>
+                                            <Text style={styles.episodeFile} numberOfLines={1}>
+                                                {episode.audio?.name || episode.audio?.fileName || 'Audio selected'}
+                                            </Text>
+                                        </View>
+                                        <TouchableOpacity
+                                            style={styles.removeEpisodeBtn}
+                                            onPress={() => removeEpisode(episode.id)}
+                                            activeOpacity={0.8}
+                                        >
+                                            <Text style={styles.removeEpisodeText}>Remove</Text>
+                                        </TouchableOpacity>
+                                    </View>
+                                ))}
+                            </View>
+                        )}
+
+                        <TouchableOpacity
+                            style={[styles.primaryButton, podcastLoading && styles.primaryButtonDisabled]}
+                            disabled={podcastLoading}
+                            onPress={handleCreatePodcast}
+                            activeOpacity={0.85}
+                        >
+                            {podcastLoading ? (
+                                <ActivityIndicator color="#fff" />
+                            ) : (
+                                <Text style={styles.primaryButtonText}>
+                                    Create and submit podcast ({podcastEpisodes.length + 1} ep)
+                                </Text>
+                            )}
+                        </TouchableOpacity>
+                    </>
                 )}
 
                 <View style={styles.footer}>
-                    <Button title="Create album" onPress={() => navigation.navigate('CreateAlbum')} />
-                    <View style={{ marginTop: 10 }}>
-                        <Button title="Back to Tracks" onPress={() => navigation.navigate('Tracks')} />
-                    </View>
+                    <TouchableOpacity style={styles.footerButton} onPress={() => navigation.navigate('CreateAlbum')} activeOpacity={0.85}>
+                        <Text style={styles.footerButtonText}>Create album</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.footerButton} onPress={() => navigation.navigate('MainTabs')} activeOpacity={0.85}>
+                        <Text style={styles.footerButtonText}>Back to main</Text>
+                    </TouchableOpacity>
                 </View>
             </ScrollView>
 
-            {/* --- MODAL ALBUMS --- */}
             <Modal visible={isAlbumModalVisible} transparent animationType="slide">
                 <View style={styles.modalOverlay}>
                     <View style={styles.modalContent}>
                         <Text style={styles.modalTitle}>Select Album</Text>
                         <FlatList
                             data={albums}
-                            keyExtractor={(item) => (item.id || item._id).toString()}
+                            keyExtractor={(item, index) => getEntityId(item) || String(index)}
                             renderItem={({ item }) => (
                                 <TouchableOpacity
                                     style={styles.listItem}
@@ -293,50 +550,80 @@ export default function MusicScreen({ navigation }) {
                                         setAlbumModalVisible(false);
                                     }}
                                 >
-                                    <Text>{item.title}</Text>
+                                    <Text>{item?.title || 'Album'}</Text>
                                 </TouchableOpacity>
                             )}
                         />
-                        <Button title="Close" onPress={() => setAlbumModalVisible(false)} />
+                        <TouchableOpacity style={styles.modalCloseBtn} onPress={() => setAlbumModalVisible(false)} activeOpacity={0.85}>
+                            <Text style={styles.modalCloseText}>Close</Text>
+                        </TouchableOpacity>
                     </View>
                 </View>
             </Modal>
 
-            {/* --- MODAL GENRES --- */}
-            <Modal visible={isGenreModalVisible} transparent animationType="slide">
+            <Modal visible={isTrackGenreModalVisible} transparent animationType="slide">
                 <View style={styles.modalOverlay}>
                     <View style={styles.modalContent}>
-                        <Text style={styles.modalTitle}>Select Genres</Text>
-                        <Text style={{textAlign:'center', marginBottom:10, color:'#666'}}>
-                            Selected: {selectedGenreIds.length}
-                        </Text>
-
+                        <Text style={styles.modalTitle}>Select track genres</Text>
                         <FlatList
-                            data={genres}
-                            keyExtractor={(item) => (item.id || item._id).toString()}
+                            data={trackGenres}
+                            keyExtractor={(item, index) => getEntityId(item) || String(index)}
                             renderItem={({ item }) => {
-                                const isSelected = selectedGenreIds.includes(item.id || item._id);
+                                const id = getEntityId(item);
+                                const selected = selectedTrackGenreIds.includes(id);
                                 return (
                                     <TouchableOpacity
-                                        style={[
-                                            styles.listItem,
-                                            isSelected && styles.listItemActive
-                                        ]}
-                                        onPress={() => toggleGenre(item.id || item._id)}
+                                        style={[styles.listItem, selected && styles.listItemActive]}
+                                        onPress={() => toggleTrackGenre(id)}
                                     >
-                                        <Text style={isSelected ? {color:'#fff', fontWeight:'bold'} : {color:'#000'}}>
-                                            {item.name}
-                                        </Text>
-                                        {isSelected && <Text style={{color:'#fff'}}>✓</Text>}
+                                        <Text style={selected ? styles.listItemTextActive : undefined}>{item?.name || 'Genre'}</Text>
+                                        {selected ? <Text style={styles.listItemTextActive}>✓</Text> : null}
                                     </TouchableOpacity>
                                 );
                             }}
                         />
-                        <Button title="Done" onPress={() => setGenreModalVisible(false)} />
+                        <TouchableOpacity
+                            style={styles.modalCloseBtn}
+                            onPress={() => setTrackGenreModalVisible(false)}
+                            activeOpacity={0.85}
+                        >
+                            <Text style={styles.modalCloseText}>Done</Text>
+                        </TouchableOpacity>
                     </View>
                 </View>
             </Modal>
 
+            <Modal visible={isPodcastGenreModalVisible} transparent animationType="slide">
+                <View style={styles.modalOverlay}>
+                    <View style={styles.modalContent}>
+                        <Text style={styles.modalTitle}>Select podcast genres</Text>
+                        <FlatList
+                            data={podcastGenres}
+                            keyExtractor={(item, index) => getEntityId(item) || String(index)}
+                            renderItem={({ item }) => {
+                                const id = getEntityId(item);
+                                const selected = selectedPodcastGenreIds.includes(id);
+                                return (
+                                    <TouchableOpacity
+                                        style={[styles.listItem, selected && styles.listItemActive]}
+                                        onPress={() => togglePodcastGenre(id)}
+                                    >
+                                        <Text style={selected ? styles.listItemTextActive : undefined}>{item?.name || 'Genre'}</Text>
+                                        {selected ? <Text style={styles.listItemTextActive}>✓</Text> : null}
+                                    </TouchableOpacity>
+                                );
+                            }}
+                        />
+                        <TouchableOpacity
+                            style={styles.modalCloseBtn}
+                            onPress={() => setPodcastGenreModalVisible(false)}
+                            activeOpacity={0.85}
+                        >
+                            <Text style={styles.modalCloseText}>Done</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            </Modal>
         </SafeAreaView>
     );
 }
@@ -348,13 +635,51 @@ const styles = StyleSheet.create({
     },
     scrollContent: {
         padding: 20,
-        paddingBottom: 50
+        paddingBottom: 50,
     },
     header: {
         fontSize: 24,
-        fontWeight: 'bold',
-        marginBottom: 20,
-        textAlign: 'center'
+        fontWeight: '700',
+        marginBottom: 14,
+        textAlign: 'center',
+        color: '#111',
+    },
+    segmentWrap: {
+        flexDirection: 'row',
+        backgroundColor: '#f3f3f3',
+        borderRadius: 12,
+        padding: 4,
+        marginBottom: 16,
+    },
+    segmentBtn: {
+        flex: 1,
+        height: 38,
+        borderRadius: 10,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    segmentBtnActive: {
+        backgroundColor: '#111',
+    },
+    segmentText: {
+        fontSize: 14,
+        color: '#666',
+        fontWeight: '600',
+    },
+    segmentTextActive: {
+        color: '#fff',
+    },
+    sectionTitle: {
+        fontSize: 20,
+        fontWeight: '700',
+        marginBottom: 12,
+        color: '#111',
+    },
+    sectionSubTitle: {
+        fontSize: 16,
+        fontWeight: '700',
+        marginBottom: 8,
+        color: '#111',
     },
     input: {
         borderWidth: 1,
@@ -363,55 +688,169 @@ const styles = StyleSheet.create({
         marginBottom: 12,
         borderRadius: 8,
         fontSize: 16,
-        backgroundColor: '#fafafa'
+        backgroundColor: '#fafafa',
+        color: '#111',
     },
     textArea: {
-        height: 100, // Висота для поля тексту
-        textAlignVertical: 'top', // Щоб текст починався зверху (для Android)
+        height: 100,
+        textAlignVertical: 'top',
+    },
+    textAreaSmall: {
+        minHeight: 78,
+        textAlignVertical: 'top',
     },
     selector: {
         padding: 12,
         borderWidth: 1,
         borderColor: '#ddd',
-        marginBottom: 15,
+        marginBottom: 12,
         borderRadius: 8,
-        backgroundColor: '#f0f0f0'
+        backgroundColor: '#f5f5f5',
     },
     selectorText: {
-        fontSize: 16,
-        color: '#333'
+        fontSize: 15,
+        color: '#333',
+    },
+    episodesHint: {
+        marginTop: -4,
+        marginBottom: 10,
+        color: '#555',
+        fontSize: 12,
+        fontWeight: '600',
+    },
+    episodesList: {
+        marginTop: 10,
+        marginBottom: 10,
+    },
+    episodeCard: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: '#dfdfdf',
+        borderRadius: 10,
+        paddingVertical: 10,
+        paddingHorizontal: 10,
+        backgroundColor: '#f9f9f9',
+        marginBottom: 8,
+    },
+    episodeMeta: {
+        flex: 1,
+        paddingRight: 10,
+    },
+    episodeTitle: {
+        color: '#222',
+        fontSize: 14,
+        fontWeight: '700',
+    },
+    episodeFile: {
+        color: '#666',
+        fontSize: 12,
+        marginTop: 2,
+    },
+    removeEpisodeBtn: {
+        minHeight: 30,
+        minWidth: 66,
+        borderRadius: 8,
+        borderWidth: 1,
+        borderColor: '#d6d6d6',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#fff',
+        paddingHorizontal: 8,
+    },
+    removeEpisodeText: {
+        color: '#333',
+        fontSize: 12,
+        fontWeight: '600',
     },
     row: {
         flexDirection: 'row',
-        marginBottom: 20,
         justifyContent: 'space-between',
-        alignItems: 'center'
+        marginBottom: 12,
+    },
+    secondaryButton: {
+        width: '48.5%',
+        minHeight: 44,
+        borderRadius: 8,
+        backgroundColor: '#efefef',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 8,
+        borderWidth: 1,
+        borderColor: '#dedede',
+    },
+    secondaryButtonText: {
+        color: '#222',
+        fontWeight: '600',
+        textAlign: 'center',
+        fontSize: 13,
+    },
+    primaryButton: {
+        minHeight: 46,
+        borderRadius: 10,
+        backgroundColor: '#111',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginTop: 6,
+    },
+    primaryButtonWide: {
+        width: '100%',
+        minHeight: 44,
+        borderRadius: 10,
+        backgroundColor: '#111',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    primaryButtonText: {
+        color: '#fff',
+        fontWeight: '700',
+        fontSize: 14,
+    },
+    primaryButtonDisabled: {
+        opacity: 0.6,
+    },
+    divider: {
+        height: 1,
+        backgroundColor: '#e7e7e7',
+        marginVertical: 14,
     },
     footer: {
-        marginTop: 30,
-        paddingTop: 20,
-        borderTopWidth: 1,
-        borderTopColor: '#eee'
+        marginTop: 24,
+    },
+    footerButton: {
+        minHeight: 44,
+        borderRadius: 10,
+        backgroundColor: '#f2f2f2',
+        borderWidth: 1,
+        borderColor: '#e0e0e0',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 10,
+    },
+    footerButtonText: {
+        color: '#111',
+        fontWeight: '600',
     },
     modalOverlay: {
         flex: 1,
         backgroundColor: 'rgba(0,0,0,0.5)',
         justifyContent: 'center',
-        alignItems: 'center'
+        alignItems: 'center',
     },
     modalContent: {
-        width: '85%',
+        width: '86%',
         maxHeight: '70%',
         backgroundColor: '#fff',
         padding: 20,
         borderRadius: 12,
-        elevation: 5,
+        elevation: 6,
     },
     modalTitle: {
-        fontSize: 20,
-        fontWeight: 'bold',
-        marginBottom: 15,
-        textAlign: 'center'
+        fontSize: 18,
+        fontWeight: '700',
+        marginBottom: 12,
+        textAlign: 'center',
     },
     listItem: {
         paddingVertical: 12,
@@ -420,12 +859,28 @@ const styles = StyleSheet.create({
         borderBottomColor: '#eee',
         flexDirection: 'row',
         justifyContent: 'space-between',
-        alignItems: 'center'
+        alignItems: 'center',
     },
     listItemActive: {
-        backgroundColor: '#007AFF',
-        borderRadius: 6,
+        backgroundColor: '#111',
+        borderRadius: 8,
         borderBottomWidth: 0,
-        marginBottom: 2
-    }
+        marginBottom: 4,
+    },
+    listItemTextActive: {
+        color: '#fff',
+        fontWeight: '700',
+    },
+    modalCloseBtn: {
+        marginTop: 12,
+        minHeight: 42,
+        borderRadius: 8,
+        backgroundColor: '#111',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    modalCloseText: {
+        color: '#fff',
+        fontWeight: '700',
+    },
 });

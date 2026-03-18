@@ -30,6 +30,17 @@ const ColoredSvg = ({ uri, width, height, color }) => {
     return <SvgXml xml={xml} width={width} height={height} />;
 };
 
+const buildPodcastDisplayTitle = (track) => {
+    const podcastTitle = String(track?.podcastTitle || '').trim();
+    const episodeTitle = String(track?.episodeTitle || track?.title || '').trim();
+
+    if (podcastTitle && episodeTitle) {
+        if (podcastTitle.toLowerCase() === episodeTitle.toLowerCase()) return podcastTitle;
+        return `${podcastTitle}, ${episodeTitle}`;
+    }
+    return podcastTitle || episodeTitle || 'Podcast';
+};
+
 export default function MiniPlayer({ bottomOffset = scale(100) }) {
     const navigation = useNavigation();
     const {
@@ -100,13 +111,25 @@ export default function MiniPlayer({ bottomOffset = scale(100) }) {
     const artistName = resolveArtistName(currentTrack, 'Unknown Artist');
     const coverUrl = getTrackCoverUrl(currentTrack);
     const adCoverUrl = adData?.imageUrl || null;
-    const displayedTitle = adModalVisible ? 'Advertisement' : (currentTrack.title || 'Unknown Song');
+    const isPodcastTrack = Boolean(currentTrack?.isPodcast) && !adModalVisible;
+    const displayedTitle = adModalVisible
+        ? 'Advertisement'
+        : isPodcastTrack
+            ? buildPodcastDisplayTitle(currentTrack)
+            : (currentTrack.title || 'Unknown Song');
+    const displayedSubtitle = adModalVisible
+        ? (adData?.title || 'VOX')
+        : isPodcastTrack
+            ? resolveArtistName(currentTrack, 'Podcast')
+            : artistName;
 
     return (
         <TouchableOpacity style={[styles.container, { bottom: bottomOffset }]} activeOpacity={0.95} onPress={openFullPlayer}>
             <View style={styles.content}>
                 {adModalVisible ? (
                     <Image source={{ uri: adCoverUrl || 'https://via.placeholder.com/150' }} style={styles.adArtwork} />
+                ) : isPodcastTrack ? (
+                    <Image source={{ uri: coverUrl || 'https://via.placeholder.com/150' }} style={styles.podcastArtwork} />
                 ) : (
                     <View style={styles.vinylContainer}>
                         <View style={styles.vinylBackground}>
@@ -121,7 +144,7 @@ export default function MiniPlayer({ bottomOffset = scale(100) }) {
                         {displayedTitle}
                     </Text>
                     <Text style={styles.artist} numberOfLines={1}>
-                        {adModalVisible ? (adData?.title || 'VOX') : artistName}
+                        {displayedSubtitle}
                     </Text>
                 </View>
 
@@ -174,6 +197,12 @@ const styles = StyleSheet.create({
         backgroundColor: '#59221A',
     },
     adArtwork: {
+        width: scale(46),
+        height: scale(46),
+        borderRadius: scale(8),
+        backgroundColor: '#59221A',
+    },
+    podcastArtwork: {
         width: scale(46),
         height: scale(46),
         borderRadius: scale(8),

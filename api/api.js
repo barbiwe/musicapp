@@ -5,7 +5,8 @@ import { jwtDecode } from 'jwt-decode';
 import 'core-js/stable/atob';
 import { Dimensions, Image } from 'react-native';
 
-const API_URL = 'http://localhost:8080';
+const FALLBACK_API_URL = 'http://18.234.31.165:8080';
+const API_URL = process.env.EXPO_PUBLIC_API_URL || FALLBACK_API_URL;
 const AD_STREAM_COUNT_KEY = 'ad_stream_count_v1';
 const iconsPrefetchCache = new Set();
 let iconsMapCache = null;
@@ -18,6 +19,7 @@ let genresCache = null;
 let genresRequest = null;
 let recentPlayedCache = null;
 let recentPlayedRequest = null;
+let refreshTokenRequest = null;
 
 export const api = axios.create({
     baseURL: API_URL,
@@ -43,10 +45,61 @@ api.interceptors.request.use(
 api.interceptors.response.use(
     (response) => response,
     async (error) => {
-        if (error.response && error.response.status === 401) {
+        const status = error?.response?.status;
+        const originalRequest = error?.config || {};
+        const requestUrl = String(originalRequest?.url || '');
+
+        const skipRefresh =
+            requestUrl.includes('/api/Auth/login') ||
+            requestUrl.includes('/api/Auth/register') ||
+            requestUrl.includes('/api/Auth/confirm') ||
+            requestUrl.includes('/api/Auth/google') ||
+            requestUrl.includes('/api/Auth/forgot-password') ||
+            requestUrl.includes('/api/Auth/reset-password') ||
+            requestUrl.includes('/api/Auth/verify-reset-code') ||
+            requestUrl.includes('/api/Auth/refresh-token');
+
+        if (status === 401 && !skipRefresh && !originalRequest?._retry) {
+            try {
+                const currentToken = await AsyncStorage.getItem('userToken');
+                if (currentToken) {
+                    if (!refreshTokenRequest) {
+                        refreshTokenRequest = axios
+                            .post(
+                                `${API_URL}/api/Auth/refresh-token`,
+                                {},
+                                { headers: { Authorization: `Bearer ${currentToken}` }, timeout: 15000 }
+                            )
+                            .then(async (res) => {
+                                await saveAuthMeta(res?.data);
+                                return res?.data;
+                            })
+                            .finally(() => {
+                                refreshTokenRequest = null;
+                            });
+                    }
+
+                    await refreshTokenRequest;
+
+                    const nextToken = await AsyncStorage.getItem('userToken');
+                    if (nextToken) {
+                        originalRequest._retry = true;
+                        originalRequest.headers = {
+                            ...(originalRequest.headers || {}),
+                            Authorization: `Bearer ${nextToken}`,
+                        };
+                        return api(originalRequest);
+                    }
+                }
+            } catch (_) {
+                // fallback to logout below
+            }
+        }
+
+        if (status === 401) {
             console.log("🔒 TOKEN EXPIRED. Logging out...");
             // Чистимо правильні ключі
-            await AsyncStorage.multiRemove(['userToken', 'userId', 'username']);
+            await AsyncStorage.multiRemove(['userToken', 'userId', 'username', 'userRole']);
         }
         return Promise.reject(error);
     }
@@ -103,23 +156,72 @@ const parseRoleFromToken = (token) => {
 
     try {
         const decoded = jwtDecode(token);
-        return (
-            decoded['http://schemas.microsoft.com/ws/2008/06/identity/claims/role'] ||
-            decoded['http://schemas.xmlsoap.org/ws/2005/05/identity/claims/role'] ||
-            decoded.role ||
-            null
-        );
+        const candidates = [
+            decoded['http://schemas.microsoft.com/ws/2008/06/identity/claims/role'],
+            decoded['http://schemas.xmlsoap.org/ws/2005/05/identity/claims/role'],
+            decoded.role,
+            decoded.Role,
+        ];
+
+        for (const value of candidates) {
+            if (value === null || value === undefined) continue;
+            return value;
+        }
+        return null;
     } catch (_) {
         return null;
     }
 };
 
+const isRolePremiumValue = (value) => {
+    if (value === null || value === undefined) return false;
+    if (Array.isArray(value)) return value.some(isRolePremiumValue);
+
+    const raw = String(value).trim().toLowerCase();
+    if (!raw) return false;
+
+    return raw === '3' || raw === 'premium' || raw.includes('premium');
+};
+
+const saveAuthMeta = async (authData, fallbackUsername = null) => {
+    if (!authData || typeof authData !== 'object') return;
+
+    if (authData.token) {
+        await AsyncStorage.setItem('userToken', authData.token);
+        await saveUserIdFromToken(authData.token);
+
+        const roleFromToken = parseRoleFromToken(authData.token);
+        if (roleFromToken !== null && roleFromToken !== undefined) {
+            await AsyncStorage.setItem('userRole', String(Array.isArray(roleFromToken) ? roleFromToken[0] : roleFromToken));
+        }
+    }
+
+    const username = authData.username || authData.Username || fallbackUsername;
+    if (username) {
+        await AsyncStorage.setItem('username', String(username));
+    }
+
+    const responseRole =
+        authData.role ??
+        authData.Role ??
+        authData.userRole ??
+        authData.UserRole ??
+        null;
+
+    if (responseRole !== null && responseRole !== undefined) {
+        await AsyncStorage.setItem('userRole', String(responseRole));
+    }
+};
+
 export const isPremiumUser = async () => {
     try {
+        const storedRole = await AsyncStorage.getItem('userRole');
+        if (isRolePremiumValue(storedRole)) return true;
+
         const token = await AsyncStorage.getItem('userToken');
         const role = parseRoleFromToken(token);
         if (!role) return false;
-        return String(role).toLowerCase() === 'premium' || String(role) === '3';
+        return isRolePremiumValue(role);
     } catch (_) {
         return false;
     }
@@ -128,7 +230,10 @@ export const isPremiumUser = async () => {
 export const shouldShowAdBeforeStream = async () => {
     try {
         const premium = await isPremiumUser();
-        if (premium) return false;
+        if (premium) {
+            await AsyncStorage.setItem(AD_STREAM_COUNT_KEY, '0');
+            return false;
+        }
 
         const raw = await AsyncStorage.getItem(AD_STREAM_COUNT_KEY);
         const current = Number.parseInt(raw || '0', 10) || 0;
@@ -217,11 +322,7 @@ export const registerUser = async (username, email, phone, password) => {
             Password: password,
         });
 
-        if (res.data.token) {
-            await AsyncStorage.setItem('userToken', res.data.token);
-            await AsyncStorage.setItem('username', username);
-            await saveUserIdFromToken(res.data.token);
-        }
+        await saveAuthMeta(res.data, username);
 
         return res.data;
     } catch (e) {
@@ -236,15 +337,7 @@ export const confirmEmailCode = async (email, code) => {
             code,
         });
 
-        if (res.data?.token) {
-            await AsyncStorage.setItem('userToken', res.data.token);
-
-            if (res.data.username) {
-                await AsyncStorage.setItem('username', res.data.username);
-            }
-
-            await saveUserIdFromToken(res.data.token);
-        }
+        await saveAuthMeta(res.data);
 
         return { success: true, data: res.data };
     } catch (e) {
@@ -259,15 +352,7 @@ export const loginUser = async (email, password) => {
             Password: password,
         });
 
-        if (res.data.token) {
-            await AsyncStorage.setItem('userToken', res.data.token);
-
-            if (res.data.username) {
-                await AsyncStorage.setItem('username', res.data.username);
-            }
-
-            await saveUserIdFromToken(res.data.token);
-        }
+        await saveAuthMeta(res.data);
 
         return res.data;
     } catch (e) {
@@ -281,15 +366,7 @@ export const googleLogin = async (idToken) => {
             IdToken: idToken,
         });
 
-        if (res.data.token) {
-            await AsyncStorage.setItem('userToken', res.data.token);
-
-            if (res.data.username) {
-                await AsyncStorage.setItem('username', res.data.username);
-            }
-
-            await saveUserIdFromToken(res.data.token);
-        }
+        await saveAuthMeta(res.data);
 
         return res.data;
     } catch (e) {
@@ -342,12 +419,75 @@ export const getCountries = async () => {
     }
 };
 
-export const becomeAuthor = async ({ country }) => {
+export const getArtistSpecializations = async () => {
     try {
-        const res = await api.post('/api/Auth/become-author', { country });
+        const res = await api.get('/api/artist-specializations');
+        return Array.isArray(res?.data) ? res.data : [];
+    } catch (e) {
+        return [];
+    }
+};
+
+export const becomeAuthor = async ({ username, country, aboutMe, specialization }) => {
+    try {
+        const res = await api.post('/api/Auth/become-author', {
+            username: String(username || '').trim(),
+            country,
+            aboutMe: String(aboutMe || '').trim(),
+            specialization,
+        });
         return { success: true, data: res?.data };
     } catch (e) {
         return { error: e?.response?.data || 'Become author request failed' };
+    }
+};
+
+export const refreshUserToken = async () => {
+    try {
+        const res = await api.post('/api/Auth/refresh-token', {});
+        await saveAuthMeta(res?.data);
+        return { success: true, data: res?.data };
+    } catch (e) {
+        return { error: e?.response?.data || 'Refresh token failed' };
+    }
+};
+
+export const searchLibrary = async (query) => {
+    const q = String(query || '').trim();
+    if (!q) {
+        return { tracks: [], playlists: [], albums: [], podcasts: [] };
+    }
+
+    try {
+        const res = await api.get('/api/Auth/library/search', { params: { query: q } });
+        const data = res?.data || {};
+
+        return {
+            tracks: Array.isArray(data?.tracks) ? data.tracks : [],
+            playlists: Array.isArray(data?.playlists) ? data.playlists : [],
+            albums: Array.isArray(data?.albums) ? data.albums : [],
+            podcasts: Array.isArray(data?.podcasts) ? data.podcasts : [],
+        };
+    } catch (_) {
+        return { tracks: [], playlists: [], albums: [], podcasts: [] };
+    }
+};
+
+export const createPremiumCheckout = async () => {
+    try {
+        const res = await api.post('/api/Payments/create', {});
+        const url = res?.data?.url;
+
+        if (!url || typeof url !== 'string') {
+            return { error: 'Invalid checkout URL' };
+        }
+
+        return { success: true, url };
+    } catch (e) {
+        return {
+            error: e?.response?.data || e?.message || 'Failed to create checkout session',
+            status: e?.response?.status || null,
+        };
     }
 };
 
@@ -363,6 +503,138 @@ export const saveFavoriteGenres = async (genreIds) => {
             status: e?.response?.status || null,
         };
     }
+};
+
+/* =========================
+   PLAYLISTS
+========================= */
+
+export const createPlaylist = async ({ name, description = '' }) => {
+    const safeName = String(name || '').trim();
+    const safeDescription = String(description || '').trim();
+
+    if (!safeName) {
+        return { error: 'Playlist name is required' };
+    }
+
+    try {
+        const res = await api.post('/api/Playlists', {
+            name: safeName,
+            description: safeDescription,
+        });
+        return { success: true, data: res?.data || null };
+    } catch (e) {
+        return {
+            error: e?.response?.data || e?.message || 'Create playlist failed',
+            status: e?.response?.status || null,
+        };
+    }
+};
+
+export const getMyPlaylists = async () => {
+    try {
+        const res = await api.get('/api/Playlists/my');
+        return Array.isArray(res?.data) ? res.data : [];
+    } catch (_) {
+        return [];
+    }
+};
+
+export const getPlaylistDetails = async (playlistId) => {
+    const id = String(playlistId || '').trim();
+    if (!id) return null;
+
+    try {
+        const res = await api.get(`/api/Playlists/${id}`);
+        return res?.data || null;
+    } catch (_) {
+        return null;
+    }
+};
+
+export const addTrackToPlaylist = async (playlistId, trackId) => {
+    const playlist = String(playlistId || '').trim();
+    const track = String(trackId || '').trim();
+    if (!playlist || !track) return { error: 'Invalid playlist or track id' };
+
+    try {
+        await api.post(`/api/Playlists/${playlist}/tracks`, { trackId: track });
+        return { success: true };
+    } catch (e) {
+        return {
+            error: e?.response?.data || e?.message || 'Add track to playlist failed',
+            status: e?.response?.status || null,
+        };
+    }
+};
+
+export const removeTrackFromPlaylist = async (playlistId, trackId) => {
+    const playlist = String(playlistId || '').trim();
+    const track = String(trackId || '').trim();
+    if (!playlist || !track) return { error: 'Invalid playlist or track id' };
+
+    try {
+        await api.delete(`/api/Playlists/${playlist}/tracks/${track}`);
+        return { success: true };
+    } catch (e) {
+        return {
+            error: e?.response?.data || e?.message || 'Remove track from playlist failed',
+            status: e?.response?.status || null,
+        };
+    }
+};
+
+export const deletePlaylist = async (playlistId) => {
+    const id = String(playlistId || '').trim();
+    if (!id) return { error: 'Invalid playlist id' };
+
+    try {
+        await api.delete(`/api/Playlists/${id}`);
+        return { success: true };
+    } catch (e) {
+        return {
+            error: e?.response?.data || e?.message || 'Delete playlist failed',
+            status: e?.response?.status || null,
+        };
+    }
+};
+
+export const uploadPlaylistCover = async (playlistId, cover) => {
+    const id = String(playlistId || '').trim();
+    if (!id) return { error: 'Invalid playlist id' };
+    if (!cover?.uri) return { error: 'Cover file is required' };
+
+    const formData = new FormData();
+    const uriName = cover.uri.split('/').pop();
+    const filename = cover.fileName || uriName || `playlist-cover-${Date.now()}.jpg`;
+    const match = /\.(\w+)$/.exec(filename || '');
+    let type = cover.mimeType || cover.type || (match ? `image/${match[1]}` : 'image/jpeg');
+    if (type === 'image/jpg') type = 'image/jpeg';
+    if (!String(type).startsWith('image/')) type = 'image/jpeg';
+
+    formData.append('cover', {
+        uri: cover.uri,
+        name: filename,
+        type,
+    });
+
+    try {
+        await api.post(`/api/Playlists/${id}/cover`, formData, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+        });
+        return { success: true };
+    } catch (e) {
+        return {
+            error: e?.response?.data || e?.message || 'Upload playlist cover failed',
+            status: e?.response?.status || null,
+        };
+    }
+};
+
+export const getPlaylistCoverUrl = (playlistId) => {
+    const id = String(playlistId || '').trim();
+    if (!id) return null;
+    return `${API_URL}/api/Playlists/${id}/cover`;
 };
 
 const OFFLINE_DOWNLOADS_KEY = 'offline_downloads_v1';
@@ -512,10 +784,24 @@ export const getIcons = async () => {
         try {
             const res = await api.get('/api/Icon/all');
             const iconsMap = {};
+            const toAbsoluteIconUrl = (rawUrl) => {
+                const value = String(rawUrl || '').trim();
+                if (!value) return null;
+
+                const absolute = /^https?:\/\//i.test(value)
+                    ? value
+                    : `${API_URL}${value.startsWith('/') ? '' : '/'}${value}`;
+
+                return encodeURI(absolute);
+            };
 
             if (Array.isArray(res.data)) {
                 res.data.forEach(icon => {
-                    iconsMap[icon.fileName] = `${API_URL}${icon.url}`;
+                    const fileName = icon?.fileName || icon?.name || icon?.file || '';
+                    const iconUrl = toAbsoluteIconUrl(icon?.url || icon?.path || icon?.uri);
+                    if (fileName && iconUrl) {
+                        iconsMap[fileName] = iconUrl;
+                    }
                 });
             }
 
@@ -675,7 +961,7 @@ export const changeAvatar = async (imageUri) => {
 };
 
 export const logoutUser = async () => {
-    await AsyncStorage.multiRemove(['userToken', 'username', 'userId']);
+    await AsyncStorage.multiRemove(['userToken', 'username', 'userId', 'userRole']);
     clearIconsCache();
     clearSearchCache();
 };
@@ -986,6 +1272,375 @@ export const uploadTrack = async (file, title, artistId, albumId, cover, genreId
 };
 
 /* =========================
+   PODCASTS
+========================= */
+
+const toAbsoluteApiUrl = (raw) => {
+    if (!raw || typeof raw !== 'string') return null;
+    if (raw.startsWith('http')) return raw;
+    return raw.startsWith('/') ? `${API_URL}${raw}` : `${API_URL}/${raw}`;
+};
+
+const getFileTypeFromUri = (uri, fallback) => {
+    const ext = String(uri || '').split('.').pop()?.toLowerCase();
+    if (!ext) return fallback;
+
+    if (['jpg', 'jpeg'].includes(ext)) return 'image/jpeg';
+    if (ext === 'png') return 'image/png';
+    if (ext === 'webp') return 'image/webp';
+    if (ext === 'gif') return 'image/gif';
+    if (ext === 'svg') return 'image/svg+xml';
+
+    if (ext === 'mp3') return 'audio/mpeg';
+    if (ext === 'm4a') return 'audio/mp4';
+    if (ext === 'aac') return 'audio/aac';
+    if (ext === 'wav') return 'audio/wav';
+    if (ext === 'ogg') return 'audio/ogg';
+
+    return fallback;
+};
+
+const getAssetSizeBytes = (asset) => {
+    const raw =
+        asset?.size ??
+        asset?.fileSize ??
+        asset?.filesize ??
+        asset?.file?.size ??
+        0;
+
+    const num = Number(raw);
+    return Number.isFinite(num) && num > 0 ? num : 0;
+};
+
+export const getPodcastGenres = async () => {
+    try {
+        const res = await api.get('/api/Podcasts/genres');
+        return Array.isArray(res?.data) ? res.data : [];
+    } catch (_) {
+        return [];
+    }
+};
+
+export const createPodcast = async ({
+    title,
+    cover,
+    audio,
+    genreIds = [],
+    episodes = [],
+    submit = true,
+}) => {
+    const safeTitle = String(title || '').trim();
+    const safeGenreIds = Array.isArray(genreIds)
+        ? genreIds.map((id) => String(id || '').trim()).filter(Boolean)
+        : [];
+
+    if (!safeTitle) {
+        return { error: 'Podcast title is required' };
+    }
+    if (!cover?.uri) {
+        return { error: 'Cover file is required' };
+    }
+    if (!audio?.uri) {
+        return { error: 'Audio file is required' };
+    }
+    if (!safeGenreIds.length) {
+        return { error: 'At least one genreId is required' };
+    }
+
+    const safeEpisodes = Array.isArray(episodes)
+        ? episodes
+            .map((episode, index) => {
+                const safeEpTitle = String(episode?.title || '').trim() || `Episode ${index + 2}`;
+                const safeEpDescription = String(episode?.description || '').trim();
+                const epAudio = episode?.audio;
+                if (!epAudio?.uri) return null;
+                return {
+                    title: safeEpTitle,
+                    description: safeEpDescription,
+                    audio: epAudio,
+                };
+            })
+            .filter(Boolean)
+        : [];
+
+    // Backend currently limits multipart body to 200MB.
+    const backendLimitBytes = 200 * 1024 * 1024;
+    const totalPayloadBytes =
+        getAssetSizeBytes(cover) +
+        getAssetSizeBytes(audio) +
+        safeEpisodes.reduce((sum, ep) => sum + getAssetSizeBytes(ep.audio), 0);
+
+    if (totalPayloadBytes > backendLimitBytes) {
+        const toMb = (bytes) => (bytes / (1024 * 1024)).toFixed(1);
+        return {
+            error: `Payload too large (${toMb(totalPayloadBytes)}MB). Backend limit is 200MB. Upload fewer/smaller episodes.`,
+            status: 413,
+        };
+    }
+
+    const formData = new FormData();
+    formData.append('title', safeTitle);
+    formData.append('cover', {
+        uri: cover.uri,
+        name: cover.fileName || cover.name || cover.uri.split('/').pop() || 'podcast-cover.jpg',
+        type: getFileTypeFromUri(cover.uri, 'image/jpeg'),
+    });
+    formData.append('audio', {
+        uri: audio.uri,
+        name: audio.name || audio.fileName || audio.uri.split('/').pop() || 'podcast-audio.mp3',
+        type: getFileTypeFromUri(audio.uri, 'audio/mpeg'),
+    });
+    safeGenreIds.forEach((id) => {
+        formData.append('genreIds', id);
+    });
+    safeEpisodes.forEach((episode) => {
+        formData.append('episodeAudios', {
+            uri: episode.audio.uri,
+            name: episode.audio.name || episode.audio.fileName || episode.audio.uri.split('/').pop() || 'episode.mp3',
+            type: getFileTypeFromUri(episode.audio.uri, 'audio/mpeg'),
+        });
+        formData.append('episodeTitles', episode.title);
+        formData.append('episodeDescriptions', episode.description || '');
+    });
+    formData.append('submit', submit ? 'true' : 'false');
+
+    try {
+        const res = await api.post('/api/Podcasts/create', formData, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+            timeout: 0,
+        });
+        return { success: true, data: res?.data };
+    } catch (e) {
+        if (e?.code === 'ECONNABORTED') {
+            return {
+                error: 'Request timeout. Try fewer/smaller files, or publish in parts.',
+                status: null,
+            };
+        }
+
+        if (e?.response?.status === 413) {
+            return {
+                error: 'Payload too large for backend limit (200MB). Reduce total upload size.',
+                status: 413,
+            };
+        }
+
+        return {
+            error: e?.response?.data || e?.message || 'Create podcast failed',
+            status: e?.response?.status || null,
+        };
+    }
+};
+
+export const getMyPodcasts = async () => {
+    try {
+        const res = await api.get('/api/Podcasts/my');
+        return Array.isArray(res?.data) ? res.data : [];
+    } catch (_) {
+        return [];
+    }
+};
+
+export const getAllPodcasts = async () => {
+    try {
+        const res = await api.get('/api/Podcasts/all');
+        return Array.isArray(res?.data) ? res.data : [];
+    } catch (_) {
+        return [];
+    }
+};
+
+export const getPodcastById = async (podcastId) => {
+    const id = String(podcastId || '').trim();
+    if (!id) return null;
+
+    try {
+        const res = await api.get(`/api/Podcasts/${id}`);
+        return res?.data || null;
+    } catch (_) {
+        return null;
+    }
+};
+
+export const getPodcastEpisodes = async (podcastId) => {
+    const id = String(podcastId || '').trim();
+    if (!id) return [];
+
+    try {
+        const res = await api.get(`/api/Podcasts/${id}/episodes`);
+        return Array.isArray(res?.data) ? res.data : [];
+    } catch (_) {
+        return [];
+    }
+};
+
+export const addPodcastEpisode = async ({ podcastId, file, title = '', description = '' }) => {
+    const id = String(podcastId || '').trim();
+    if (!id) return { error: 'Podcast id is required' };
+    if (!file?.uri) return { error: 'Episode audio file is required' };
+
+    const formData = new FormData();
+    const fileName = file.name || file.uri.split('/').pop() || 'episode.mp3';
+    const fileType = getFileTypeFromUri(file.uri, 'audio/mpeg');
+
+    // Поле файлу може відрізнятись на бек-гілках; подаємо audio/file.
+    const audioPayload = {
+        uri: file.uri,
+        name: fileName,
+        type: fileType,
+    };
+    formData.append('audio', audioPayload);
+    formData.append('file', audioPayload);
+
+    const safeTitle = String(title || '').trim();
+    const safeDescription = String(description || '').trim();
+    if (safeTitle) {
+        formData.append('title', safeTitle);
+        formData.append('name', safeTitle);
+    }
+    if (safeDescription) {
+        formData.append('description', safeDescription);
+    }
+
+    try {
+        const res = await api.post(`/api/Podcasts/${id}/episodes`, formData, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+            timeout: 120000,
+        });
+        return { success: true, data: res?.data };
+    } catch (e) {
+        return {
+            error: e?.response?.data || e?.message || 'Upload podcast episode failed',
+            status: e?.response?.status || null,
+        };
+    }
+};
+
+export const uploadPodcastCover = async ({ podcastId, cover }) => {
+    const id = String(podcastId || '').trim();
+    if (!id) return { error: 'Podcast id is required' };
+    if (!cover?.uri) return { error: 'Cover image is required' };
+
+    const formData = new FormData();
+    const fileName = cover.fileName || cover.name || cover.uri.split('/').pop() || 'cover.jpg';
+    const fileType = getFileTypeFromUri(cover.uri, 'image/jpeg');
+
+    formData.append('cover', {
+        uri: cover.uri,
+        name: fileName,
+        type: fileType,
+    });
+
+    try {
+        const res = await api.post(`/api/Podcasts/${id}/cover`, formData, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+        });
+        return { success: true, data: res?.data };
+    } catch (e) {
+        return {
+            error: e?.response?.data || e?.message || 'Upload podcast cover failed',
+            status: e?.response?.status || null,
+        };
+    }
+};
+
+export const submitPodcast = async (podcastId) => {
+    const id = String(podcastId || '').trim();
+    if (!id) return { error: 'Podcast id is required' };
+
+    try {
+        const res = await api.post(`/api/Podcasts/${id}/submit`, {});
+        return { success: true, data: res?.data };
+    } catch (e) {
+        return {
+            error: e?.response?.data || e?.message || 'Submit podcast failed',
+            status: e?.response?.status || null,
+        };
+    }
+};
+
+export const getPodcastCoverUrl = (podcast) => {
+    if (!podcast) return null;
+
+    const direct =
+        toAbsoluteApiUrl(podcast.coverUrl) ||
+        toAbsoluteApiUrl(podcast.imageUrl) ||
+        toAbsoluteApiUrl(podcast.cover);
+    if (direct) return direct;
+
+    const id = podcast.id || podcast.podcastId;
+    if (!id) return null;
+    return `${API_URL}/api/Podcasts/${id}/cover`;
+};
+
+export const getPodcastAudioUrl = (podcast) => {
+    if (!podcast) return null;
+
+    const direct = toAbsoluteApiUrl(podcast.audioUrl);
+    if (direct) return direct;
+
+    const id = podcast.id || podcast.podcastId;
+    if (!id) return null;
+    return `${API_URL}/api/Podcasts/${id}/audio`;
+};
+
+export const getPodcastEpisodeStreamUrl = (episodeId) => {
+    const id = String(episodeId || '').trim();
+    if (!id) return null;
+    return `${API_URL}/api/Podcasts/episodes/${id}/stream`;
+};
+
+export const likePodcast = async (podcastId) => {
+    const id = String(podcastId || '').trim();
+    if (!id) return { error: 'Podcast id is required' };
+    try {
+        const res = await api.post(`/api/Podcasts/${id}/like`, {});
+        return { success: true, data: res?.data };
+    } catch (e) {
+        return { error: e?.response?.data || e?.message || 'Like podcast failed' };
+    }
+};
+
+export const unlikePodcast = async (podcastId) => {
+    const id = String(podcastId || '').trim();
+    if (!id) return { error: 'Podcast id is required' };
+    try {
+        const res = await api.post(`/api/Podcasts/${id}/unlike`, {});
+        return { success: true, data: res?.data };
+    } catch (e) {
+        return { error: e?.response?.data || e?.message || 'Unlike podcast failed' };
+    }
+};
+
+export const getPodcastLikesCount = async (podcastId) => {
+    const id = String(podcastId || '').trim();
+    if (!id) return 0;
+
+    try {
+        const res = await api.get(`/api/Podcasts/${id}/likes-count`);
+        const raw = res?.data;
+        const value = typeof raw === 'number' ? raw : raw?.likesCount ?? raw?.count ?? 0;
+        return Number(value) || 0;
+    } catch (_) {
+        return 0;
+    }
+};
+
+export const isPodcastLiked = async (podcastId) => {
+    const id = String(podcastId || '').trim();
+    if (!id) return false;
+
+    try {
+        const res = await api.get(`/api/Podcasts/${id}/liked`);
+        const raw = res?.data;
+        if (typeof raw === 'boolean') return raw;
+        return Boolean(raw?.liked);
+    } catch (_) {
+        return false;
+    }
+};
+
+/* =========================
    DISCOVER
 ========================= */
 
@@ -1014,11 +1669,18 @@ export const getRecommendations = async () => {
 // 2. Всі артисти (Кружечки)
 export const getAllArtists = async () => {
     try {
-        const res = await api.get('/api/Artists');
+        // Current backend route lives in TracksController: GET /api/Tracks/artists
+        const res = await api.get('/api/Tracks/artists');
         return res.data;
     } catch (e) {
-        console.log('Get artists error:', e);
-        return [];
+        // Backward compatibility with older backend snapshots
+        try {
+            const legacy = await api.get('/api/Artists');
+            return legacy.data;
+        } catch (legacyErr) {
+            console.log('Get artists error:', legacyErr);
+            return [];
+        }
     }
 };
 
@@ -1195,6 +1857,12 @@ export const getUserAvatarUrl = (userId) =>
 
 export const getTrackCoverUrl = (track) => {
     if (!track) return null;
+
+    const directCover = track.coverUrl || track.imageUrl || track.cover;
+    if (typeof directCover === 'string' && directCover.trim().length > 0) {
+        if (directCover.startsWith('http')) return directCover;
+        return directCover.startsWith('/') ? `${API_URL}${directCover}` : `${API_URL}/${directCover}`;
+    }
 
     // 1. Якщо сервер дав прямий ID картинки (найшвидший варіант)
     if (track.coverFileId) {

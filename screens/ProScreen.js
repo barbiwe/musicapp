@@ -9,12 +9,16 @@ import {
     StatusBar,
     Image,
     Dimensions,
-    Platform
+    Platform,
+    Alert,
+    Linking,
+    ActivityIndicator,
 } from 'react-native';
 import { SvgXml } from 'react-native-svg';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useIsFocused } from '@react-navigation/native';
 
-import { getIcons, scale } from '../api/api';
+import { createPremiumCheckout, getIcons, isPremiumUser, scale } from '../api/api';
 
 const { width, height } = Dimensions.get('window');
 
@@ -56,18 +60,75 @@ const ColoredSvg = ({ uri, width, height, color }) => {
 };
 
 export default function ProScreen({ navigation }) {
+    const isFocused = useIsFocused();
     const [icons, setIcons] = useState({});
+    const [buying, setBuying] = useState(false);
+    const [isPremium, setIsPremium] = useState(false);
 
     useEffect(() => {
-        loadIcons();
-    }, []);
+        if (isFocused) {
+            loadData();
+        }
+    }, [isFocused]);
 
-    const loadIcons = async () => {
+    const loadData = async () => {
         try {
-            const loadedIcons = await getIcons();
+            const [loadedIcons, premium] = await Promise.all([
+                getIcons(),
+                isPremiumUser(),
+            ]);
             setIcons(loadedIcons || {});
+            setIsPremium(!!premium);
         } catch (e) {
             console.log("Error loading icons:", e);
+        }
+    };
+
+    const stringifyError = (error) => {
+        if (!error) return 'Something went wrong';
+        if (typeof error === 'string') return error;
+        if (typeof error === 'object') {
+            const first =
+                error?.message ||
+                error?.title ||
+                error?.error ||
+                error?.detail ||
+                JSON.stringify(error);
+            return first || 'Something went wrong';
+        }
+        return String(error);
+    };
+
+    const handleBuyPremium = async () => {
+        if (buying) return;
+        if (isPremium) {
+            Alert.alert('Premium', 'Your account already has Premium.');
+            return;
+        }
+
+        setBuying(true);
+        try {
+            const res = await createPremiumCheckout();
+            if (res?.error || !res?.url) {
+                Alert.alert('Payment error', stringifyError(res?.error));
+                return;
+            }
+
+            const canOpen = await Linking.canOpenURL(res.url);
+            if (!canOpen) {
+                Alert.alert('Payment error', 'Cannot open checkout URL.');
+                return;
+            }
+
+            await Linking.openURL(res.url);
+            Alert.alert(
+                'Checkout opened',
+                'After successful payment, log out and log in again to refresh Premium role in app.'
+            );
+        } catch (_) {
+            Alert.alert('Payment error', 'Failed to start checkout.');
+        } finally {
+            setBuying(false);
         }
     };
 
@@ -180,11 +241,18 @@ export default function ProScreen({ navigation }) {
 
                             {/* BUTTON */}
                             <TouchableOpacity
-                                style={styles.button}
+                                style={[styles.button, buying && styles.buttonDisabled]}
                                 activeOpacity={0.8}
-                                onPress={() => console.log('Try Now Pressed')}
+                                onPress={handleBuyPremium}
+                                disabled={buying}
                             >
-                                <Text style={styles.buttonText}>Try now</Text>
+                                {buying ? (
+                                    <ActivityIndicator color="#300C0A" size="small" />
+                                ) : (
+                                    <Text style={styles.buttonText}>
+                                        {isPremium ? 'You have Premium' : 'Try now'}
+                                    </Text>
+                                )}
                             </TouchableOpacity>
 
                         </View>
@@ -332,6 +400,9 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         marginTop: scale(5),
         zIndex: 1,
+    },
+    buttonDisabled: {
+        opacity: 0.75,
     },
     buttonText: {
         color: '#FF4D4F',

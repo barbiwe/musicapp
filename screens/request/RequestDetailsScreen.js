@@ -1,19 +1,28 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
     View,
     Text,
     StyleSheet,
     TouchableOpacity,
+    Pressable,
     TextInput,
     StatusBar,
     Platform,
     KeyboardAvoidingView,
     ScrollView,
+    Alert,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 
-import { clearIconsCache, getCountries, getGenres, getIcons, scale } from '../../api/api';
+import {
+    becomeAuthor,
+    clearIconsCache,
+    getArtistSpecializations,
+    getCountries,
+    getIcons,
+    scale,
+} from '../../api/api';
 import RemoteTintIcon from '../../components/RemoteTintIcon';
 
 const MAX_DESCRIPTION = 200;
@@ -87,7 +96,9 @@ export default function RequestDetailsScreen({ navigation }) {
     const [icons, setIcons] = useState({});
     const [nick, setNick] = useState('');
     const [genre, setGenre] = useState('');
+    const [selectedGenreId, setSelectedGenreId] = useState(null);
     const [country, setCountry] = useState('');
+    const [selectedCountryId, setSelectedCountryId] = useState(null);
     const [description, setDescription] = useState('');
     const [genres, setGenres] = useState([]);
     const [isGenreOpen, setIsGenreOpen] = useState(false);
@@ -95,6 +106,7 @@ export default function RequestDetailsScreen({ navigation }) {
     const [countries, setCountries] = useState([]);
     const [isCountryOpen, setIsCountryOpen] = useState(false);
     const [isCountriesLoading, setIsCountriesLoading] = useState(true);
+    const [isSubmitting, setIsSubmitting] = useState(false);
 
     useEffect(() => {
         let mounted = true;
@@ -104,7 +116,7 @@ export default function RequestDetailsScreen({ navigation }) {
             try {
                 const [iconsMap, genresData, countriesData] = await Promise.all([
                     getIcons(),
-                    getGenres(),
+                    getArtistSpecializations(),
                     getCountries(),
                 ]);
 
@@ -131,7 +143,6 @@ export default function RequestDetailsScreen({ navigation }) {
         };
     }, []);
 
-    const leftIconSize = useMemo(() => ({ width: scale(22), height: scale(22) }), []);
     const resolveIconName = (name) => {
         if (!name) return '';
         if (icons?.[name]) return name;
@@ -139,8 +150,69 @@ export default function RequestDetailsScreen({ navigation }) {
         const found = Object.keys(icons || {}).find((key) => String(key).toLowerCase() === lower);
         return found || name;
     };
-    const genreIconName = resolveIconName('reqgenre.svg');
-    const countryIconName = resolveIconName('flag.svg');
+
+    const parseId = (value) => {
+        if (value === null || value === undefined) return null;
+        const asNumber = Number(value);
+        if (Number.isFinite(asNumber)) return asNumber;
+        return value;
+    };
+
+    const handleConfirm = async () => {
+        const username = String(nick || '').trim();
+        const aboutMe = String(description || '').trim();
+        const countryId = parseId(selectedCountryId);
+        const rawSpecialization = parseId(selectedGenreId);
+        const specialization =
+            rawSpecialization !== null && rawSpecialization !== undefined
+                ? rawSpecialization
+                : String(genre || '').trim() || null;
+
+        if (!username) {
+            Alert.alert('Request', 'Enter nickname.');
+            return;
+        }
+
+        if (countryId === null || countryId === undefined) {
+            Alert.alert('Request', 'Select country.');
+            return;
+        }
+
+        if (!specialization) {
+            Alert.alert('Request', 'Select genre.');
+            return;
+        }
+
+        if (!aboutMe) {
+            Alert.alert('Request', 'Enter profile description.');
+            return;
+        }
+
+        setIsSubmitting(true);
+        const result = await becomeAuthor({
+            username,
+            country: countryId,
+            aboutMe,
+            specialization,
+        });
+        setIsSubmitting(false);
+
+        if (result?.success) {
+            Alert.alert('Request', 'Author request sent.', [
+                {
+                    text: 'OK',
+                    onPress: () => navigation.goBack(),
+                },
+            ]);
+            return;
+        }
+
+        const message =
+            typeof result?.error === 'string'
+                ? result.error
+                : result?.error?.message || 'Failed to send author request.';
+        Alert.alert('Request', message);
+    };
 
     return (
         <LinearGradient
@@ -173,19 +245,26 @@ export default function RequestDetailsScreen({ navigation }) {
                         />
                     </TouchableOpacity>
 
+                    {isGenreOpen || isCountryOpen ? (
+                        <Pressable
+                            style={styles.dropdownDismissLayer}
+                            onPress={() => {
+                                setIsGenreOpen(false);
+                                setIsCountryOpen(false);
+                            }}
+                        />
+                    ) : null}
+
                     <View style={styles.section}>
                         <Text style={styles.label}>Nickname</Text>
                         <View style={styles.inputWrapper}>
-                            <View style={styles.leftIconCircle}>
-                                <RemoteTintIcon
-                                    icons={icons}
-                                    iconName={resolveIconName('reqprofile.svg')}
-                                    width={leftIconSize.width}
-                                    height={leftIconSize.height}
-                                    color="#F5D8CB"
-                                    fallback=""
-                                />
-                            </View>
+                            <BlurView intensity={72} tint="dark" style={StyleSheet.absoluteFill} />
+                            <LinearGradient
+                                colors={['rgba(48,12,10,0.2)', 'rgba(48,12,10,0.2)', 'rgba(48,12,10,0.2)']}
+                                start={{ x: 0, y: 0 }}
+                                end={{ x: 1, y: 1 }}
+                                style={StyleSheet.absoluteFill}
+                            />
                             <TextInput
                                 value={nick}
                                 onChangeText={setNick}
@@ -199,31 +278,31 @@ export default function RequestDetailsScreen({ navigation }) {
 
                     <View style={[styles.section, isGenreOpen && styles.sectionOpen]}>
                         <Text style={styles.label}>Genre</Text>
-                        <View style={styles.genreFieldWrap}>
+                        <View style={styles.dropdownWrap}>
+                            {isGenreOpen ? (
+                                <Pressable pointerEvents="none" style={styles.dropdownBackdrop} />
+                            ) : null}
                             <TouchableOpacity
-                                style={styles.inputWrapper}
+                                style={styles.dropdownSelector}
                                 activeOpacity={0.85}
                                 onPress={() => {
                                     setIsGenreOpen((prev) => !prev);
                                     setIsCountryOpen(false);
                                 }}
                             >
-                                <View style={styles.leftIconCircle}>
-                                    <RemoteTintIcon
-                                        icons={icons}
-                                        iconName={genreIconName}
-                                        width={leftIconSize.width}
-                                        height={leftIconSize.height}
-                                        color="#F5D8CB"
-                                        fallback=""
-                                    />
-                                </View>
-                                <Text style={[styles.input, !genre && styles.placeholderText]}>
+                                <BlurView intensity={72} tint="dark" style={StyleSheet.absoluteFill} />
+                                <LinearGradient
+                                    colors={['rgba(48,12,10,0.2)', 'rgba(48,12,10,0.2)', 'rgba(48,12,10,0.2)']}
+                                    start={{ x: 0, y: 0 }}
+                                    end={{ x: 1, y: 1 }}
+                                    style={StyleSheet.absoluteFill}
+                                />
+                                <Text style={[styles.dropdownSelectorText, !genre && styles.placeholderText]}>
                                     {genre || 'Your genre'}
                                 </Text>
                                 <RemoteTintIcon
                                     icons={icons}
-                                    iconName={resolveIconName('arrow-down.svg')}
+                                    iconName={resolveIconName(isGenreOpen ? 'arrow-up.svg' : 'arrow-down.svg')}
                                     width={scale(24)}
                                     height={scale(24)}
                                     color="#F5D8CB"
@@ -232,33 +311,40 @@ export default function RequestDetailsScreen({ navigation }) {
                                 />
                             </TouchableOpacity>
 
-                        {isGenreOpen ? (
-                            <View style={styles.genreDropdownOverlay}>
-                                <BlurView intensity={42} tint="dark" style={styles.genreDropdownGlass}>
+                            {isGenreOpen ? (
+                                <View style={styles.dropdownShell}>
+                                    <BlurView intensity={72} tint="dark" style={StyleSheet.absoluteFill} />
+                                    <LinearGradient
+                                        colors={['rgba(48,12,10,0.2)', 'rgba(48,12,10,0.2)', 'rgba(48,12,10,0.2)']}
+                                        start={{ x: 0, y: 0 }}
+                                        end={{ x: 1, y: 1 }}
+                                        style={StyleSheet.absoluteFill}
+                                    />
                                     {isGenresLoading ? (
-                                        <Text style={styles.genreLoadingText}>Loading...</Text>
+                                        <Text style={styles.dropdownLoadingText}>Loading...</Text>
                                     ) : genres.length === 0 ? (
-                                        <Text style={styles.genreLoadingText}>No genres</Text>
+                                        <Text style={styles.dropdownLoadingText}>No genres</Text>
                                     ) : (
                                         <ScrollView
-                                            style={styles.genreList}
-                                            contentContainerStyle={styles.genreListContent}
+                                            style={styles.dropdownList}
+                                            contentContainerStyle={styles.dropdownListContent}
                                             showsVerticalScrollIndicator
                                         >
                                             {genres.map((item) => (
                                                 <TouchableOpacity
                                                     key={item.id}
-                                                    style={styles.genreOption}
+                                                    style={styles.dropdownItem}
                                                     activeOpacity={0.8}
                                                     onPress={() => {
                                                         setGenre(item.label);
+                                                        setSelectedGenreId(item.id);
                                                         setIsGenreOpen(false);
                                                     }}
                                                 >
                                                     <Text
                                                         style={[
-                                                            styles.genreOptionText,
-                                                            genre === item.label && styles.genreOptionTextSelected,
+                                                            styles.dropdownItemText,
+                                                            genre === item.label && styles.dropdownItemTextActive,
                                                         ]}
                                                     >
                                                         {item.label}
@@ -267,39 +353,38 @@ export default function RequestDetailsScreen({ navigation }) {
                                             ))}
                                         </ScrollView>
                                     )}
-                                </BlurView>
-                            </View>
-                        ) : null}
-                    </View>
+                                </View>
+                            ) : null}
+                        </View>
                     </View>
 
                     <View style={[styles.section, isCountryOpen && styles.sectionOpen]}>
                         <Text style={styles.label}>Country</Text>
-                        <View style={styles.genreFieldWrap}>
+                        <View style={styles.dropdownWrap}>
+                            {isCountryOpen ? (
+                                <Pressable pointerEvents="none" style={styles.dropdownBackdrop} />
+                            ) : null}
                             <TouchableOpacity
-                                style={styles.inputWrapper}
+                                style={styles.dropdownSelector}
                                 activeOpacity={0.85}
                                 onPress={() => {
                                     setIsCountryOpen((prev) => !prev);
                                     setIsGenreOpen(false);
                                 }}
                             >
-                                <View style={styles.leftIconCircle}>
-                                    <RemoteTintIcon
-                                        icons={icons}
-                                        iconName={countryIconName}
-                                        width={leftIconSize.width}
-                                        height={leftIconSize.height}
-                                        color="#F5D8CB"
-                                        fallback=""
-                                    />
-                                </View>
-                                <Text style={[styles.input, !country && styles.placeholderText]}>
+                                <BlurView intensity={72} tint="dark" style={StyleSheet.absoluteFill} />
+                                <LinearGradient
+                                    colors={['rgba(48,12,10,0.2)', 'rgba(48,12,10,0.2)', 'rgba(48,12,10,0.2)']}
+                                    start={{ x: 0, y: 0 }}
+                                    end={{ x: 1, y: 1 }}
+                                    style={StyleSheet.absoluteFill}
+                                />
+                                <Text style={[styles.dropdownSelectorText, !country && styles.placeholderText]}>
                                     {country || 'Your country'}
                                 </Text>
                                 <RemoteTintIcon
                                     icons={icons}
-                                    iconName={resolveIconName('arrow-down.svg')}
+                                    iconName={resolveIconName(isCountryOpen ? 'arrow-up.svg' : 'arrow-down.svg')}
                                     width={scale(24)}
                                     height={scale(24)}
                                     color="#F5D8CB"
@@ -309,32 +394,39 @@ export default function RequestDetailsScreen({ navigation }) {
                             </TouchableOpacity>
 
                             {isCountryOpen ? (
-                                <View style={styles.genreDropdownOverlay}>
-                                    <BlurView intensity={42} tint="dark" style={styles.genreDropdownGlass}>
+                                <View style={styles.dropdownShell}>
+                                        <BlurView intensity={72} tint="dark" style={StyleSheet.absoluteFill} />
+                                        <LinearGradient
+                                            colors={['rgba(48,12,10,0.2)', 'rgba(48,12,10,0.2)', 'rgba(48,12,10,0.2)']}
+                                            start={{ x: 0, y: 0 }}
+                                            end={{ x: 1, y: 1 }}
+                                            style={StyleSheet.absoluteFill}
+                                        />
                                         {isCountriesLoading ? (
-                                            <Text style={styles.genreLoadingText}>Loading...</Text>
+                                            <Text style={styles.dropdownLoadingText}>Loading...</Text>
                                         ) : countries.length === 0 ? (
-                                            <Text style={styles.genreLoadingText}>No countries</Text>
+                                            <Text style={styles.dropdownLoadingText}>No countries</Text>
                                         ) : (
                                             <ScrollView
-                                                style={styles.genreList}
-                                                contentContainerStyle={styles.genreListContent}
+                                                style={styles.dropdownList}
+                                                contentContainerStyle={styles.dropdownListContent}
                                                 showsVerticalScrollIndicator
                                             >
                                                 {countries.map((item) => (
                                                     <TouchableOpacity
                                                         key={item.id}
-                                                        style={styles.genreOption}
+                                                        style={styles.dropdownItem}
                                                         activeOpacity={0.8}
                                                         onPress={() => {
                                                             setCountry(item.label);
+                                                            setSelectedCountryId(item.id);
                                                             setIsCountryOpen(false);
                                                         }}
                                                     >
                                                         <Text
                                                             style={[
-                                                                styles.genreOptionText,
-                                                                country === item.label && styles.genreOptionTextSelected,
+                                                                styles.dropdownItemText,
+                                                                country === item.label && styles.dropdownItemTextActive,
                                                             ]}
                                                         >
                                                             {item.label}
@@ -343,8 +435,7 @@ export default function RequestDetailsScreen({ navigation }) {
                                                 ))}
                                             </ScrollView>
                                         )}
-                                    </BlurView>
-                                </View>
+                                    </View>
                             ) : null}
                         </View>
                     </View>
@@ -352,6 +443,13 @@ export default function RequestDetailsScreen({ navigation }) {
                     <View style={styles.section}>
                         <Text style={styles.label}>Profile description</Text>
                         <View style={styles.descriptionBox}>
+                            <BlurView intensity={72} tint="dark" style={StyleSheet.absoluteFill} />
+                            <LinearGradient
+                                colors={['rgba(48,12,10,0.2)', 'rgba(48,12,10,0.2)', 'rgba(48,12,10,0.2)']}
+                                start={{ x: 0, y: 0 }}
+                                end={{ x: 1, y: 1 }}
+                                style={StyleSheet.absoluteFill}
+                            />
                             <TextInput
                                 value={description}
                                 onChangeText={(text) => setDescription(text.slice(0, MAX_DESCRIPTION))}
@@ -365,8 +463,13 @@ export default function RequestDetailsScreen({ navigation }) {
                         </View>
                     </View>
 
-                    <TouchableOpacity style={styles.confirmButton} activeOpacity={0.85}>
-                        <Text style={styles.confirmText}>Confirm</Text>
+                    <TouchableOpacity
+                        style={[styles.confirmButton, isSubmitting && styles.confirmButtonDisabled]}
+                        activeOpacity={0.85}
+                        disabled={isSubmitting}
+                        onPress={handleConfirm}
+                    >
+                        <Text style={styles.confirmText}>{isSubmitting ? 'Sending...' : 'Confirm'}</Text>
                     </TouchableOpacity>
                 </View>
             </KeyboardAvoidingView>
@@ -385,17 +488,17 @@ const styles = StyleSheet.create({
         flex: 1,
         paddingHorizontal: scale(16),
         paddingTop: Platform.OS === 'ios' ? scale(60) : scale(40),
-        paddingBottom: scale(28),
+        paddingBottom: scale(20),
     },
     backButton: {
         width: scale(40),
         height: scale(40),
         alignItems: 'flex-start',
         justifyContent: 'center',
-        marginBottom: scale(58),
+        marginBottom: scale(30),
     },
     section: {
-        marginBottom: scale(16),
+        marginBottom: scale(20),
     },
     sectionOpen: {
         zIndex: 40,
@@ -404,32 +507,20 @@ const styles = StyleSheet.create({
         color: '#F5D8CB',
         fontFamily: 'Unbounded-Regular',
         fontSize: scale(20),
-        marginBottom: scale(16),
+        marginBottom: scale(20),
     },
     inputWrapper: {
-        height: scale(60),
-        borderWidth: 1,
-        borderColor: '#F5D8CB',
-        borderRadius: scale(30),
+        height: scale(48),
+        borderWidth: 0.2,
+        borderColor: 'rgba(255, 236, 223, 1)',
+        borderRadius: scale(26),
         flexDirection: 'row',
         alignItems: 'center',
-        paddingRight: scale(14),
-    },
-    leftIconCircle: {
-        position: 'absolute',
-        left: -1,
-        top: -1,
-        width: scale(60),
-        height: scale(60),
-        borderRadius: scale(30),
-        borderWidth: 1,
-        borderColor: '#F5D8CB',
-        alignItems: 'center',
-        justifyContent: 'center',
+        paddingHorizontal: scale(12),
+        overflow: 'hidden',
     },
     input: {
         flex: 1,
-        marginLeft: scale(70),
         color: '#F5D8CB',
         fontFamily: 'Poppins-Regular',
         fontSize: scale(14),
@@ -438,88 +529,124 @@ const styles = StyleSheet.create({
         color: 'rgba(245,216,203,0.65)',
     },
     rightIcon: {
-        marginLeft: scale(10),
+        marginLeft: 0,
     },
-    genreFieldWrap: {
-        position: 'relative',
-        overflow: 'visible',
+    dropdownSelectorText: {
+        color: '#F5D8CB',
+        fontFamily: 'Poppins-Regular',
+        fontSize: scale(13),
     },
-    genreDropdownOverlay: {
+    dropdownDismissLayer: {
         position: 'absolute',
-        top: scale(66),
+        top: 0,
         left: 0,
         right: 0,
-        zIndex: 50,
-        elevation: 20,
+        bottom: 0,
+        zIndex: 19,
     },
-    genreDropdownGlass: {
-        borderColor: '#F5D8CB',
-        borderTopWidth: 0,
-        borderTopLeftRadius: 0,
-        borderTopRightRadius: 0,
-        borderBottomLeftRadius: scale(30),
-        borderBottomRightRadius: scale(30),
-        backgroundColor: 'transparent',
-        height: scale(150),
+    dropdownWrap: {
+        position: 'relative',
+        zIndex: 20,
+        width: '100%',
+        overflow: 'visible',
+    },
+    dropdownBackdrop: {
+        position: 'absolute',
+        top: 0,
+        left: -scale(220),
+        right: -scale(220),
+        bottom: -scale(1300),
+        zIndex: 22,
+    },
+    dropdownSelector: {
+        height: scale(48),
+        borderRadius: scale(26),
+        borderWidth: 0.2,
+        borderColor: 'rgba(255, 236, 223, 1)',
         overflow: 'hidden',
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingHorizontal: scale(18),
+        zIndex: 22,
     },
-    genreList: {
+    dropdownShell: {
+        position: 'absolute',
+        top: scale(20),
+        left: 0,
+        right: 0,
+        borderWidth: 0.3,
+        borderTopWidth: 0,
+        borderColor: 'rgba(255, 236, 223, 1)',
+        borderBottomLeftRadius: scale(26),
+        borderBottomRightRadius: scale(26),
+        overflow: 'hidden',
+        zIndex: 21,
+        paddingTop: scale(12),
+        paddingBottom: scale(14),
+        maxHeight: scale(220),
+    },
+    dropdownList: {
         flex: 1,
     },
-    genreListContent: {
-        paddingTop: scale(14),
-        paddingBottom: scale(16),
+    dropdownListContent: {
+        paddingBottom: scale(0),
     },
-    genreOption: {
-        paddingLeft: scale(50),
-        paddingRight: scale(18),
-        paddingVertical: scale(9),
+    dropdownItem: {
+        paddingVertical: scale(14),
+        paddingHorizontal: scale(24),
     },
-    genreOptionText: {
-        color: '#F5D8CB',
+    dropdownItemText: {
+        color: 'rgba(245,216,203,0.85)',
         fontFamily: 'Poppins-Regular',
         fontSize: scale(14),
     },
-    genreOptionTextSelected: {
+    dropdownItemTextActive: {
+        color: '#F5D8CB',
         fontFamily: 'Poppins-SemiBold',
     },
-    genreLoadingText: {
-        color: '#F5D8CB',
-        opacity: 0.85,
+    dropdownLoadingText: {
+        color: 'rgba(245,216,203,0.85)',
         fontFamily: 'Poppins-Regular',
-        fontSize: scale(16),
-        paddingHorizontal: scale(18),
-        paddingVertical: scale(16),
+        fontSize: scale(14),
+        paddingHorizontal: scale(24),
+        paddingVertical: scale(14),
     },
     descriptionBox: {
-        borderWidth: 1,
-        borderColor: '#F5D8CB',
-        borderRadius: scale(16),
-        minHeight: scale(125),
-        paddingTop: scale(16),
-        paddingHorizontal: scale(16),
-        paddingBottom: scale(14),
+        borderWidth: 0.2,
+        borderColor: 'rgba(255, 236, 223, 1)',
+        borderRadius: scale(20),
+        minHeight: scale(148),
+        paddingTop: scale(10),
+        paddingHorizontal: scale(12),
+        paddingBottom: scale(8),
+        overflow: 'hidden',
     },
     descriptionInput: {
         flex: 1,
         color: '#F5D8CB',
         fontFamily: 'Poppins-Regular',
         fontSize: scale(15),
+        zIndex: 1,
     },
     counter: {
         color: 'rgba(245,216,203,0.72)',
         fontFamily: 'Poppins-Regular',
-        fontSize: scale(14),
+        fontSize: scale(12),
         alignSelf: 'flex-end',
+        zIndex: 1,
     },
     confirmButton: {
         marginTop: 'auto',
-        height: scale(48),
-        borderRadius: scale(32),
+        height: scale(44),
+        borderRadius: scale(22),
         backgroundColor: '#F5D8CB',
         alignItems: 'center',
         justifyContent: 'center',
-        marginBottom: scale(14),
+        marginBottom: scale(10),
+    },
+    confirmButtonDisabled: {
+        opacity: 0.65,
     },
     confirmText: {
         color: '#300C0A',
