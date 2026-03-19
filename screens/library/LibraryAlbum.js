@@ -1,5 +1,4 @@
-import React, { useEffect, useState } from 'react';
-import { SvgUri } from 'react-native-svg';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     View,
     Text,
@@ -7,133 +6,153 @@ import {
     ScrollView,
     Image,
     TouchableOpacity,
-    Dimensions
+    Dimensions,
+    ActivityIndicator,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { getIcons, scale } from '../../api/api';
-import InsetShadow from 'react-native-inset-shadow';
+import { useIsFocused } from '@react-navigation/native';
+import {
+    getAlbums,
+    getAlbumDetails,
+    getAlbumCoverUrl,
+    getLikedAlbums,
+    getMyAlbums,
+    scale,
+} from '../../api/api';
+
 const { width, height } = Dimensions.get('window');
-const svgCache = {};
 
-// 👇 Цей компонент завантажує SVG, чистить, фарбує і КЕШУЄ результат
-const ColoredSvg = ({ uri, width, height, color }) => {
-    const cacheKey = `${uri}_${color || 'original'}`;
-    const [xml, setXml] = useState(svgCache[cacheKey] || null);
+const normalizeAlbumId = (album) =>
+    String(
+        album?.id ||
+            album?.Id ||
+            album?._id ||
+            album?.albumId ||
+            album?.AlbumId ||
+            ''
+    ).trim();
 
-    useEffect(() => {
-        let isMounted = true;
+const resolveAlbumArtist = (album) =>
+    String(
+        album?.artist?.name ||
+            album?.artistName ||
+            album?.artist ||
+            'Unknown Artist'
+    ).trim();
 
-        // 1. Якщо у нас вже є правильна картинка в кеші — беремо її і виходимо
-        if (svgCache[cacheKey]) {
-            setXml(svgCache[cacheKey]);
-            return;
-        }
-
-        // 2. Якщо в кеші немає — вантажимо
-        if (uri) {
-            fetch(uri)
-                .then(response => response.text())
-                .then(svgContent => {
-                    if (isMounted) {
-                        let cleanXml = svgContent.replace(/fill=['"]none['"]/gi, '###NONE###');
-
-                        if (color) {
-                            cleanXml = cleanXml.replace(/fill=['"][^'"]*['"]/g, `fill="${color}"`);
-                            cleanXml = cleanXml.replace(/stroke=['"][^'"]*['"]/g, `stroke="${color}"`);
-                        }
-
-                        cleanXml = cleanXml.replace(/###NONE###/g, 'fill="none"');
-
-                        // Зберігаємо в кеш
-                        svgCache[cacheKey] = cleanXml;
-                        setXml(cleanXml);
-                    }
-                })
-                .catch(err => console.log("SVG Error:", err));
-        }
-
-        return () => { isMounted = false; };
-    }, [cacheKey]); // 🔥 Головне: реагуємо на зміну ключа, а не ігноруємо її
-
-    if (!xml) return <View style={{ width, height }} />;
-
-    return (
-        <SvgXml
-            xml={xml}
-            width={width}
-            height={height}
-        />
-    );
-};
+const resolveAlbumTitle = (album) =>
+    String(album?.title || album?.name || 'Untitled album').trim();
 
 export default function LibraryAlbum({ navigation }) {
-    // Дані згідно зі скріншотом "Album"
-    const DATA = [
-        {
-            id: '1',
-            title: 'Music',
-            subtitle: 'Album / Playboi Carti',
-            // Білий фон / стиль I AM MUSIC
-            image: 'https://images.unsplash.com/photo-1594623930572-300a3011d9ae?q=80&w=300&auto=format&fit=crop'
-        },
-        {
-            id: '2',
-            title: 'Cowboy Carter',
-            subtitle: 'Album / Beyoncé',
-            // Темний фон, вершник
-            image: 'https://images.unsplash.com/photo-1534067783741-512d692f63e7?q=80&w=300&auto=format&fit=crop'
-        },
-        {
-            id: '3',
-            title: 'Hurry Up Tomorrow',
-            subtitle: 'Album / The Weeknd',
-            // Портрет крупним планом
-            image: 'https://images.unsplash.com/photo-1633332755192-727a05c4013d?q=80&w=300&auto=format&fit=crop'
-        },
-        {
-            id: '4',
-            title: 'Don’t Be Dumb',
-            subtitle: 'Album / A$AP Rocky',
-            // Чорно-білий стиль
-            image: 'https://images.unsplash.com/photo-1552374196-c4e7ffc6e126?q=80&w=300&auto=format&fit=crop'
-        },
-        {
-            id: '5',
-            title: 'LG7',
-            subtitle: 'Album / Lady Gaga',
-            // Щось темне/артове
-            image: 'https://images.unsplash.com/photo-1542291026-7eec264c27ff?q=80&w=300&auto=format&fit=crop'
-        },
-        {
-            id: '6',
-            title: 'Lasso',
-            subtitle: 'Album / Lana Del Rey',
-            // Теплі тони
-            image: 'https://images.unsplash.com/photo-1502052531633-9118c7c93836?q=80&w=300&auto=format&fit=crop'
-        },
-        {
-            id: '7',
-            title: 'Short n’ Sweet',
-            subtitle: 'Album / Sabrina Carpenter',
-            // Блакитний фон
-            image: 'https://images.unsplash.com/photo-1516575150278-77136aed6920?q=80&w=300&auto=format&fit=crop'
-        },
-    ];
+    const isFocused = useIsFocused();
+    const [loading, setLoading] = useState(true);
+    const [albums, setAlbums] = useState([]);
 
-    const renderCard = (item) => {
-        return (
+    const toArray = (value) => {
+        if (Array.isArray(value)) return value;
+        if (Array.isArray(value?.items)) return value.items;
+        if (Array.isArray(value?.data)) return value.data;
+        if (Array.isArray(value?.result)) return value.result;
+        return [];
+    };
+
+    const loadAlbums = useCallback(async () => {
+        setLoading(true);
+        try {
+            const [myAlbumsRaw, likedAlbumIdsRaw, allAlbumsRaw] = await Promise.all([
+                getMyAlbums(),
+                getLikedAlbums(),
+                getAlbums(),
+            ]);
+
+            const myAlbums = toArray(myAlbumsRaw);
+            const allAlbums = toArray(allAlbumsRaw);
+            const likedAlbumIds = (Array.isArray(likedAlbumIdsRaw) ? likedAlbumIdsRaw : [])
+                .map((id) => String(id || '').trim())
+                .filter(Boolean);
+
+            const likedIdSet = new Set(likedAlbumIds);
+            const likedFromAll = allAlbums.filter((album) => likedIdSet.has(normalizeAlbumId(album)));
+
+            const unresolvedLikedIds = likedAlbumIds.filter(
+                (albumId) => !likedFromAll.some((album) => normalizeAlbumId(album) === albumId)
+            );
+
+            const likedDetailsFallbackRaw = await Promise.all(
+                unresolvedLikedIds.map(async (albumId) => {
+                    try {
+                        const album = await getAlbumDetails(albumId);
+                        if (!album) return null;
+                        return { ...album, id: normalizeAlbumId(album) || albumId };
+                    } catch (_) {
+                        return null;
+                    }
+                })
+            );
+            const likedDetailsFallback = likedDetailsFallbackRaw.filter(Boolean);
+
+            const uniqueById = new Map();
+            [...myAlbums, ...likedFromAll, ...likedDetailsFallback].forEach((album) => {
+                const id = normalizeAlbumId(album);
+                if (!id) return;
+                if (!uniqueById.has(id)) {
+                    uniqueById.set(id, album);
+                }
+            });
+
+            const mapped = Array.from(uniqueById.values())
+                .map((album) => {
+                    const id = normalizeAlbumId(album);
+                    return {
+                        id,
+                        raw: album,
+                        title: resolveAlbumTitle(album),
+                        subtitle: `Album / ${resolveAlbumArtist(album)}`,
+                        image: getAlbumCoverUrl(id),
+                    };
+                })
+                .sort((a, b) => a.title.localeCompare(b.title));
+
+            setAlbums(mapped);
+        } catch (_) {
+            setAlbums([]);
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        if (isFocused) {
+            loadAlbums();
+        }
+    }, [isFocused, loadAlbums]);
+
+    const content = useMemo(() => {
+        if (loading) {
+            return (
+                <View style={styles.centerState}>
+                    <ActivityIndicator size="small" color="#F5D8CB" />
+                </View>
+            );
+        }
+
+        if (albums.length === 0) {
+            return (
+                <View style={styles.centerState}>
+                    <Text style={styles.emptyText}>No albums yet</Text>
+                </View>
+            );
+        }
+
+        return albums.map((item) => (
             <TouchableOpacity
                 key={item.id}
-                style={styles.cardContainer} // Стиль 1 в 1 як у Playlist/Songs
-                activeOpacity={0.7}
-                onPress={() => {}}
+                style={styles.cardContainer}
+                activeOpacity={0.8}
+                onPress={() => navigation.navigate('AlbumDetail', { id: item.id, album: item.raw })}
             >
                 <View style={styles.imageWrapper}>
-                    <Image
-                        source={{ uri: item.image }}
-                        style={styles.image}
-                        resizeMode="cover"
-                    />
+                    <Image source={{ uri: item.image }} style={styles.image} resizeMode="cover" />
                 </View>
 
                 <View style={styles.textContainer}>
@@ -145,8 +164,8 @@ export default function LibraryAlbum({ navigation }) {
                     </Text>
                 </View>
             </TouchableOpacity>
-        );
-    };
+        ));
+    }, [albums, loading, navigation]);
 
     return (
         <View style={styles.container}>
@@ -157,7 +176,6 @@ export default function LibraryAlbum({ navigation }) {
                 end={{ x: 0.5, y: 1 }}
                 style={styles.gradient}
             >
-                {/* Відступ під хедер (220, як домовлялися) */}
                 <View style={{ height: 208 }} />
 
                 <ScrollView
@@ -165,9 +183,7 @@ export default function LibraryAlbum({ navigation }) {
                     contentContainerStyle={styles.scrollContent}
                     showsVerticalScrollIndicator={false}
                 >
-                    {DATA.map((item) => renderCard(item))}
-
-                    {/* Відступ знизу */}
+                    {content}
                     <View style={{ height: scale(100) }} />
                 </ScrollView>
             </LinearGradient>
@@ -181,62 +197,64 @@ const styles = StyleSheet.create({
     },
     gradient: {
         flex: 1,
-        width: width,
-        height: height,
+        width,
+        height,
     },
     scrollContent: {
         paddingHorizontal: scale(16),
         paddingTop: scale(8),
         paddingBottom: scale(100),
     },
-
-    // --- CARD STYLES (Ідентичні до попередніх) ---
+    centerState: {
+        minHeight: scale(140),
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    emptyText: {
+        color: 'rgba(245,216,203,0.85)',
+        fontFamily: 'Poppins-Regular',
+        fontSize: scale(14),
+    },
     cardContainer: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: 'rgba(48, 12, 10, 0.2)', // Темний напівпрозорий фон
+        backgroundColor: 'rgba(48, 12, 10, 0.2)',
         borderRadius: scale(20),
         marginBottom: scale(16),
         width: '100%',
-
-        // Зберігаємо специфічне скруглення зліва
         borderTopLeftRadius: scale(50),
         borderBottomLeftRadius: scale(50),
-
-        shadowColor: "#000",
+        shadowColor: '#000',
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.3,
         shadowRadius: 4,
     },
-
     imageWrapper: {
         marginRight: scale(16),
         justifyContent: 'center',
         alignItems: 'center',
     },
-
     image: {
         width: scale(80),
         height: scale(80),
         borderRadius: scale(15),
         backgroundColor: '#333',
     },
-
-    // --- TEXT STYLES ---
     textContainer: {
         flex: 1,
         justifyContent: 'center',
         paddingRight: scale(10),
     },
     title: {
-        color: '#FF4D4F',
+        color: '#F5D8CB',
         fontSize: scale(16),
         fontFamily: 'Unbounded-Medium',
         marginBottom: scale(4),
     },
     subtitle: {
-        color: '#FF4D4F',
+        color: '#F5D8CB',
         fontSize: scale(14),
         fontFamily: 'Poppins-Regular',
+        opacity: 0.9,
     },
 });

@@ -72,6 +72,24 @@ const ColoredSvg = ({ uri, width, height, color }) => {
         />
     );
 };
+
+const normalizeNamesList = (value) => {
+    if (Array.isArray(value)) {
+        return value
+            .map((item) => String(item || '').trim())
+            .filter(Boolean);
+    }
+
+    if (typeof value === 'string') {
+        return value
+            .split(',')
+            .map((item) => item.trim())
+            .filter(Boolean);
+    }
+
+    return [];
+};
+
 export default function TrackInfoScreen({ navigation, route }) {
     // Отримуємо трек з параметрів навігації
     const { track } = route.params || {};
@@ -184,6 +202,10 @@ export default function TrackInfoScreen({ navigation, route }) {
         ? sourceTrack.genres.join(', ')
         : 'Pop, Synth-pop';
     const isGenreMock = !Array.isArray(sourceTrack?.genres) || sourceTrack.genres.length === 0;
+    const lyricists = normalizeNamesList(sourceTrack?.lyricists);
+    const producers = normalizeNamesList(sourceTrack?.producers);
+    const hasLyricists = lyricists.length > 0;
+    const hasProducers = producers.length > 0;
 
     return (
         <View style={styles.container}>
@@ -266,8 +288,18 @@ export default function TrackInfoScreen({ navigation, route }) {
                                 <Text style={styles.detailTitle}>Songwriters:</Text>
                             </View>
                             <View style={styles.bulletList}>
-                                <Text style={[styles.detailText, styles.detailTextMock]}>• {artistName}</Text>
-                                <Text style={[styles.detailText, styles.detailTextMock]}>• Unknown Writer</Text>
+                                {hasLyricists ? (
+                                    lyricists.map((name, idx) => (
+                                        <Text key={`lyricist-${idx}`} style={styles.detailText}>
+                                            • {name}
+                                        </Text>
+                                    ))
+                                ) : (
+                                    <>
+                                        <Text style={[styles.detailText, styles.detailTextMock]}>• {artistName}</Text>
+                                        <Text style={[styles.detailText, styles.detailTextMock]}>• Unknown Writer</Text>
+                                    </>
+                                )}
                             </View>
                             <View style={styles.separator} />
                         </View>
@@ -278,7 +310,15 @@ export default function TrackInfoScreen({ navigation, route }) {
                                 <Text style={styles.detailTitle}>Producers:</Text>
                             </View>
                             <View style={styles.bulletList}>
-                                <Text style={[styles.detailText, styles.detailTextMock]}>• Unknown Producer</Text>
+                                {hasProducers ? (
+                                    producers.map((name, idx) => (
+                                        <Text key={`producer-${idx}`} style={styles.detailText}>
+                                            • {name}
+                                        </Text>
+                                    ))
+                                ) : (
+                                    <Text style={[styles.detailText, styles.detailTextMock]}>• Unknown Producer</Text>
+                                )}
                             </View>
                             <View style={styles.separator} />
                         </View>
@@ -401,6 +441,9 @@ const styles = StyleSheet.create({
     },
     detailBlock: {
         marginBottom: scale(20),
+    },
+    bulletList: {
+        rowGap: scale(2),
     },
     detailTitle: {
         color: '#F5D8CB',

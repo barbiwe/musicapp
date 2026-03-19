@@ -26,7 +26,12 @@ import {
 import RemoteTintIcon from '../../components/RemoteTintIcon';
 
 const MAX_DESCRIPTION = 200;
-const normalizeGenres = (rawGenres) => {
+const toNumericId = (value) => {
+    const num = Number(value);
+    return Number.isFinite(num) ? num : null;
+};
+
+const normalizeSpecializations = (rawGenres) => {
     if (!Array.isArray(rawGenres)) return [];
 
     const used = new Set();
@@ -36,17 +41,34 @@ const normalizeGenres = (rawGenres) => {
                 const label = item.trim();
                 if (!label) return null;
                 return {
-                    id: `genre_${label.toLowerCase()}_${index}`,
+                    id: index,
                     label,
                 };
             }
 
-            const label = String(item?.name || item?.title || item?.label || '').trim();
+            const label = String(
+                item?.name ||
+                item?.Name ||
+                item?.title ||
+                item?.Title ||
+                item?.label ||
+                item?.Label ||
+                ''
+            ).trim();
             if (!label) return null;
-
-            const id = item?.id || item?._id || item?.genreId || item?.value || index;
+            const id =
+                toNumericId(
+                    item?.id ??
+                    item?.Id ??
+                    item?._id ??
+                    item?.genreId ??
+                    item?.GenreId ??
+                    item?.value ??
+                    item?.Value
+                ) ??
+                index;
             return {
-                id: String(id),
+                id,
                 label,
             };
         })
@@ -69,17 +91,36 @@ const normalizeCountries = (rawCountries) => {
                 const label = item.trim();
                 if (!label) return null;
                 return {
-                    id: `country_${label.toLowerCase()}_${index}`,
+                    id: index,
                     label,
                 };
             }
 
-            const label = String(item?.name || item?.title || item?.label || item?.value || '').trim();
+            const label = String(
+                item?.name ||
+                item?.Name ||
+                item?.title ||
+                item?.Title ||
+                item?.label ||
+                item?.Label ||
+                item?.value ||
+                item?.Value ||
+                ''
+            ).trim();
             if (!label) return null;
-
-            const id = item?.id || item?._id || item?.code || index;
+            const id =
+                toNumericId(
+                    item?.id ??
+                    item?.Id ??
+                    item?._id ??
+                    item?.code ??
+                    item?.Code ??
+                    item?.value ??
+                    item?.Value
+                ) ??
+                index;
             return {
-                id: String(id),
+                id,
                 label,
             };
         })
@@ -122,7 +163,7 @@ export default function RequestDetailsScreen({ navigation }) {
 
                 if (!mounted) return;
                 setIcons(iconsMap || {});
-                setGenres(normalizeGenres(genresData));
+                setGenres(normalizeSpecializations(genresData));
                 setCountries(normalizeCountries(countriesData));
             } catch (_) {
                 if (!mounted) return;
@@ -151,22 +192,11 @@ export default function RequestDetailsScreen({ navigation }) {
         return found || name;
     };
 
-    const parseId = (value) => {
-        if (value === null || value === undefined) return null;
-        const asNumber = Number(value);
-        if (Number.isFinite(asNumber)) return asNumber;
-        return value;
-    };
-
     const handleConfirm = async () => {
         const username = String(nick || '').trim();
         const aboutMe = String(description || '').trim();
-        const countryId = parseId(selectedCountryId);
-        const rawSpecialization = parseId(selectedGenreId);
-        const specialization =
-            rawSpecialization !== null && rawSpecialization !== undefined
-                ? rawSpecialization
-                : String(genre || '').trim() || null;
+        const countryId = toNumericId(selectedCountryId);
+        const specialization = toNumericId(selectedGenreId);
 
         if (!username) {
             Alert.alert('Request', 'Enter nickname.');
@@ -178,8 +208,8 @@ export default function RequestDetailsScreen({ navigation }) {
             return;
         }
 
-        if (!specialization) {
-            Alert.alert('Request', 'Select genre.');
+        if (specialization === null || specialization === undefined) {
+            Alert.alert('Request', 'Select specialization.');
             return;
         }
 
@@ -198,12 +228,13 @@ export default function RequestDetailsScreen({ navigation }) {
         setIsSubmitting(false);
 
         if (result?.success) {
-            Alert.alert('Request', 'Author request sent.', [
-                {
-                    text: 'OK',
-                    onPress: () => navigation.goBack(),
-                },
-            ]);
+            navigation.reset({
+                index: 1,
+                routes: [
+                    { name: 'MainTabs' },
+                    { name: 'Profile' },
+                ],
+            });
             return;
         }
 
@@ -582,7 +613,7 @@ const styles = StyleSheet.create({
         borderBottomRightRadius: scale(26),
         overflow: 'hidden',
         zIndex: 21,
-        paddingTop: scale(12),
+        paddingTop: scale(30),
         paddingBottom: scale(14),
         maxHeight: scale(220),
     },

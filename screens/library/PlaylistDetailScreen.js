@@ -1,9 +1,11 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+    Animated,
     ActivityIndicator,
     Alert,
     Image,
     Modal,
+    PanResponder,
     Pressable,
     ScrollView,
     StatusBar,
@@ -31,6 +33,7 @@ import {
 } from '../../api/api';
 import RemoteTintIcon from '../../components/RemoteTintIcon';
 import { usePlayerStore } from '../../store/usePlayerStore';
+const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
 const getTrackId = (track) =>
     String(
@@ -154,6 +157,37 @@ export default function PlaylistDetailScreen({ navigation, route }) {
     const [localCoverUri, setLocalCoverUri] = useState(null);
     const [mainCoverBroken, setMainCoverBroken] = useState(false);
     const [brokenTrackCovers, setBrokenTrackCovers] = useState({});
+    const modalDragY = useRef(new Animated.Value(0)).current;
+
+    const resetModalDrag = () => {
+        Animated.spring(modalDragY, {
+            toValue: 0,
+            useNativeDriver: true,
+            tension: 120,
+            friction: 12,
+        }).start();
+    };
+
+    const modalPanResponder = useRef(
+        PanResponder.create({
+            onMoveShouldSetPanResponder: (_evt, gesture) =>
+                gesture.dy > 14 && Math.abs(gesture.dy) > Math.abs(gesture.dx),
+            onPanResponderMove: (_evt, gesture) => {
+                modalDragY.setValue(Math.max(0, gesture.dy));
+            },
+            onPanResponderRelease: (_evt, gesture) => {
+                if (gesture.dy > 120 || gesture.vy > 1.1) {
+                    modalDragY.setValue(0);
+                    setAddModalVisible(false);
+                } else {
+                    resetModalDrag();
+                }
+            },
+            onPanResponderTerminate: () => {
+                resetModalDrag();
+            },
+        })
+    ).current;
 
     const resolveIconName = (name) => {
         if (!name) return '';
@@ -443,10 +477,23 @@ export default function PlaylistDetailScreen({ navigation, route }) {
                 visible={addModalVisible}
                 transparent
                 animationType="fade"
-                onRequestClose={() => setAddModalVisible(false)}
+                onRequestClose={() => {
+                    modalDragY.setValue(0);
+                    setAddModalVisible(false);
+                }}
             >
-                <Pressable style={styles.modalOverlay} onPress={() => setAddModalVisible(false)}>
-                    <Pressable style={styles.modalCard}>
+                <Pressable
+                    style={styles.modalOverlay}
+                    onPress={() => {
+                        modalDragY.setValue(0);
+                        setAddModalVisible(false);
+                    }}
+                >
+                    <AnimatedPressable
+                        onPress={() => {}}
+                        {...modalPanResponder.panHandlers}
+                        style={[styles.modalCard, { transform: [{ translateY: modalDragY }] }]}
+                    >
                         <Text style={styles.modalTitle}>Add tracks</Text>
 
                         <ScrollView showsVerticalScrollIndicator={false}>
@@ -480,7 +527,7 @@ export default function PlaylistDetailScreen({ navigation, route }) {
                                 })
                             )}
                         </ScrollView>
-                    </Pressable>
+                    </AnimatedPressable>
                 </Pressable>
             </Modal>
         </LinearGradient>

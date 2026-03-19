@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
+    Animated,
     View,
     Text,
     TextInput,
@@ -9,6 +10,7 @@ import {
     TouchableOpacity,
     Modal,
     FlatList,
+    PanResponder,
     SafeAreaView,
     ScrollView,
 } from 'react-native';
@@ -38,6 +40,8 @@ export default function MusicScreen({ navigation }) {
     // Track upload state
     const [trackTitle, setTrackTitle] = useState('');
     const [trackLyrics, setTrackLyrics] = useState('');
+    const [trackProducers, setTrackProducers] = useState('');
+    const [trackLyricists, setTrackLyricists] = useState('');
     const [trackFile, setTrackFile] = useState(null);
     const [trackCover, setTrackCover] = useState(null);
     const [albums, setAlbums] = useState([]);
@@ -60,6 +64,43 @@ export default function MusicScreen({ navigation }) {
     const [episodeDraftDescription, setEpisodeDraftDescription] = useState('');
     const [podcastEpisodes, setPodcastEpisodes] = useState([]); // additional episodes (episode 2+)
     const [podcastLoading, setPodcastLoading] = useState(false);
+    const modalDragY = useRef(new Animated.Value(0)).current;
+
+    const closeAnyModal = () => {
+        modalDragY.setValue(0);
+        setAlbumModalVisible(false);
+        setTrackGenreModalVisible(false);
+        setPodcastGenreModalVisible(false);
+    };
+
+    const resetModalDrag = () => {
+        Animated.spring(modalDragY, {
+            toValue: 0,
+            useNativeDriver: true,
+            tension: 120,
+            friction: 12,
+        }).start();
+    };
+
+    const modalPanResponder = useRef(
+        PanResponder.create({
+            onMoveShouldSetPanResponder: (_evt, gesture) =>
+                gesture.dy > 14 && Math.abs(gesture.dy) > Math.abs(gesture.dx),
+            onPanResponderMove: (_evt, gesture) => {
+                modalDragY.setValue(Math.max(0, gesture.dy));
+            },
+            onPanResponderRelease: (_evt, gesture) => {
+                if (gesture.dy > 120 || gesture.vy > 1.1) {
+                    closeAnyModal();
+                } else {
+                    resetModalDrag();
+                }
+            },
+            onPanResponderTerminate: () => {
+                resetModalDrag();
+            },
+        })
+    ).current;
 
     useEffect(() => {
         void fetchData();
@@ -227,7 +268,9 @@ export default function MusicScreen({ navigation }) {
             albumId || null,
             trackCover,
             selectedTrackGenreIds,
-            trackLyrics.trim()
+            trackLyrics.trim(),
+            trackProducers,
+            trackLyricists
         );
 
         setTrackLoading(false);
@@ -240,6 +283,8 @@ export default function MusicScreen({ navigation }) {
         Alert.alert('Success', 'Track uploaded successfully');
         setTrackTitle('');
         setTrackLyrics('');
+        setTrackProducers('');
+        setTrackLyricists('');
         setTrackFile(null);
         setTrackCover(null);
         setSelectedAlbum(null);
@@ -360,6 +405,24 @@ export default function MusicScreen({ navigation }) {
                             placeholderTextColor="#999"
                             multiline
                             numberOfLines={4}
+                        />
+
+                        <TextInput
+                            placeholder="Producers (optional, comma separated)"
+                            value={trackProducers}
+                            onChangeText={setTrackProducers}
+                            style={styles.input}
+                            placeholderTextColor="#999"
+                            autoCapitalize="none"
+                        />
+
+                        <TextInput
+                            placeholder="Lyricists (optional, comma separated)"
+                            value={trackLyricists}
+                            onChangeText={setTrackLyricists}
+                            style={styles.input}
+                            placeholderTextColor="#999"
+                            autoCapitalize="none"
                         />
 
                         <TouchableOpacity style={styles.selector} onPress={() => setAlbumModalVisible(true)} activeOpacity={0.85}>
@@ -537,7 +600,10 @@ export default function MusicScreen({ navigation }) {
 
             <Modal visible={isAlbumModalVisible} transparent animationType="slide">
                 <View style={styles.modalOverlay}>
-                    <View style={styles.modalContent}>
+                    <Animated.View
+                        {...modalPanResponder.panHandlers}
+                        style={[styles.modalContent, { transform: [{ translateY: modalDragY }] }]}
+                    >
                         <Text style={styles.modalTitle}>Select Album</Text>
                         <FlatList
                             data={albums}
@@ -547,6 +613,7 @@ export default function MusicScreen({ navigation }) {
                                     style={styles.listItem}
                                     onPress={() => {
                                         setSelectedAlbum(item);
+                                        modalDragY.setValue(0);
                                         setAlbumModalVisible(false);
                                     }}
                                 >
@@ -554,16 +621,26 @@ export default function MusicScreen({ navigation }) {
                                 </TouchableOpacity>
                             )}
                         />
-                        <TouchableOpacity style={styles.modalCloseBtn} onPress={() => setAlbumModalVisible(false)} activeOpacity={0.85}>
+                        <TouchableOpacity
+                            style={styles.modalCloseBtn}
+                            onPress={() => {
+                                modalDragY.setValue(0);
+                                setAlbumModalVisible(false);
+                            }}
+                            activeOpacity={0.85}
+                        >
                             <Text style={styles.modalCloseText}>Close</Text>
                         </TouchableOpacity>
-                    </View>
+                    </Animated.View>
                 </View>
             </Modal>
 
             <Modal visible={isTrackGenreModalVisible} transparent animationType="slide">
                 <View style={styles.modalOverlay}>
-                    <View style={styles.modalContent}>
+                    <Animated.View
+                        {...modalPanResponder.panHandlers}
+                        style={[styles.modalContent, { transform: [{ translateY: modalDragY }] }]}
+                    >
                         <Text style={styles.modalTitle}>Select track genres</Text>
                         <FlatList
                             data={trackGenres}
@@ -584,18 +661,24 @@ export default function MusicScreen({ navigation }) {
                         />
                         <TouchableOpacity
                             style={styles.modalCloseBtn}
-                            onPress={() => setTrackGenreModalVisible(false)}
+                            onPress={() => {
+                                modalDragY.setValue(0);
+                                setTrackGenreModalVisible(false);
+                            }}
                             activeOpacity={0.85}
                         >
                             <Text style={styles.modalCloseText}>Done</Text>
                         </TouchableOpacity>
-                    </View>
+                    </Animated.View>
                 </View>
             </Modal>
 
             <Modal visible={isPodcastGenreModalVisible} transparent animationType="slide">
                 <View style={styles.modalOverlay}>
-                    <View style={styles.modalContent}>
+                    <Animated.View
+                        {...modalPanResponder.panHandlers}
+                        style={[styles.modalContent, { transform: [{ translateY: modalDragY }] }]}
+                    >
                         <Text style={styles.modalTitle}>Select podcast genres</Text>
                         <FlatList
                             data={podcastGenres}
@@ -616,12 +699,15 @@ export default function MusicScreen({ navigation }) {
                         />
                         <TouchableOpacity
                             style={styles.modalCloseBtn}
-                            onPress={() => setPodcastGenreModalVisible(false)}
+                            onPress={() => {
+                                modalDragY.setValue(0);
+                                setPodcastGenreModalVisible(false);
+                            }}
                             activeOpacity={0.85}
                         >
                             <Text style={styles.modalCloseText}>Done</Text>
                         </TouchableOpacity>
-                    </View>
+                    </Animated.View>
                 </View>
             </Modal>
         </SafeAreaView>

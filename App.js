@@ -41,6 +41,7 @@ import DiscoverScreen from './screens/DiscoverScreen.js';
 import ArtistProfileScreen from './screens/ArtistProfileScreen';
 import SongInfoScreen from './screens/SongInfoScreen';
 import LibraryScreen from './screens/library/LibraryScreen';
+import LibrarySearchScreen from './screens/library/LibrarySearchScreen';
 import LikedSongsScreen from './screens/library/LikedSongsScreen';
 import CreatePlaylistScreen from './screens/library/CreatePlaylistScreen';
 import PlaylistDetailScreen from './screens/library/PlaylistDetailScreen';
@@ -199,6 +200,7 @@ function LibraryStackScreen() {
     return (
         <LibraryStack.Navigator screenOptions={{ headerShown: false }}>
             <LibraryStack.Screen name="LibraryMain" component={LibraryScreen} />
+            <LibraryStack.Screen name="LibrarySearch" component={LibrarySearchScreen} />
             <LibraryStack.Screen name="LikedSongs" component={LikedSongsScreen} />
             <LibraryStack.Screen name="PlaylistDetail" component={PlaylistDetailScreen} />
         </LibraryStack.Navigator>

@@ -1,10 +1,10 @@
 {
   "expo": {
-    "name": "MussicApp",
+    "name": "VOX",
     "slug": "mussicapp",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/splash.png",
+    "icon": "./assets/vox_icon.png",
     "scheme": "mussicapp",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
@@ -35,7 +35,7 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/splash.png",
+        "foregroundImage": "./assets/vox_icon.png",
         "backgroundColor": "#ffffff"
       },
       "package": "com.fidanuka.mussicapp",
@@ -43,7 +43,7 @@
       "usesCleartextTraffic": true
     },
     "web": {
-      "favicon": "./assets/splash.png"
+      "favicon": "./assets/vox_icon.png"
     },
     "plugins": [
       [

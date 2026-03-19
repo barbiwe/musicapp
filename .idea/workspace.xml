@@ -5,49 +5,22 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="4dc7471c-7e11-428f-9b6d-dd157181614d" name="Changes" comment="...">
-      <change beforePath="$PROJECT_DIR$/.idea/dataSources.local.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/dataSources.local.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/dataSources.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/dataSources.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/dataSources/1d9cf03c-25a1-49e6-bc1f-8b0c366fcb4d.xml" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/dataSources/1d9cf03c-25a1-49e6-bc1f-8b0c366fcb4d/storage_v2/_src_/database/mussicapp.v9GsKA.meta" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/dataSources/1d9cf03c-25a1-49e6-bc1f-8b0c366fcb4d/storage_v2/_src_/database/mussicapp.v9GsKA/schema/public.abK9xQ.meta" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/dataSources/33154883-ca58-4f4b-aa36-b1065c372272.xml" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/dataSources/33154883-ca58-4f4b-aa36-b1065c372272/storage_v2/_src_/database/mussicapp.v9GsKA.meta" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/dataSources/33154883-ca58-4f4b-aa36-b1065c372272/storage_v2/_src_/database/mussicapp.v9GsKA/schema/information_schema.FNRwLQ.meta" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/dataSources/33154883-ca58-4f4b-aa36-b1065c372272/storage_v2/_src_/database/mussicapp.v9GsKA/schema/pg_catalog.0S1ZNQ.meta" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/dataSources/33154883-ca58-4f4b-aa36-b1065c372272/storage_v2/_src_/database/mussicapp.v9GsKA/schema/public.abK9xQ.meta" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/dataSources/33154883-ca58-4f4b-aa36-b1065c372272/storage_v2/_src_/database/mussicdb.IEncMg.meta" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/dataSources/33154883-ca58-4f4b-aa36-b1065c372272/storage_v2/_src_/database/mussicdb.IEncMg/schema/information_schema.FNRwLQ.meta" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/dataSources/33154883-ca58-4f4b-aa36-b1065c372272/storage_v2/_src_/database/mussicdb.IEncMg/schema/pg_catalog.0S1ZNQ.meta" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/dataSources/33154883-ca58-4f4b-aa36-b1065c372272/storage_v2/_src_/database/postgres.edMnLQ.meta" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/dataSources/33154883-ca58-4f4b-aa36-b1065c372272/storage_v2/_src_/database/postgres.edMnLQ/schema/information_schema.FNRwLQ.meta" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/dataSources/33154883-ca58-4f4b-aa36-b1065c372272/storage_v2/_src_/database/postgres.edMnLQ/schema/pg_catalog.0S1ZNQ.meta" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/dataSources/33154883-ca58-4f4b-aa36-b1065c372272/storage_v2/_src_/database/postgres.edMnLQ/schema/public.abK9xQ.meta" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/dataSources/8acf8d3a-c558-4ef2-a5d9-5bc773a13791.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/dataSources/8acf8d3a-c558-4ef2-a5d9-5bc773a13791.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/dataSources/96318fc7-e1b2-4dce-806d-e7783052e0b9.xml" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/dataSources/96318fc7-e1b2-4dce-806d-e7783052e0b9/storage_v2/_src_/database/mussicapp.v9GsKA.meta" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/dataSources/96318fc7-e1b2-4dce-806d-e7783052e0b9/storage_v2/_src_/database/mussicapp.v9GsKA/schema/public.abK9xQ.meta" beforeDir="false" />
+      <change afterPath="$PROJECT_DIR$/assets/vox_icon.png" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/App.js" beforeDir="false" afterPath="$PROJECT_DIR$/App.js" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/api/api.js" beforeDir="false" afterPath="$PROJECT_DIR$/api/api.js" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/app.json" beforeDir="false" afterPath="$PROJECT_DIR$/app.json" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/components/MiniPlayer.js" beforeDir="false" afterPath="$PROJECT_DIR$/components/MiniPlayer.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/index.js" beforeDir="false" afterPath="$PROJECT_DIR$/index.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/package-lock.json" beforeDir="false" afterPath="$PROJECT_DIR$/package-lock.json" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/package.json" beforeDir="false" afterPath="$PROJECT_DIR$/package.json" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/screens/AlbumDetailScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/AlbumDetailScreen.js" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/screens/DiscoverScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/DiscoverScreen.js" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/screens/MusicScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/MusicScreen.js" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/screens/PlayerScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/PlayerScreen.js" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/screens/ProScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/ProScreen.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/screens/TrackListScreen.js" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/screens/SongInfoScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/SongInfoScreen.js" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/screens/library/ChooseArtistScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/library/ChooseArtistScreen.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/screens/library/ChoosePodcastScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/library/ChoosePodcastScreen.js" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/screens/library/LibraryAlbum.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/library/LibraryAlbum.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/screens/library/LibraryAll.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/library/LibraryAll.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/screens/library/LibraryPlaylist.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/library/LibraryPlaylist.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/screens/library/LibraryPodcast.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/library/LibraryPodcast.js" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/screens/library/LibraryScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/library/LibraryScreen.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/screens/library/LibrarySongs.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/library/LibrarySongs.js" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/screens/request/RequestDetailsScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/request/RequestDetailsScreen.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/services/playbackService.js" beforeDir="false" afterPath="$PROJECT_DIR$/services/playbackService.js" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/store/usePlayerStore.js" beforeDir="false" afterPath="$PROJECT_DIR$/store/usePlayerStore.js" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
@@ -106,10 +79,10 @@
       <recent name="$PROJECT_DIR$/assets/fonts" />
     </key>
     <key name="MoveFile.RECENT_KEYS">
+      <recent name="$PROJECT_DIR$/assets" />
       <recent name="$PROJECT_DIR$/screens/profile" />
       <recent name="$PROJECT_DIR$/screens/library" />
       <recent name="$PROJECT_DIR$/screens/auth" />
-      <recent name="$PROJECT_DIR$/assets" />
     </key>
   </component>
   <component name="SharedIndexes">
@@ -137,7 +110,7 @@
       <workItem from="1771780919967" duration="59840000" />
       <workItem from="1772911757358" duration="61382000" />
       <workItem from="1773760871902" duration="11245000" />
-      <workItem from="1773782618521" duration="5121000" />
+      <workItem from="1773782618521" duration="27478000" />
     </task>
     <servers />
   </component>

@@ -10,12 +10,11 @@ import {
     Image,
     Dimensions,
     Platform,
-    TextInput
 } from 'react-native';
 import { SvgXml } from 'react-native-svg';
 import { LinearGradient } from 'expo-linear-gradient';
 
-import { getIcons, scale } from '../../api/api';
+import { getAllArtists, getIcons, getUserAvatarUrl, scale } from '../../api/api';
 
 const { width, height } = Dimensions.get('window');
 
@@ -62,25 +61,14 @@ const ColoredSvg = ({ uri, width, height, color }) => {
 
 export default function ChooseArtistScreen({ navigation }) {
     const [icons, setIcons] = useState({});
-    const [searchQuery, setSearchQuery] = useState('');
+    const [artistsData, setArtistsData] = useState([]);
 
     // Стейт для зберігання ID вибраних артистів
     const [selectedArtists, setSelectedArtists] = useState([]);
 
-    // Дані для артистів (Останній елемент — це спец. кнопка)
     const ARTISTS_DATA = [
-        { id: '1', title: 'ASAP Rocky', image: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?q=80&w=300&auto=format&fit=crop' },
-        { id: '2', title: 'Nikow', image: 'https://images.unsplash.com/photo-1570295999919-56ceb5ecca61?q=80&w=300&auto=format&fit=crop' },
-        { id: '3', title: 'The Weeknd', image: 'https://images.unsplash.com/photo-1520333789090-1afc82db536a?q=80&w=300&auto=format&fit=crop' },
-        { id: '4', title: 'Lady Gaga', image: 'https://images.unsplash.com/photo-1500917293891-ef795e70e1f6?q=80&w=300&auto=format&fit=crop' },
-        { id: '5', title: 'MONATIK', image: 'https://www.chipublib.org/wp-content/uploads/sites/3/2022/09/36079964425_7b3042d5e1_k.jpg' },
-        { id: '6', title: 'Eminem', image: 'https://images.unsplash.com/photo-1529626455594-4ff0802cfb7e?q=80&w=300&auto=format&fit=crop' },
-        { id: '7', title: 'Travis Scott', image: 'https://images.unsplash.com/photo-1493225255756-d9584f8606e9?q=80&w=300&auto=format&fit=crop' },
-        { id: '8', title: 'Drake', image: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=300&auto=format&fit=crop' },
-        { id: '9', title: 'Rihanna', image: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?q=80&w=300&auto=format&fit=crop' },
-        { id: '10', title: 'LOBODA', image: 'https://images.unsplash.com/photo-1531746020798-e6953c6e8e04?q=80&w=300&auto=format&fit=crop' },
-        { id: '11', title: 'INNA', image: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?q=80&w=300&auto=format&fit=crop' },
-        { id: 'rec', title: 'Recommended for you', isRecommended: true }
+        ...artistsData.slice(0, 11),
+        { id: 'rec', title: 'Recommended for u', isRecommended: true },
     ];
 
     // Функція для розбиття масиву на рядки по 3 елементи
@@ -100,8 +88,58 @@ export default function ChooseArtistScreen({ navigation }) {
 
     const loadIcons = async () => {
         try {
-            const loadedIcons = await getIcons();
+            const [loadedIcons, allArtistsRaw] = await Promise.all([
+                getIcons(),
+                getAllArtists(),
+            ]);
             setIcons(loadedIcons || {});
+
+            const normalizeArtist = (item, index) => {
+                const id = String(
+                    item?.artistId ||
+                    item?.id ||
+                    item?._id ||
+                    item?.userId ||
+                    item?.ownerId ||
+                    ''
+                ).trim();
+
+                const name = String(
+                    item?.artistName ||
+                    item?.name ||
+                    item?.username ||
+                    item?.displayName ||
+                    item?.artist?.name ||
+                    ''
+                ).trim();
+
+                if (!id || !name) return null;
+
+                return {
+                    id: `artist-${id}`,
+                    title: name,
+                    image:
+                        item?.avatarUrl ||
+                        item?.artistAvatarUrl ||
+                        getUserAvatarUrl(id),
+                    order: index,
+                };
+            };
+
+            const allArtists = Array.isArray(allArtistsRaw) ? allArtistsRaw : [];
+            const normalized = allArtists
+                .map((item, index) => normalizeArtist(item, index))
+                .filter(Boolean);
+
+            const uniq = [];
+            const used = new Set();
+            normalized.forEach((artist) => {
+                if (used.has(artist.id)) return;
+                used.add(artist.id);
+                uniq.push(artist);
+            });
+
+            setArtistsData(uniq.slice(0, 11));
         } catch (e) {
             console.log("Error loading icons:", e);
         }
@@ -146,11 +184,16 @@ export default function ChooseArtistScreen({ navigation }) {
         const isSelected = selectedArtists.includes(item.id);
 
         if (item.isRecommended) {
-            // Кругла картка "Recommended for you"
+            // Кругла картка "Recommended for u"
             return (
-                <TouchableOpacity key={item.id} style={styles.cardContainer} activeOpacity={0.8}>
+                <TouchableOpacity
+                    key={item.id}
+                    style={styles.cardContainer}
+                    activeOpacity={0.8}
+                    onPress={() => navigation.navigate('MainTabs', { screen: 'SearchTab' })}
+                >
                     <View style={[styles.imageCircle, styles.moreCard]}>
-                        <Text style={styles.moreText}>Recommended{"\n"}for you</Text>
+                        <Text style={styles.moreText}>Recommended{"\n"}for u</Text>
                     </View>
                     <Text style={styles.hiddenTitle}> </Text>
                 </TouchableOpacity>
@@ -221,26 +264,11 @@ export default function ChooseArtistScreen({ navigation }) {
                         <Text style={styles.headerTitle}>Choose more{"\n"}artists that you like</Text>
                     </View>
 
-                    {/* SEARCH BAR */}
-                    <View style={styles.searchContainer}>
-                        <View style={styles.searchBox}>
-                            {renderIcon('search.svg', { width: scale(24), height: scale(24) }, 'rgba(245, 216, 203, 0.5)')}
-                            <TextInput
-                                style={styles.searchInput}
-                                placeholder="Search"
-                                placeholderTextColor="rgba(245, 216, 203, 0.5)"
-                                value={searchQuery}
-                                onChangeText={setSearchQuery}
-                                selectionColor="#F5D8CB"
-                            />
-                        </View>
-                    </View>
-
                     {/* GRID З АРТИСТАМИ */}
                     <ScrollView
                         showsVerticalScrollIndicator={false}
                         bounces={false}
-                        contentContainerStyle={{ paddingTop: scale(15), paddingBottom: scale(120) }}
+                        contentContainerStyle={{ paddingTop: scale(6), paddingBottom: scale(120) }}
                     >
                         <View style={styles.gridContainer}>
                             {ARTISTS_ROWS.map((row, rowIndex) => (
@@ -298,30 +326,6 @@ const styles = StyleSheet.create({
         fontSize: scale(32), // Збільшили розмір
         fontFamily: 'Unbounded-SemiBold', // Зробили жирним
         lineHeight: scale(42),
-    },
-
-    // --- SEARCH ---
-    searchContainer: {
-        paddingHorizontal: scale(20),
-        marginBottom: scale(10),
-    },
-    searchBox: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: 'rgba(255, 255, 255, 0.1)',
-        borderRadius: scale(30),
-        height: scale(40),
-        paddingHorizontal: scale(16),
-        borderWidth: 1,
-        borderColor: 'rgba(255, 255, 255, 0.1)',
-    },
-    searchInput: {
-        flex: 1,
-        marginLeft: scale(10),
-        color: '#F5D8CB',
-        fontSize: scale(16),
-        fontFamily: 'Poppins-Regular',
-        height: '100%',
     },
 
     // --- GRID ---

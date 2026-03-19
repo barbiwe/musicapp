@@ -37,6 +37,8 @@ import {
 const { width, height } = Dimensions.get('window');
 const CARD_WIDTH = width * 0.9;
 const svgCache = {};
+const getTrackId = (track) =>
+    String(track?.id || track?._id || track?.trackId || track?.track?.id || '').trim();
 
 // Допоміжна функція для генерації випадкових прослуховувань (30M, 120K тощо)
 const getRandomListeners = () => {
@@ -278,6 +280,22 @@ export default function DiscoverScreen({ navigation }) {
         }
     };
 
+    const handlePlayRandomTrack = async () => {
+        const pool = [...tracks, ...recentTracks, ...recommendations]
+            .filter((track) => !!getTrackId(track));
+
+        if (pool.length === 0) return;
+
+        const randomIndex = Math.floor(Math.random() * pool.length);
+        const randomTrack = pool[randomIndex];
+
+        try {
+            await setTrack(randomTrack);
+        } catch (_) {
+            // ignore random play error
+        }
+    };
+
     const renderIcon = (iconName, style, tintColor = '#000000') => {
         const iconUrl = icons[iconName];
 
@@ -418,6 +436,24 @@ export default function DiscoverScreen({ navigation }) {
                             </ScrollView>
                         </View>
 
+                        {/* DISCOVER BANNER */}
+                        {discoverBanner && !isPremium ? (
+                            <View style={styles.bannerSection}>
+                                <TouchableOpacity
+                                    activeOpacity={0.9}
+                                    onPress={handleDiscoverBannerPress}
+                                    disabled={!discoverBannerLink}
+                                    style={styles.bannerTouch}
+                                >
+                                    <Image
+                                        source={{ uri: getBannerImageUrl(discoverBanner) }}
+                                        style={styles.discoverBannerImage}
+                                        resizeMode="cover"
+                                    />
+                                </TouchableOpacity>
+                            </View>
+                        ) : null}
+
 
                         {/* RECENTLY PLAYED */}
                         <View style={styles.section}>
@@ -433,7 +469,13 @@ export default function DiscoverScreen({ navigation }) {
                                 <Text style={[styles.sectionTitle, { marginLeft: 0, marginBottom: 0 }]}>
                                     Recently played
                                 </Text>
-                                {renderIcon('cube.svg', { width: scale(36), height: scale(36) }, '#F5D8CB')}
+                                <TouchableOpacity
+                                    activeOpacity={0.8}
+                                    onPress={handlePlayRandomTrack}
+                                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                                >
+                                    {renderIcon('cube.svg', { width: scale(36), height: scale(36) }, '#F5D8CB')}
+                                </TouchableOpacity>
                             </View>
 
                             {recentTracks.length > 0 ? (
@@ -465,25 +507,6 @@ export default function DiscoverScreen({ navigation }) {
                                 </Text>
                             )}
                         </View>
-
-
-                        {/* DISCOVER BANNER */}
-                        {discoverBanner && !isPremium ? (
-                            <View style={styles.bannerSection}>
-                                <TouchableOpacity
-                                    activeOpacity={0.9}
-                                    onPress={handleDiscoverBannerPress}
-                                    disabled={!discoverBannerLink}
-                                    style={styles.bannerTouch}
-                                >
-                                    <Image
-                                        source={{ uri: getBannerImageUrl(discoverBanner) }}
-                                        style={styles.discoverBannerImage}
-                                        resizeMode="cover"
-                                    />
-                                </TouchableOpacity>
-                            </View>
-                        ) : null}
 
 
                         {/* POPULAR SONGS */}

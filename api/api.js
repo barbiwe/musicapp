@@ -5,7 +5,7 @@ import { jwtDecode } from 'jwt-decode';
 import 'core-js/stable/atob';
 import { Dimensions, Image } from 'react-native';
 
-const FALLBACK_API_URL = 'http://18.234.31.165:8080';
+const FALLBACK_API_URL = 'http://54.144.57.220:8080';
 const API_URL = process.env.EXPO_PUBLIC_API_URL || FALLBACK_API_URL;
 const AD_STREAM_COUNT_KEY = 'ad_stream_count_v1';
 const iconsPrefetchCache = new Set();
@@ -410,10 +410,34 @@ export const verifyPasswordResetCode = async ({ email, code }) => {
     }
 };
 
+const pickArrayPayload = (payload) => {
+    if (Array.isArray(payload)) return payload;
+    if (Array.isArray(payload?.data)) return payload.data;
+    if (Array.isArray(payload?.items)) return payload.items;
+    if (Array.isArray(payload?.result)) return payload.result;
+    return null;
+};
+
+const getFirstArrayFromEndpoints = async (endpoints = []) => {
+    for (const endpoint of endpoints) {
+        try {
+            const res = await api.get(endpoint);
+            const list = pickArrayPayload(res?.data);
+            if (Array.isArray(list)) return list;
+        } catch (_) {
+            // try next endpoint
+        }
+    }
+    return [];
+};
+
 export const getCountries = async () => {
     try {
-        const res = await api.get('/api/countries');
-        return Array.isArray(res?.data) ? res.data : [];
+        return await getFirstArrayFromEndpoints([
+            '/api/Auth/countries',
+            '/api/auth/countries',
+            '/api/countries',
+        ]);
     } catch (e) {
         return [];
     }
@@ -421,20 +445,29 @@ export const getCountries = async () => {
 
 export const getArtistSpecializations = async () => {
     try {
-        const res = await api.get('/api/artist-specializations');
-        return Array.isArray(res?.data) ? res.data : [];
+        return await getFirstArrayFromEndpoints([
+            '/api/Auth/artist-specializations',
+            '/api/auth/artist-specializations',
+            '/api/artist-specializations',
+        ]);
     } catch (e) {
         return [];
     }
 };
 
 export const becomeAuthor = async ({ username, country, aboutMe, specialization }) => {
+    const countryId = Number(country);
+    const specializationId = Number(specialization);
+    if (!Number.isFinite(countryId) || !Number.isFinite(specializationId)) {
+        return { error: 'Invalid country or specialization' };
+    }
+
     try {
         const res = await api.post('/api/Auth/become-author', {
             username: String(username || '').trim(),
-            country,
+            country: countryId,
             aboutMe: String(aboutMe || '').trim(),
-            specialization,
+            specialization: specializationId,
         });
         return { success: true, data: res?.data };
     } catch (e) {
@@ -455,7 +488,7 @@ export const refreshUserToken = async () => {
 export const searchLibrary = async (query) => {
     const q = String(query || '').trim();
     if (!q) {
-        return { tracks: [], playlists: [], albums: [], podcasts: [] };
+        return { tracks: [], playlists: [], albums: [], podcasts: [], artists: [] };
     }
 
     try {
@@ -467,9 +500,10 @@ export const searchLibrary = async (query) => {
             playlists: Array.isArray(data?.playlists) ? data.playlists : [],
             albums: Array.isArray(data?.albums) ? data.albums : [],
             podcasts: Array.isArray(data?.podcasts) ? data.podcasts : [],
+            artists: Array.isArray(data?.artists) ? data.artists : [],
         };
     } catch (_) {
-        return { tracks: [], playlists: [], albums: [], podcasts: [] };
+        return { tracks: [], playlists: [], albums: [], podcasts: [], artists: [] };
     }
 };
 
@@ -486,6 +520,23 @@ export const createPremiumCheckout = async () => {
     } catch (e) {
         return {
             error: e?.response?.data || e?.message || 'Failed to create checkout session',
+            status: e?.response?.status || null,
+        };
+    }
+};
+
+export const confirmPremiumCheckout = async (sessionId) => {
+    const safeSessionId = String(sessionId || '').trim();
+    if (!safeSessionId) {
+        return { error: 'Missing sessionId' };
+    }
+
+    try {
+        const res = await api.post('/api/Payments/confirm', { sessionId: safeSessionId });
+        return { success: true, data: res?.data || null };
+    } catch (e) {
+        return {
+            error: e?.response?.data || e?.message || 'Failed to confirm payment session',
             status: e?.response?.status || null,
         };
     }
@@ -754,6 +805,36 @@ export const getLikedTracks = async () => {
         return res.data; // Повертає список ID лайкнутих треків
     } catch (e) {
         console.error("Get liked error:", e);
+        return [];
+    }
+};
+
+export const likeAlbum = async (albumId) => {
+    try {
+        await api.post('/api/Auth/like-album', { albumId: String(albumId || '').trim() });
+        return true;
+    } catch (e) {
+        console.error('Like album error:', e);
+        return false;
+    }
+};
+
+export const unlikeAlbum = async (albumId) => {
+    try {
+        await api.post('/api/Auth/unlike-album', { albumId: String(albumId || '').trim() });
+        return true;
+    } catch (e) {
+        console.error('Unlike album error:', e);
+        return false;
+    }
+};
+
+export const getLikedAlbums = async () => {
+    try {
+        const res = await api.get('/api/Auth/liked-albums');
+        return Array.isArray(res?.data) ? res.data : [];
+    } catch (e) {
+        console.error('Get liked albums error:', e);
         return [];
     }
 };
@@ -1089,12 +1170,26 @@ export const getMyTracks = async () => {
     }
 };
 
+const normalizeTrackListResponse = (data) => {
+    if (!Array.isArray(data)) return [];
+
+    return data
+        .map((item) => {
+            if (!item) return null;
+            if (item?.track && typeof item.track === 'object') {
+                return { ...item.track };
+            }
+            return item;
+        })
+        .filter(Boolean);
+};
+
 export const searchTracksByTitle = async (query) => {
     const q = String(query || '').trim();
     if (!q) return [];
     try {
         const res = await api.get('/api/Tracks/search', { params: { query: q } });
-        return Array.isArray(res.data) ? res.data : [];
+        return normalizeTrackListResponse(res.data);
     } catch (e) {
         console.log('Search title error:', e?.response?.status || e?.message);
         return [];
@@ -1106,7 +1201,7 @@ export const searchTracksByArtist = async (query) => {
     if (!q) return [];
     try {
         const res = await api.get('/api/Tracks/search/artist', { params: { query: q } });
-        return Array.isArray(res.data) ? res.data : [];
+        return normalizeTrackListResponse(res.data);
     } catch (e) {
         console.log('Search artist error:', e?.response?.status || e?.message);
         return [];
@@ -1127,7 +1222,7 @@ export const searchTracksByGenre = async (query) => {
     for (const endpoint of endpoints) {
         try {
             const res = await api.get(endpoint, { params: { query: q } });
-            return Array.isArray(res.data) ? res.data : [];
+            return normalizeTrackListResponse(res.data);
         } catch (e) {
             if (e?.response?.status !== 404) {
                 console.log('Search genre error:', e?.response?.status || e?.message);
@@ -1212,7 +1307,34 @@ export const getGenres = async () => {
     return genresRequest;
 };
 
-export const uploadTrack = async (file, title, artistId, albumId, cover, genreIds, lyrics) => {
+const toStringList = (value) => {
+    if (Array.isArray(value)) {
+        return value
+            .map((item) => String(item || '').trim())
+            .filter(Boolean);
+    }
+
+    if (typeof value === 'string') {
+        return value
+            .split(',')
+            .map((item) => item.trim())
+            .filter(Boolean);
+    }
+
+    return [];
+};
+
+export const uploadTrack = async (
+    file,
+    title,
+    artistId,
+    albumId,
+    cover,
+    genreIds,
+    lyrics,
+    producers = [],
+    lyricists = []
+) => {
     console.log("🚀 STARTING UPLOAD...");
 
     const formData = new FormData();
@@ -1249,6 +1371,13 @@ export const uploadTrack = async (file, title, artistId, albumId, cover, genreId
             formData.append('genreIds', id);
         });
     }
+
+    // Нові поля (бек: optional, repeatable або CSV)
+    const producersList = toStringList(producers);
+    producersList.forEach((value) => formData.append('producers', value));
+
+    const lyricistsList = toStringList(lyricists);
+    lyricistsList.forEach((value) => formData.append('lyricists', value));
 
     try {
 

@@ -13,7 +13,8 @@ import {
     Modal,
     TouchableWithoutFeedback,
     Animated,
-    Easing
+    Easing,
+    PanResponder
 } from 'react-native';
 import { usePlayerStore } from '../../store/usePlayerStore';
 import { SvgXml } from 'react-native-svg';
@@ -90,6 +91,37 @@ export default function LibraryScreen({ navigation }) {
 
     // Анімація для виїзду шторки
     const slideAnim = useRef(new Animated.Value(height)).current;
+    const modalDragY = useRef(new Animated.Value(0)).current;
+
+    const resetModalDrag = () => {
+        Animated.spring(modalDragY, {
+            toValue: 0,
+            useNativeDriver: true,
+            tension: 120,
+            friction: 12,
+        }).start();
+    };
+
+    const modalPanResponder = useRef(
+        PanResponder.create({
+            onMoveShouldSetPanResponder: (_evt, gesture) =>
+                gesture.dy > 14 && Math.abs(gesture.dy) > Math.abs(gesture.dx),
+            onPanResponderMove: (_evt, gesture) => {
+                modalDragY.setValue(Math.max(0, gesture.dy));
+            },
+            onPanResponderRelease: (_evt, gesture) => {
+                if (gesture.dy > 120 || gesture.vy > 1.1) {
+                    modalDragY.setValue(0);
+                    closeModal();
+                } else {
+                    resetModalDrag();
+                }
+            },
+            onPanResponderTerminate: () => {
+                resetModalDrag();
+            },
+        })
+    ).current;
 
     const tabs = ['All', 'Playlist','Songs','Album',  'Artist', 'Podcast'];
 
@@ -104,6 +136,7 @@ export default function LibraryScreen({ navigation }) {
 
     // Логіка відкриття
     const openModal = () => {
+        modalDragY.setValue(0);
         setModalVisible(true);
         Animated.timing(slideAnim, {
             toValue: 0,
@@ -115,6 +148,7 @@ export default function LibraryScreen({ navigation }) {
 
     // Логіка закриття
     const closeModal = () => {
+        modalDragY.setValue(0);
         Animated.timing(slideAnim, {
             toValue: height,
             duration: 250,
@@ -170,7 +204,7 @@ export default function LibraryScreen({ navigation }) {
             case 'All': return <LibraryAll navigation={navigation} setTrack={setTrack} />;
             case 'Playlist': return <LibraryPlaylist navigation={navigation} />;
             case 'Songs': return <LibrarySongs navigation={navigation} setTrack={setTrack} />;
-            case 'Album': return <LibraryAlbum />;
+            case 'Album': return <LibraryAlbum navigation={navigation} />;
             case 'Artist': return <LibraryArtist navigation={navigation} />;
             default: return <LibraryAll navigation={navigation} setTrack={setTrack} />;
         }
@@ -187,7 +221,10 @@ export default function LibraryScreen({ navigation }) {
                         <Text style={styles.headerTitle}>Library</Text>
 
                         <View style={styles.iconsContainer}>
-                            <TouchableOpacity style={styles.iconButton}>
+                            <TouchableOpacity
+                                style={styles.iconButton}
+                                onPress={() => navigation.navigate('LibrarySearch')}
+                            >
                                 {renderIcon('search.svg', { width: scale(24), height: scale(24) }, '#F5D8CB')}
                             </TouchableOpacity>
 
@@ -245,9 +282,10 @@ export default function LibraryScreen({ navigation }) {
                     <View style={styles.modalOverlay}>
                         <TouchableWithoutFeedback>
                             <Animated.View
+                                {...modalPanResponder.panHandlers}
                                 style={[
                                     styles.modalSheetWrapper,
-                                    { transform: [{ translateY: slideAnim }] }
+                                    { transform: [{ translateY: Animated.add(slideAnim, modalDragY) }] }
                                 ]}
                             >
                                 <LinearGradient

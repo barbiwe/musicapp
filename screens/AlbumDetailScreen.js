@@ -14,7 +14,8 @@ import {
     Modal,
     TouchableWithoutFeedback,
     Animated,
-    Easing
+    Easing,
+    PanResponder
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
@@ -33,6 +34,9 @@ import {
     likeTrack,
     unlikeTrack,
     getLikedTracks,
+    likeAlbum,
+    unlikeAlbum,
+    getLikedAlbums,
     getAlbumCoverUrl,
     uploadAlbumCover,
     getIcons,
@@ -122,9 +126,41 @@ export default function AlbumDetailScreen({ route, navigation }) {
     const [isOwner, setIsOwner] = useState(false);
     const [iconsMap, setIconsMap] = useState({});
     const [likedTrackIds, setLikedTrackIds] = useState([]);
+    const [likedAlbumIds, setLikedAlbumIds] = useState([]);
     const [modalVisible, setModalVisible] = useState(false);
 
     const slideAnim = useRef(new Animated.Value(height)).current;
+    const modalDragY = useRef(new Animated.Value(0)).current;
+
+    const resetModalDrag = () => {
+        Animated.spring(modalDragY, {
+            toValue: 0,
+            useNativeDriver: true,
+            tension: 120,
+            friction: 12,
+        }).start();
+    };
+
+    const modalPanResponder = useRef(
+        PanResponder.create({
+            onMoveShouldSetPanResponder: (_evt, gesture) =>
+                gesture.dy > 14 && Math.abs(gesture.dy) > Math.abs(gesture.dx),
+            onPanResponderMove: (_evt, gesture) => {
+                modalDragY.setValue(Math.max(0, gesture.dy));
+            },
+            onPanResponderRelease: (_evt, gesture) => {
+                if (gesture.dy > 120 || gesture.vy > 1.1) {
+                    modalDragY.setValue(0);
+                    closeModal();
+                } else {
+                    resetModalDrag();
+                }
+            },
+            onPanResponderTerminate: () => {
+                resetModalDrag();
+            },
+        })
+    ).current;
     const {
         currentTrack,
         isPlaying,
@@ -135,6 +171,7 @@ export default function AlbumDetailScreen({ route, navigation }) {
 
 
     const isAlbumPlaying = albumTracks.some(t => (t.id || t._id) === playingTrackId);
+    const isAlbumLiked = albumId ? likedAlbumIds.includes(String(albumId)) : false;
 
     useEffect(() => {
         loadData();
@@ -152,8 +189,16 @@ export default function AlbumDetailScreen({ route, navigation }) {
             const icons = await getIcons();
             setIconsMap(icons || {});
 
-            const likedIds = await getLikedTracks();
-            setLikedTrackIds(Array.isArray(likedIds) ? likedIds : []);
+            const [likedTrackRaw, likedAlbumRaw] = await Promise.all([
+                getLikedTracks(),
+                getLikedAlbums(),
+            ]);
+            setLikedTrackIds(Array.isArray(likedTrackRaw) ? likedTrackRaw : []);
+            setLikedAlbumIds(
+                Array.isArray(likedAlbumRaw)
+                    ? likedAlbumRaw.map((id) => String(id)).filter(Boolean)
+                    : []
+            );
 
             let effectiveAlbum = await getAlbumDetails(albumId);
             if (!effectiveAlbum) {
@@ -308,7 +353,32 @@ export default function AlbumDetailScreen({ route, navigation }) {
         }
     };
 
+    const handleAlbumLikeToggle = async () => {
+        if (!albumId) return;
+        const safeAlbumId = String(albumId);
+        const currentlyLiked = likedAlbumIds.includes(safeAlbumId);
+        const prev = likedAlbumIds;
+        const next = currentlyLiked
+            ? likedAlbumIds.filter((id) => id !== safeAlbumId)
+            : [...likedAlbumIds, safeAlbumId];
+
+        setLikedAlbumIds(next);
+
+        try {
+            const ok = currentlyLiked
+                ? await unlikeAlbum(safeAlbumId)
+                : await likeAlbum(safeAlbumId);
+
+            if (!ok) {
+                setLikedAlbumIds(prev);
+            }
+        } catch (_) {
+            setLikedAlbumIds(prev);
+        }
+    };
+
     const openModal = () => {
+        modalDragY.setValue(0);
         setModalVisible(true);
         Animated.timing(slideAnim, {
             toValue: 0,
@@ -319,6 +389,7 @@ export default function AlbumDetailScreen({ route, navigation }) {
     };
 
     const closeModal = () => {
+        modalDragY.setValue(0);
         Animated.timing(slideAnim, {
             toValue: height,
             duration: 250,
@@ -519,8 +590,14 @@ export default function AlbumDetailScreen({ route, navigation }) {
                                 {renderIcon('download.svg', 'Dwn', { width: scale(24), height: scale(24) }, '#F5D8CB')}
                             </TouchableOpacity>
 
-                            <TouchableOpacity style={styles.circleBtn} hitSlop={{ top: scale(10), bottom: scale(10), left: scale(10), right: scale(10) }}>
-                                {renderIcon('add.svg', 'Like', { width: scale(24), height: scale(24) }, '#F5D8CB')}
+                            <TouchableOpacity
+                                style={styles.circleBtn}
+                                onPress={handleAlbumLikeToggle}
+                                hitSlop={{ top: scale(10), bottom: scale(10), left: scale(10), right: scale(10) }}
+                            >
+                                {isAlbumLiked
+                                    ? renderIcon('added.svg', 'Like', { width: scale(24), height: scale(24) }, '#F5D8CB')
+                                    : renderIcon('add.svg', 'Like', { width: scale(24), height: scale(24) }, '#F5D8CB')}
                             </TouchableOpacity>
 
                             {/* PLAY BUTTON */}
@@ -594,9 +671,10 @@ export default function AlbumDetailScreen({ route, navigation }) {
                     <View style={styles.modalOverlay}>
                         <TouchableWithoutFeedback>
                             <Animated.View
+                                {...modalPanResponder.panHandlers}
                                 style={[
                                     styles.modalSheetWrapper,
-                                    { transform: [{ translateY: slideAnim }] }
+                                    { transform: [{ translateY: Animated.add(slideAnim, modalDragY) }] }
                                 ]}
                             >
                                 <LinearGradient

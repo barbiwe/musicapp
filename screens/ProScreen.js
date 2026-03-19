@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
     View,
     Text,
@@ -14,13 +14,22 @@ import {
     Linking,
     ActivityIndicator,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SvgXml } from 'react-native-svg';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useIsFocused } from '@react-navigation/native';
 
-import { createPremiumCheckout, getIcons, isPremiumUser, scale } from '../api/api';
+import {
+    confirmPremiumCheckout,
+    createPremiumCheckout,
+    getIcons,
+    isPremiumUser,
+    refreshUserToken,
+    scale,
+} from '../api/api';
 
 const { width, height } = Dimensions.get('window');
+const PENDING_PREMIUM_SESSION_KEY = 'pending_premium_session_id_v1';
 
 // 1. КЕШ ТА РЕНДЕР SVG
 const svgCache = {};
@@ -63,26 +72,37 @@ export default function ProScreen({ navigation }) {
     const isFocused = useIsFocused();
     const [icons, setIcons] = useState({});
     const [buying, setBuying] = useState(false);
+    const [confirmingPayment, setConfirmingPayment] = useState(false);
     const [isPremium, setIsPremium] = useState(false);
+    const handledSessionIdsRef = useRef(new Set());
+    const premiumLog = (...args) => {
+        console.log('[PREMIUM]', ...args);
+    };
 
-    useEffect(() => {
-        if (isFocused) {
-            loadData();
-        }
-    }, [isFocused]);
-
-    const loadData = async () => {
+    const loadData = useCallback(async (options = {}) => {
+        const forceRefresh = !!options?.forceRefresh;
         try {
+            premiumLog('loadData:start', { forceRefresh });
+            if (forceRefresh) {
+                const refreshResult = await refreshUserToken();
+                premiumLog('loadData:refreshUserToken', {
+                    ok: !refreshResult?.error,
+                    role: refreshResult?.data?.role ?? null,
+                    error: refreshResult?.error || null,
+                });
+            }
             const [loadedIcons, premium] = await Promise.all([
                 getIcons(),
                 isPremiumUser(),
             ]);
             setIcons(loadedIcons || {});
             setIsPremium(!!premium);
+            premiumLog('loadData:done', { premium: !!premium, icons: Object.keys(loadedIcons || {}).length });
         } catch (e) {
             console.log("Error loading icons:", e);
+            premiumLog('loadData:error', String(e?.message || e));
         }
-    };
+    }, []);
 
     const stringifyError = (error) => {
         if (!error) return 'Something went wrong';
@@ -99,36 +119,178 @@ export default function ProScreen({ navigation }) {
         return String(error);
     };
 
+    const extractSessionIdFromCheckoutUrl = (checkoutUrl) => {
+        const value = String(checkoutUrl || '').trim();
+        if (!value) return null;
+        const match = value.match(/\/(cs_(?:test|live)_[A-Za-z0-9]+)(?:[#/?]|$)/i);
+        return match?.[1] || null;
+    };
+
+    const extractSessionIdFromUrl = (url) => {
+        const value = String(url || '').trim();
+        if (!value) return null;
+
+        const queryPart = value.includes('?') ? value.split('?')[1] : '';
+        if (!queryPart) return null;
+        try {
+            if (typeof URLSearchParams !== 'undefined') {
+                const params = new URLSearchParams(queryPart);
+                return params.get('session_id') || params.get('sessionId') || null;
+            }
+        } catch (_) {
+            // ignore and try regex fallback
+        }
+
+        const match = queryPart.match(/(?:^|&)(session_id|sessionId)=([^&]+)/i);
+        return match?.[2] ? decodeURIComponent(match[2]) : null;
+    };
+
+    const confirmSessionIfNeeded = useCallback(async (incomingUrl) => {
+        premiumLog('confirmSessionIfNeeded:url', incomingUrl);
+        const sessionId = extractSessionIdFromUrl(incomingUrl);
+        premiumLog('confirmSessionIfNeeded:sessionId', sessionId || 'none');
+        if (!sessionId) return;
+        if (handledSessionIdsRef.current.has(sessionId)) return;
+        handledSessionIdsRef.current.add(sessionId);
+
+        setConfirmingPayment(true);
+        try {
+            premiumLog('confirmSessionIfNeeded:confirmPremiumCheckout:start', { sessionId });
+            const confirmRes = await confirmPremiumCheckout(sessionId);
+            if (confirmRes?.error) {
+                premiumLog('confirmSessionIfNeeded:confirmPremiumCheckout:error', confirmRes.error);
+                Alert.alert('Payment status', stringifyError(confirmRes.error));
+                return;
+            }
+            premiumLog('confirmSessionIfNeeded:confirmPremiumCheckout:ok');
+
+            premiumLog('confirmSessionIfNeeded:refreshUserToken:start');
+            const refreshRes = await refreshUserToken();
+            if (refreshRes?.error) {
+                premiumLog('confirmSessionIfNeeded:refreshUserToken:error', refreshRes.error);
+                Alert.alert('Payment status', 'Payment confirmed. Please re-login to refresh Premium role.');
+                return;
+            }
+            premiumLog('confirmSessionIfNeeded:refreshUserToken:ok', {
+                role: refreshRes?.data?.role ?? null,
+            });
+
+            await loadData();
+            premiumLog('confirmSessionIfNeeded:loadData:done');
+            Alert.alert('Success', 'Premium is now active.');
+        } catch (err) {
+            premiumLog('confirmSessionIfNeeded:exception', String(err?.message || err));
+            Alert.alert('Payment status', 'Payment confirmed, but role refresh failed. Please re-login.');
+        } finally {
+            setConfirmingPayment(false);
+            premiumLog('confirmSessionIfNeeded:finish');
+        }
+    }, [loadData]);
+
+    const confirmPendingSessionIfNeeded = useCallback(async () => {
+        try {
+            const pendingSessionId = await AsyncStorage.getItem(PENDING_PREMIUM_SESSION_KEY);
+            if (!pendingSessionId) return;
+
+            premiumLog('confirmPendingSessionIfNeeded:found', pendingSessionId);
+            setConfirmingPayment(true);
+
+            const confirmRes = await confirmPremiumCheckout(pendingSessionId);
+            if (confirmRes?.error) {
+                premiumLog('confirmPendingSessionIfNeeded:confirm:error', confirmRes.error);
+                return;
+            }
+
+            premiumLog('confirmPendingSessionIfNeeded:confirm:ok');
+            const refreshRes = await refreshUserToken();
+            premiumLog('confirmPendingSessionIfNeeded:refresh', {
+                ok: !refreshRes?.error,
+                role: refreshRes?.data?.role ?? null,
+                error: refreshRes?.error || null,
+            });
+
+            await loadData();
+            await AsyncStorage.removeItem(PENDING_PREMIUM_SESSION_KEY);
+            premiumLog('confirmPendingSessionIfNeeded:done');
+        } catch (err) {
+            premiumLog('confirmPendingSessionIfNeeded:exception', String(err?.message || err));
+        } finally {
+            setConfirmingPayment(false);
+        }
+    }, [loadData]);
+
+    useEffect(() => {
+        if (isFocused) {
+            loadData({ forceRefresh: true });
+            void confirmPendingSessionIfNeeded();
+        }
+    }, [isFocused, loadData, confirmPendingSessionIfNeeded]);
+
+    useEffect(() => {
+        let mounted = true;
+        const subscription = Linking.addEventListener('url', ({ url }) => {
+            if (!url) return;
+            void confirmSessionIfNeeded(url);
+        });
+
+        Linking.getInitialURL()
+            .then((url) => {
+                if (!mounted || !url) return;
+                void confirmSessionIfNeeded(url);
+            })
+            .catch(() => {});
+
+        return () => {
+            mounted = false;
+            subscription?.remove?.();
+        };
+    }, [confirmSessionIfNeeded]);
+
     const handleBuyPremium = async () => {
-        if (buying) return;
+        if (buying || confirmingPayment) return;
         if (isPremium) {
+            premiumLog('handleBuyPremium:alreadyPremium');
             Alert.alert('Premium', 'Your account already has Premium.');
             return;
         }
 
         setBuying(true);
         try {
+            premiumLog('handleBuyPremium:createPremiumCheckout:start');
             const res = await createPremiumCheckout();
             if (res?.error || !res?.url) {
+                premiumLog('handleBuyPremium:createPremiumCheckout:error', res?.error || 'No checkout URL');
                 Alert.alert('Payment error', stringifyError(res?.error));
                 return;
             }
+            premiumLog('handleBuyPremium:createPremiumCheckout:ok', { url: res.url });
+            const preParsedSessionId = extractSessionIdFromCheckoutUrl(res.url);
+            if (preParsedSessionId) {
+                await AsyncStorage.setItem(PENDING_PREMIUM_SESSION_KEY, preParsedSessionId);
+                premiumLog('handleBuyPremium:savedPendingSession', preParsedSessionId);
+            } else {
+                premiumLog('handleBuyPremium:noSessionIdInCheckoutUrl');
+            }
 
             const canOpen = await Linking.canOpenURL(res.url);
+            premiumLog('handleBuyPremium:canOpenURL', { canOpen });
             if (!canOpen) {
                 Alert.alert('Payment error', 'Cannot open checkout URL.');
                 return;
             }
 
             await Linking.openURL(res.url);
+            premiumLog('handleBuyPremium:openURL:done');
             Alert.alert(
                 'Checkout opened',
-                'After successful payment, log out and log in again to refresh Premium role in app.'
+                'After payment, return to app. Premium will be activated automatically.'
             );
-        } catch (_) {
+        } catch (err) {
+            premiumLog('handleBuyPremium:exception', String(err?.message || err));
             Alert.alert('Payment error', 'Failed to start checkout.');
         } finally {
             setBuying(false);
+            premiumLog('handleBuyPremium:finish');
         }
     };
 
@@ -241,12 +403,12 @@ export default function ProScreen({ navigation }) {
 
                             {/* BUTTON */}
                             <TouchableOpacity
-                                style={[styles.button, buying && styles.buttonDisabled]}
+                                style={[styles.button, (buying || confirmingPayment) && styles.buttonDisabled]}
                                 activeOpacity={0.8}
                                 onPress={handleBuyPremium}
-                                disabled={buying}
+                                disabled={buying || confirmingPayment}
                             >
-                                {buying ? (
+                                {(buying || confirmingPayment) ? (
                                     <ActivityIndicator color="#300C0A" size="small" />
                                 ) : (
                                     <Text style={styles.buttonText}>
@@ -393,7 +555,7 @@ const styles = StyleSheet.create({
     button: {
         backgroundColor: 'transparent',
         borderWidth: 1,
-        borderColor: '#FF4D4F',
+        borderColor: '#F5D8CB',
         borderRadius: scale(30),
         paddingVertical: scale(14), // Зменшив висоту кнопки
         alignItems: 'center',
@@ -405,7 +567,7 @@ const styles = StyleSheet.create({
         opacity: 0.75,
     },
     buttonText: {
-        color: '#FF4D4F',
+        color: '#F5D8CB',
         fontSize: scale(15),      // Зменшив
         fontFamily: 'Unbounded-Medium',
     }

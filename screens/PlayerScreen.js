@@ -16,6 +16,7 @@ import {
     Image,
     StatusBar,
     Linking,
+    PanResponder,
 } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -178,6 +179,7 @@ export default function PlayerScreen({ navigation, route }) {
         currentTrack, isPlaying, position, duration, queue, currentIndex,
         togglePlay, playNext, playPrev, seekTo, setQueue, addToQueue, clearQueue, setTrack,
         adModalVisible, adData, adPositionMs, adDurationMs, isAdPlaying, toggleAdPlayPause,
+        isShuffleEnabled, repeatMode, toggleShuffle, toggleRepeatMode,
     } = usePlayerStore();
 
     // 2. ДІСТАЄМО ІНФУ САМЕ З ГЛОБАЛЬНОГО СТОРУ
@@ -205,7 +207,9 @@ export default function PlayerScreen({ navigation, route }) {
     const [queueVisible, setQueueVisible] = useState(false);
     const [relatedVisible, setRelatedVisible] = useState(false);
     const isSeeking = useRef(false);
+    const progressTrackRef = useRef(null);
     const [progressBarWidth, setProgressBarWidth] = useState(0);
+    const [progressTrackPageX, setProgressTrackPageX] = useState(0);
     const [likedTrackIds, setLikedTrackIds] = useState([]);
 
     // 4. СИНХРОНІЗАЦІЯ (Якщо відкрили з іншого екрану)
@@ -441,9 +445,26 @@ export default function PlayerScreen({ navigation, route }) {
     }, []);
 
     // 4. SEEKING
+    const updateProgressMetrics = () => {
+        if (!progressTrackRef.current?.measureInWindow) return;
+        progressTrackRef.current.measureInWindow((x, _y, w) => {
+            if (Number.isFinite(x)) setProgressTrackPageX(Math.max(0, x));
+            if (Number.isFinite(w) && w > 0) setProgressBarWidth(w);
+        });
+    };
+
+    useEffect(() => {
+        const id = setTimeout(updateProgressMetrics, 40);
+        return () => clearTimeout(id);
+    }, [currentTrack?.id, adModalVisible]);
+
     const calculateSeekPosition = (e) => {
         if (progressBarWidth === 0) return 0;
-        const touchX = e.nativeEvent.locationX;
+        const pageX = Number(e?.nativeEvent?.pageX);
+        const touchX =
+            Number.isFinite(pageX) && pageX > 0
+                ? pageX - progressTrackPageX
+                : Number(e?.nativeEvent?.locationX || 0);
         let percent = touchX / progressBarWidth;
         percent = Math.max(0, Math.min(1, percent));
         return percent * duration;
@@ -531,8 +552,40 @@ export default function PlayerScreen({ navigation, route }) {
     // --- Modals animations---
     // Початкова позиція шторки — за межами екрану знизу
     const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
+    const modalDragY = useRef(new Animated.Value(0)).current;
+
+    const resetModalDrag = () => {
+        Animated.spring(modalDragY, {
+            toValue: 0,
+            useNativeDriver: true,
+            tension: 120,
+            friction: 12,
+        }).start();
+    };
+
+    const modalPanResponder = useRef(
+        PanResponder.create({
+            onMoveShouldSetPanResponder: (_evt, gesture) =>
+                gesture.dy > 14 && Math.abs(gesture.dy) > Math.abs(gesture.dx),
+            onPanResponderMove: (_evt, gesture) => {
+                modalDragY.setValue(Math.max(0, gesture.dy));
+            },
+            onPanResponderRelease: (_evt, gesture) => {
+                if (gesture.dy > 120 || gesture.vy > 1.1) {
+                    modalDragY.setValue(0);
+                    closeModal();
+                } else {
+                    resetModalDrag();
+                }
+            },
+            onPanResponderTerminate: () => {
+                resetModalDrag();
+            },
+        })
+    ).current;
 
     const openModal = (type) => {
+        modalDragY.setValue(0);
         if (type === 'menu') setModalVisible(true);
         if (type === 'queue') setQueueVisible(true);
         if (type === 'related') setRelatedVisible(true);
@@ -547,6 +600,7 @@ export default function PlayerScreen({ navigation, route }) {
 
     // 👇 ВИПРАВЛЕНО: Прибираємо рекурсію в start callback
     const closeModal = () => {
+        modalDragY.setValue(0);
         Animated.timing(slideAnim, {
             toValue: SCREEN_HEIGHT,
             duration: 250,
@@ -716,8 +770,10 @@ export default function PlayerScreen({ navigation, route }) {
         return `${minutes < 10 ? '0' : ''}${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
     };
 
-    const progressPercent = duration > 0 ? (position / duration) * 100 : 0;
+    const progressPercent = duration > 0 ? Math.min(Math.max((position / duration) * 100, 0), 100) : 0;
     const visibleQueue = queue.slice(currentIndex);
+    const shuffleIconColor = isShuffleEnabled ? '#AC654F' : '#F5D8CB';
+    const repeatIconColor = repeatMode === 'off' ? '#F5D8CB' : '#AC654F';
 
     const renderIcon = (iconName, fallbackText, style, tintColor = '#000000') => {
         const iconUrl = icons[iconName];
@@ -1021,9 +1077,14 @@ export default function PlayerScreen({ navigation, route }) {
                 {/* PROGRESS BAR */}
                 <View style={[styles.progressBarWrapper, styles.playerProgressBarWrapper]}>
                     <View
+                        ref={progressTrackRef}
                         style={styles.playerProgressTrackWrap}
-                        onLayout={(e) => setProgressBarWidth(e.nativeEvent.layout.width)}
+                        onLayout={updateProgressMetrics}
                         onStartShouldSetResponder={() => true}
+                        onMoveShouldSetResponder={() => true}
+                        onStartShouldSetResponderCapture={() => true}
+                        onMoveShouldSetResponderCapture={() => true}
+                        onResponderTerminationRequest={() => false}
                         onResponderGrant={handleGrant}
                         onResponderMove={handleMove}
                         onResponderRelease={handleRelease}
@@ -1051,11 +1112,12 @@ export default function PlayerScreen({ navigation, route }) {
                 <View style={styles.controlsSection}>
                     {/* Shuffle Button (Ліва кнопка) */}
                     <TouchableOpacity
+                        onPress={toggleShuffle}
                         hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                         disabled={isPodcastTrack}
                         style={isPodcastTrack && styles.controlDisabled}
                     >
-                        {renderIcon('shuffle.svg', 'Mix', { width: 24, height: 24 }, '#FF4D4F')}
+                        {renderIcon('shuffle.svg', 'Mix', { width: 24, height: 24 }, shuffleIconColor)}
                     </TouchableOpacity>
 
                     {/* CAPSULE CONTROLS with LIQUID GLASS (Центральна пігулка) */}
@@ -1093,7 +1155,7 @@ export default function PlayerScreen({ navigation, route }) {
                                     {/* Пусте місце по центру для кнопки Play */}
                                     <View style={{ width: 60 }} />
 
-                                    <TouchableOpacity onPress={playNext} hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}>
+                                    <TouchableOpacity onPress={() => playNext()} hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}>
                                         {renderIcon('next.svg', 'Next', { width: 28, height: 28 }, '#F5D8CB')}
                                     </TouchableOpacity>
                                 </View>
@@ -1115,11 +1177,12 @@ export default function PlayerScreen({ navigation, route }) {
 
                     {/* Repeat Button (Права кнопка) */}
                     <TouchableOpacity
+                        onPress={toggleRepeatMode}
                         hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                         disabled={isPodcastTrack}
                         style={isPodcastTrack && styles.controlDisabled}
                     >
-                        {renderIcon('previous-1.svg', 'Rep', { width: 24, height: 24 }, '#F5D8CB')}
+                        {renderIcon('previous-1.svg', 'Rep', { width: 24, height: 24 }, repeatIconColor)}
                     </TouchableOpacity>
                 </View>
 
@@ -1172,10 +1235,11 @@ export default function PlayerScreen({ navigation, route }) {
                     <View style={styles.modalOverlay}>
                         <TouchableWithoutFeedback>
                             <Animated.View
+                                {...modalPanResponder.panHandlers}
                                 style={[
                                     styles.modalSheetWrapper,
                                     { height: SCREEN_HEIGHT * 0.7,
-                                        transform: [{ translateY: slideAnim }] }
+                                        transform: [{ translateY: Animated.add(slideAnim, modalDragY) }] }
                                 ]}
                             >
                                 <LinearGradient
@@ -1264,11 +1328,12 @@ export default function PlayerScreen({ navigation, route }) {
                     <View style={styles.modalOverlay}>
                         <TouchableWithoutFeedback>
                             <Animated.View
+                                {...modalPanResponder.panHandlers}
                                 style={[
                                     styles.modalSheetWrapper,
                                     {
                                         height: SCREEN_HEIGHT * 0.7,
-                                        transform: [{ translateY: slideAnim }]
+                                        transform: [{ translateY: Animated.add(slideAnim, modalDragY) }]
                                     }
                                 ]}
                             >
@@ -1345,11 +1410,12 @@ export default function PlayerScreen({ navigation, route }) {
                     <View style={styles.modalOverlay}>
                         <TouchableWithoutFeedback>
                             <Animated.View
+                                {...modalPanResponder.panHandlers}
                                 style={[
                                     styles.modalSheetWrapper,
                                     {
                                         height: SCREEN_HEIGHT * 0.7, // Висота як у Queue
-                                        transform: [{ translateY: slideAnim }]
+                                        transform: [{ translateY: Animated.add(slideAnim, modalDragY) }]
                                     }
                                 ]}
                             >

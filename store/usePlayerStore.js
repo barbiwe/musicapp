@@ -69,13 +69,127 @@ let historyMarkedForCurrentTrack = false;
 let lastPodcastSaveTs = 0;
 let suppressQueueEndedUntil = 0;
 let adFinishTriggered = false;
+let progressPollInterval = null;
+const DEBUG_LOCKSCREEN = true;
+const debugLog = (...args) => {
+    if (DEBUG_LOCKSCREEN) {
+        console.log('[TP-STORE]', ...args);
+    }
+};
 
-const toMs = (seconds) => Math.max(0, Math.floor((Number(seconds) || 0) * 1000));
+const toMs = (seconds) => {
+    const n = Number(seconds);
+    if (!Number.isFinite(n) || n <= 0) return 0;
+    return Math.floor(n * 1000);
+};
 
 const playbackStateValue = (state) => state?.state ?? state;
 const isPlaybackActive = (state) => {
     const value = playbackStateValue(state);
     return value === State.Playing || value === State.Buffering;
+};
+
+const parseDurationToMs = (raw) => {
+    if (typeof raw === 'number' && Number.isFinite(raw) && raw > 0) {
+        return raw > 1000 ? Math.floor(raw) : Math.floor(raw * 1000);
+    }
+
+    if (typeof raw !== 'string') return 0;
+    const value = raw.trim();
+    if (!value) return 0;
+
+    if (/^\d+(\.\d+)?$/.test(value)) {
+        const n = Number(value);
+        if (!Number.isFinite(n) || n <= 0) return 0;
+        return n > 1000 ? Math.floor(n) : Math.floor(n * 1000);
+    }
+
+    const parts = value.split(':').map((x) => Number(String(x).trim()));
+    if (parts.some((n) => !Number.isFinite(n))) return 0;
+
+    let totalSeconds = 0;
+    if (parts.length === 3) {
+        totalSeconds = parts[0] * 3600 + parts[1] * 60 + parts[2];
+    } else if (parts.length === 2) {
+        totalSeconds = parts[0] * 60 + parts[1];
+    } else {
+        return 0;
+    }
+
+    return totalSeconds > 0 ? Math.floor(totalSeconds * 1000) : 0;
+};
+
+const clearProgressPolling = () => {
+    if (progressPollInterval) {
+        clearInterval(progressPollInterval);
+        progressPollInterval = null;
+    }
+};
+
+const applyProgressSnapshot = (set, get, positionSec, durationSec) => {
+    const positionMs = toMs(positionSec);
+    const rawDurationMs = toMs(durationSec);
+    const storeDurationMs = Math.max(0, Number(get().duration) || 0);
+    const trackDurationMs = parseDurationToMs(get().currentTrack?.duration);
+    const effectiveDurationMs = rawDurationMs > 0 ? rawDurationMs : (storeDurationMs > 0 ? storeDurationMs : trackDurationMs);
+
+    set({
+        position: positionMs,
+        duration: effectiveDurationMs,
+    });
+
+    const { currentTrack, adModalVisible } = get();
+    if (adModalVisible) {
+        set({
+            adPositionMs: positionMs,
+            adDurationMs: rawDurationMs > 0 ? rawDurationMs : Math.max(0, Number(get().adDurationMs) || 0),
+            isAdPlaying: true,
+            isPlaying: true,
+        });
+
+        if (!adFinishTriggered && rawDurationMs > 0 && positionMs >= rawDurationMs - 250) {
+            adFinishTriggered = true;
+            void get().dismissAdAndPlayPending();
+        }
+        return;
+    }
+
+    if (!currentTrack) return;
+
+    const trackId = getTrackId(currentTrack);
+    if (!trackId) return;
+
+    if (!historyMarkedForCurrentTrack && !currentTrack?.skipHistory && positionMs > 10000) {
+        historyMarkedForCurrentTrack = true;
+        markTrackAsPlayed(trackId, positionMs / 1000);
+    }
+
+    if (currentTrack?.isPodcast) {
+        const now = Date.now();
+        const nearEnd = effectiveDurationMs > 0 && positionMs >= effectiveDurationMs - 1500;
+        const shouldPersist = nearEnd || now - lastPodcastSaveTs >= 5000;
+
+        if (shouldPersist) {
+            lastPodcastSaveTs = now;
+            void upsertPodcastProgress(currentTrack, positionMs, effectiveDurationMs);
+        }
+    }
+};
+
+const startProgressPolling = (set, get) => {
+    if (progressPollInterval) return;
+
+    progressPollInterval = setInterval(async () => {
+        try {
+            const playback = await TrackPlayer.getPlaybackState();
+            if (!isPlaybackActive(playback)) return;
+
+            const progress = await TrackPlayer.getProgress();
+            applyProgressSnapshot(set, get, progress?.position, progress?.duration);
+        } catch (_) {
+            // ignore polling errors
+        }
+    }, 500);
 };
 
 const toTrackPlayerItem = (track) => {
@@ -98,55 +212,38 @@ const attachListeners = (set, get) => {
     if (listenersReady) return;
     listenersReady = true;
 
-    TrackPlayer.addEventListener(Event.PlaybackState, ({ state }) => {
-        set({ isPlaying: isPlaybackActive(state) });
+    TrackPlayer.addEventListener(Event.PlaybackState, async ({ state }) => {
+        const active = isPlaybackActive(state);
+        debugLog('event:PlaybackState', { state, active });
+        set({ isPlaying: active });
+        try {
+            if (active) {
+                await TrackPlayer.setVolume(1);
+            } else if (playbackStateValue(state) === State.Paused) {
+                await TrackPlayer.setVolume(0);
+            }
+        } catch (_) {
+            // ignore
+        }
+        if (active) {
+            startProgressPolling(set, get);
+        } else {
+            clearProgressPolling();
+        }
+    });
+
+    TrackPlayer.addEventListener(Event.PlaybackPlayWhenReadyChanged, ({ playWhenReady }) => {
+        debugLog('event:PlaybackPlayWhenReadyChanged', { playWhenReady });
+        set({ isPlaying: !!playWhenReady });
+        if (playWhenReady) {
+            startProgressPolling(set, get);
+        } else {
+            clearProgressPolling();
+        }
     });
 
     TrackPlayer.addEventListener(Event.PlaybackProgressUpdated, ({ position, duration }) => {
-        const positionMs = toMs(position);
-        const durationMs = toMs(duration);
-
-        set({
-            position: positionMs,
-            duration: durationMs,
-        });
-
-        const { currentTrack, adModalVisible } = get();
-        if (adModalVisible) {
-            set({
-                adPositionMs: positionMs,
-                adDurationMs: durationMs,
-                isAdPlaying: true,
-                isPlaying: true,
-            });
-
-            if (!adFinishTriggered && durationMs > 0 && positionMs >= durationMs - 250) {
-                adFinishTriggered = true;
-                void get().dismissAdAndPlayPending();
-            }
-            return;
-        }
-
-        if (!currentTrack) return;
-
-        const trackId = getTrackId(currentTrack);
-        if (!trackId) return;
-
-        if (!historyMarkedForCurrentTrack && !currentTrack?.skipHistory && positionMs > 10000) {
-            historyMarkedForCurrentTrack = true;
-            markTrackAsPlayed(trackId, positionMs / 1000);
-        }
-
-        if (currentTrack?.isPodcast) {
-            const now = Date.now();
-            const nearEnd = durationMs > 0 && positionMs >= durationMs - 1500;
-            const shouldPersist = nearEnd || now - lastPodcastSaveTs >= 5000;
-
-            if (shouldPersist) {
-                lastPodcastSaveTs = now;
-                void upsertPodcastProgress(currentTrack, positionMs, durationMs);
-            }
-        }
+        applyProgressSnapshot(set, get, position, duration);
     });
 
     TrackPlayer.addEventListener(Event.PlaybackQueueEnded, async () => {
@@ -180,7 +277,7 @@ const ensurePlayerReady = async (set, get) => {
         await TrackPlayer.setupPlayer({
             iosCategory: IOSCategory.Playback,
             autoUpdateMetadata: true,
-            autoHandleInterruptions: true,
+            autoHandleInterruptions: false,
         });
         await TrackPlayer.setRepeatMode(RepeatMode.Off);
         await TrackPlayer.updateOptions({
@@ -218,6 +315,9 @@ export const usePlayerStore = create((set, get) => ({
     queue: [],
     currentIndex: 0,
     currentTrack: null,
+    isShuffleEnabled: false,
+    repeatMode: 'off', // off | all | one
+    queueBeforeShuffle: null,
     isPlaying: false,
     soundObj: null,
     position: 0,
@@ -239,7 +339,13 @@ export const usePlayerStore = create((set, get) => ({
 
     setTrack: async (track) => {
         const seedId = getTrackId(track);
-        set({ queue: [track], currentIndex: 0 });
+        set({
+            queue: [track],
+            currentIndex: 0,
+            isShuffleEnabled: false,
+            repeatMode: get().repeatMode,
+            queueBeforeShuffle: null,
+        });
         await get().playTrack(track);
 
         const nextQueue = await buildRecommendedQueue(track);
@@ -250,13 +356,24 @@ export const usePlayerStore = create((set, get) => ({
             if (currentId && seedId && currentId !== seedId) {
                 return {};
             }
-            return { queue: nextQueue, currentIndex: 0 };
+            return {
+                queue: nextQueue,
+                currentIndex: 0,
+                isShuffleEnabled: false,
+                queueBeforeShuffle: null,
+            };
         });
     },
 
     setQueue: async (newQueue, index) => {
-        set({ queue: newQueue, currentIndex: index });
-        await get().playTrack(newQueue[index]);
+        const safeIndex = Math.max(0, Math.min(Number(index) || 0, Math.max(0, newQueue.length - 1)));
+        set((state) => ({
+            queue: newQueue,
+            currentIndex: safeIndex,
+            queueBeforeShuffle: state.isShuffleEnabled ? state.queueBeforeShuffle : null,
+        }));
+        if (!newQueue[safeIndex]) return;
+        await get().playTrack(newQueue[safeIndex]);
     },
 
     playTrack: async (track, options = {}) => {
@@ -308,7 +425,13 @@ export const usePlayerStore = create((set, get) => ({
                             artist: adTrack.artist,
                             artwork: adTrack.artwork,
                         });
+                        try {
+                            await TrackPlayer.setVolume(1);
+                        } catch (_) {
+                            // ignore
+                        }
                         await TrackPlayer.play();
+                        startProgressPolling(set, get);
 
                         set({
                             currentTrack: track,
@@ -333,11 +456,13 @@ export const usePlayerStore = create((set, get) => ({
                 throw new Error('TrackPlayer item is invalid');
             }
 
+            const initialDurationMs = parseDurationToMs(track?.duration);
+
             set({
                 currentTrack: track,
                 isPlaying: true,
                 position: 0,
-                duration: 0,
+                duration: initialDurationMs,
                 adModalVisible: false,
                 pendingAdTrack: null,
                 adData: null,
@@ -363,14 +488,17 @@ export const usePlayerStore = create((set, get) => ({
                 set({ position: startPositionMs });
             }
 
+            try {
+                await TrackPlayer.setVolume(1);
+            } catch (_) {
+                // ignore
+            }
             await TrackPlayer.play();
+            startProgressPolling(set, get);
 
             try {
                 const progress = await TrackPlayer.getProgress();
-                set({
-                    position: toMs(progress?.position),
-                    duration: toMs(progress?.duration),
-                });
+                applyProgressSnapshot(set, get, progress?.position, progress?.duration);
             } catch (_) {
                 // ignore
             }
@@ -390,6 +518,7 @@ export const usePlayerStore = create((set, get) => ({
                 isPlaying: false,
                 soundObj: null,
             });
+            clearProgressPolling();
         }
     },
 
@@ -419,6 +548,7 @@ export const usePlayerStore = create((set, get) => ({
         } catch (_) {
             // ignore
         }
+        clearProgressPolling();
         adFinishTriggered = false;
 
         set({
@@ -438,9 +568,16 @@ export const usePlayerStore = create((set, get) => ({
             if (isAdPlaying) {
                 await TrackPlayer.pause();
                 set({ isAdPlaying: false, isPlaying: false });
+                clearProgressPolling();
             } else {
+                try {
+                    await TrackPlayer.setVolume(1);
+                } catch (_) {
+                    // ignore
+                }
                 await TrackPlayer.play();
                 set({ isAdPlaying: true, isPlaying: true });
+                startProgressPolling(set, get);
             }
         } catch (_) {
             // ignore
@@ -452,6 +589,7 @@ export const usePlayerStore = create((set, get) => ({
             await ensurePlayerReady(set, get);
             await TrackPlayer.pause();
             set({ isAdPlaying: false, isPlaying: false });
+            clearProgressPolling();
         } catch (_) {
             // ignore
         }
@@ -461,8 +599,14 @@ export const usePlayerStore = create((set, get) => ({
         const { adModalVisible } = get();
         try {
             await ensurePlayerReady(set, get);
+            try {
+                await TrackPlayer.setVolume(1);
+            } catch (_) {
+                // ignore
+            }
             await TrackPlayer.play();
             set({ isAdPlaying: adModalVisible, isPlaying: true });
+            startProgressPolling(set, get);
         } catch (_) {
             // ignore
         }
@@ -493,20 +637,51 @@ export const usePlayerStore = create((set, get) => ({
     },
 
     playNext: async () => {
-        const { queue, currentIndex } = get();
+        const { queue, currentIndex, repeatMode } = get();
+        if (!Array.isArray(queue) || queue.length === 0) {
+            set({ isPlaying: false });
+            return;
+        }
+
+        if (repeatMode === 'one') {
+            const current = queue[currentIndex] || queue[0];
+            if (current) {
+                await get().playTrack(current, { skipAd: true });
+            } else {
+                set({ isPlaying: false });
+            }
+            return;
+        }
+
         if (currentIndex < queue.length - 1) {
             const newIndex = currentIndex + 1;
             set({ currentIndex: newIndex });
             await get().playTrack(queue[newIndex]);
-        } else {
-            set({ isPlaying: false });
+            return;
         }
+
+        if (repeatMode === 'all') {
+            set({ currentIndex: 0 });
+            await get().playTrack(queue[0], { skipAd: true });
+            return;
+        }
+
+        set({ isPlaying: false });
     },
 
     playPrev: async () => {
-        const { queue, currentIndex } = get();
+        const { queue, currentIndex, repeatMode } = get();
+        if (!Array.isArray(queue) || queue.length === 0) return;
+
         if (currentIndex > 0) {
             const newIndex = currentIndex - 1;
+            set({ currentIndex: newIndex });
+            await get().playTrack(queue[newIndex], { skipAd: true });
+            return;
+        }
+
+        if (repeatMode === 'all' && queue.length > 1) {
+            const newIndex = queue.length - 1;
             set({ currentIndex: newIndex });
             await get().playTrack(queue[newIndex], { skipAd: true });
         }
@@ -523,12 +698,95 @@ export const usePlayerStore = create((set, get) => ({
     },
 
     addToQueue: (track) => {
-        const { queue } = get();
-        set({ queue: [...queue, track] });
+        const { queue, isShuffleEnabled, queueBeforeShuffle } = get();
+        set({
+            queue: [...queue, track],
+            queueBeforeShuffle: isShuffleEnabled && Array.isArray(queueBeforeShuffle)
+                ? [...queueBeforeShuffle, track]
+                : queueBeforeShuffle,
+        });
     },
 
     clearQueue: () => {
         const { currentTrack } = get();
-        set({ queue: [currentTrack], currentIndex: 0 });
+        set({
+            queue: [currentTrack],
+            currentIndex: 0,
+            isShuffleEnabled: false,
+            queueBeforeShuffle: null,
+        });
+    },
+
+    toggleShuffle: () => {
+        const { queue, currentIndex, currentTrack, isShuffleEnabled, queueBeforeShuffle } = get();
+        const safeQueue = Array.isArray(queue) ? queue.filter(Boolean) : [];
+
+        if (safeQueue.length <= 1) {
+            set({ isShuffleEnabled: !isShuffleEnabled });
+            return;
+        }
+
+        const current = safeQueue[currentIndex] || currentTrack || safeQueue[0];
+        const currentId = getTrackId(current);
+
+        if (!isShuffleEnabled) {
+            const base = [...safeQueue];
+            const others = base.filter((item, idx) => {
+                if (idx === currentIndex) return false;
+                if (!currentId) return true;
+                return getTrackId(item) !== currentId;
+            });
+
+            for (let i = others.length - 1; i > 0; i -= 1) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [others[i], others[j]] = [others[j], others[i]];
+            }
+
+            const shuffled = current ? [current, ...others] : others;
+            set({
+                queue: shuffled,
+                currentIndex: 0,
+                isShuffleEnabled: true,
+                queueBeforeShuffle: base,
+            });
+            return;
+        }
+
+        let restore = Array.isArray(queueBeforeShuffle) && queueBeforeShuffle.length > 0
+            ? queueBeforeShuffle.filter(Boolean)
+            : safeQueue;
+
+        // Safety net: never allow empty queue after disabling shuffle.
+        if (!Array.isArray(restore) || restore.length === 0) {
+            restore = currentTrack ? [currentTrack] : safeQueue;
+        }
+
+        // Safety net: keep currently playing track in restored queue.
+        if (currentId && !restore.some((item) => getTrackId(item) === currentId) && currentTrack) {
+            restore = [currentTrack, ...restore];
+        }
+
+        const restoreIndex = restore.findIndex((item) => getTrackId(item) === currentId);
+        const safeRestoreIndex = restore.length > 0
+            ? Math.max(0, Math.min(restoreIndex >= 0 ? restoreIndex : 0, restore.length - 1))
+            : 0;
+
+        set({
+            queue: restore,
+            currentIndex: safeRestoreIndex,
+            isShuffleEnabled: false,
+            queueBeforeShuffle: null,
+        });
+    },
+
+    toggleRepeatMode: () => {
+        const { repeatMode } = get();
+        const next =
+            repeatMode === 'off'
+                ? 'all'
+                : repeatMode === 'all'
+                    ? 'one'
+                    : 'off';
+        set({ repeatMode: next });
     },
 }));
