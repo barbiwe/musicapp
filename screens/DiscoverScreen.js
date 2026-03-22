@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
     View,
     Text,
@@ -31,24 +31,18 @@ import {
     getBanners,
     getBannerImageUrl,
     isPremiumUser,
+    refreshUserToken,
+    getArtistFollowersCount,
+    getTrackPlays,
     scale
 } from '../api/api';
 
 const { width, height } = Dimensions.get('window');
 const CARD_WIDTH = width * 0.9;
 const svgCache = {};
+const PREMIUM_BANNER_INVALIDATE_KEY = 'premium_banner_invalidate_v1';
 const getTrackId = (track) =>
     String(track?.id || track?._id || track?.trackId || track?.track?.id || '').trim();
-
-// Допоміжна функція для генерації випадкових прослуховувань (30M, 120K тощо)
-const getRandomListeners = () => {
-    const suffixes = ['M', 'K'];
-    const randomSuffix = suffixes[Math.floor(Math.random() * suffixes.length)];
-    const randomValue = randomSuffix === 'M'
-        ? (Math.random() * 50 + 1).toFixed(1) // Від 1.0M до 51.0M
-        : Math.floor(Math.random() * 900 + 100); // Від 100K до 999K
-    return `${randomValue}${randomSuffix}`;
-};
 
 const ArtistAvatar = ({ uri, name }) => {
     const [imgError, setImgError] = useState(false);
@@ -72,8 +66,27 @@ const ArtistAvatar = ({ uri, name }) => {
     );
 };
 
+const formatFollowersCount = (value) => {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n <= 0) return '0';
+    if (n >= 1000000) return `${(n / 1000000).toFixed(1).replace('.0', '')}M`;
+    if (n >= 1000) return `${(n / 1000).toFixed(1).replace('.0', '')}K`;
+    return String(Math.floor(n));
+};
+
+const formatPlaysCount = (value) => {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n <= 0) return '0';
+    if (n >= 1000000) return `${(n / 1000000).toFixed(1).replace('.0', '')}M`;
+    if (n >= 1000) return `${(n / 1000).toFixed(1).replace('.0', '')}K`;
+    return String(Math.floor(n));
+};
+
 
 const ArtistCard = ({ artist, onPress, getAvatar, bgColor }) => {
+    const followers = Number.isFinite(artist.followersCount) ? artist.followersCount : 0;
+    const compactFollowers = formatFollowersCount(followers);
+
     return (
         <TouchableOpacity
             activeOpacity={0.85}
@@ -88,7 +101,7 @@ const ArtistCard = ({ artist, onPress, getAvatar, bgColor }) => {
                     </Text>
 
                     <Text style={styles.artistCardListeners}>
-                        {(Math.random() * (7 - 0.2) + 0.2).toFixed(1)}M listeners
+                        {compactFollowers} listeners
                     </Text>
                 </View>
 
@@ -154,6 +167,7 @@ export default function DiscoverScreen({ navigation }) {
     const setTrack = usePlayerStore((state) => state.setTrack);
     const [loading, setLoading] = useState(true);
     const [tracks, setTracks] = useState([]);
+    const [popularTracks, setPopularTracks] = useState([]);
     const [recentTracks, setRecentTracks] = useState([]);
     const [recommendations, setRecommendations] = useState([]);
     const [artists, setArtists] = useState([]);
@@ -162,18 +176,72 @@ export default function DiscoverScreen({ navigation }) {
     const [discoverBanner, setDiscoverBanner] = useState(null);
     const [isPremium, setIsPremium] = useState(false);
     const [myId, setMyId] = useState(null);
+    const loadReqIdRef = useRef(0);
+    const hasLoadedOnceRef = useRef(false);
+    const syncingPremiumBannerRef = useRef(false);
 
+    const syncPremiumBanner = useCallback(async (options = {}) => {
+        const forceRefreshToken = !!options?.forceRefreshToken;
+        if (syncingPremiumBannerRef.current) return;
+        syncingPremiumBannerRef.current = true;
+        try {
+            if (forceRefreshToken) {
+                await refreshUserToken();
+            }
+            const premium = await isPremiumUser();
+            setIsPremium(!!premium);
+            if (premium) {
+                setDiscoverBanner(null);
+                return;
+            }
+            const bannersRes = await getBanners();
+            const firstBanner = (Array.isArray(bannersRes) ? bannersRes : [])
+                .find((banner) => !!getBannerImageUrl(banner)) || null;
+            setDiscoverBanner(firstBanner);
+        } catch (_) {
+            // keep current UI state on soft sync errors
+        } finally {
+            syncingPremiumBannerRef.current = false;
+        }
+    }, []);
+
+    const syncPremiumBannerIfInvalidated = useCallback(async () => {
+        try {
+            const invalidateAt = await AsyncStorage.getItem(PREMIUM_BANNER_INVALIDATE_KEY);
+            if (!invalidateAt) return false;
+            await AsyncStorage.removeItem(PREMIUM_BANNER_INVALIDATE_KEY);
+            // Payment just happened -> refresh token first, then refresh only banner state.
+            await syncPremiumBanner({ forceRefreshToken: true });
+            return true;
+        } catch (_) {
+            // ignore invalidation sync errors
+            return false;
+        }
+    }, [syncPremiumBanner]);
 
     useEffect(() => {
-        if (isFocused) {
+        if (!isFocused) return;
+        if (!hasLoadedOnceRef.current) {
+            hasLoadedOnceRef.current = true;
             load();
+            return;
         }
-    }, [isFocused]);
+        void (async () => {
+            const invalidated = await syncPremiumBannerIfInvalidated();
+            if (!invalidated) {
+                // Lightweight focus sync: keep banner/premium state in sync without reloading Discover data.
+                await syncPremiumBanner();
+            }
+        })();
+    }, [isFocused, syncPremiumBannerIfInvalidated, syncPremiumBanner]);
 
     const load = async () => {
+        const reqId = ++loadReqIdRef.current;
+        setLoading(true);
+
         try {
             const currentUserId = await AsyncStorage.getItem('userId');
-            if (currentUserId) setMyId(currentUserId);
+            if (currentUserId && reqId === loadReqIdRef.current) setMyId(currentUserId);
 
             const [tracksRes, albumsRes, iconsRes, recentRes, recsRes, premium] = await Promise.all([
                 getTracks(),
@@ -184,13 +252,21 @@ export default function DiscoverScreen({ navigation }) {
                 isPremiumUser(),
             ]);
 
+            if (reqId !== loadReqIdRef.current) return;
+
             setIsPremium(!!premium);
 
-            setTracks(tracksRes || []);
-            setAlbums(albumsRes || []);
-            setIcons(iconsRes || {});
+            const safeTracks = Array.isArray(tracksRes) ? tracksRes : [];
+            const safeAlbums = Array.isArray(albumsRes) ? albumsRes : [];
+            const safeRecent = Array.isArray(recentRes) ? recentRes : [];
+            const safeRecs = Array.isArray(recsRes) ? recsRes : [];
 
-            const formattedHistory = (recentRes || []).map(item => {
+            setTracks(safeTracks);
+            setAlbums(safeAlbums);
+            setIcons(iconsRes || {});
+            setPopularTracks(safeTracks.map((track) => ({ ...track, playsCount: 0 })));
+
+            const formattedHistory = safeRecent.map(item => {
                 if (item.track) {
                     return {
                         ...item.track,
@@ -202,7 +278,7 @@ export default function DiscoverScreen({ navigation }) {
             setRecentTracks(formattedHistory);
 
             const map = new Map();
-            (tracksRes || []).forEach(t => {
+            safeTracks.forEach(t => {
                 const artistName = t.artistName || t.artist?.name || 'Unknown Artist';
                 const backendArtistId = t.artistId || t.ArtistId || t.artist?.id || t.artist?._id;
                 if (backendArtistId && !map.has(String(backendArtistId))) {
@@ -214,9 +290,9 @@ export default function DiscoverScreen({ navigation }) {
                     });
                 }
             });
-            setArtists([...map.values()]);
-
-            const formattedRecs = (recsRes || []).map(r => ({
+            const mappedArtists = [...map.values()];
+            setArtists(mappedArtists);
+            const formattedRecs = safeRecs.map(r => ({
                 id: r.trackId,
                 title: r.title,
                 artist: { name: r.artistName || 'Unknown' },
@@ -226,18 +302,77 @@ export default function DiscoverScreen({ navigation }) {
             }));
             setRecommendations(formattedRecs);
 
-            if (premium) {
-                setDiscoverBanner(null);
+            // Do not block UI with heavy counters/followers/banner requests.
+            setLoading(false);
+
+            Promise.all(
+                safeTracks.map(async (track) => {
+                    const trackId = getTrackId(track);
+                    if (!trackId) return [trackId, 0];
+                    try {
+                        const plays = await getTrackPlays(trackId);
+                        return [trackId, Number.isFinite(plays) ? plays : 0];
+                    } catch (_) {
+                        return [trackId, 0];
+                    }
+                })
+            ).then((pairs) => {
+                if (reqId !== loadReqIdRef.current) return;
+                const playsByTrackId = Object.fromEntries((pairs || []).filter(([id]) => !!id));
+                const sortedByPlays = [...safeTracks].sort((a, b) => {
+                    const aPlays = playsByTrackId[getTrackId(a)] ?? 0;
+                    const bPlays = playsByTrackId[getTrackId(b)] ?? 0;
+                    return bPlays - aPlays;
+                });
+                setPopularTracks(
+                    sortedByPlays.map((track) => ({
+                        ...track,
+                        playsCount: playsByTrackId[getTrackId(track)] ?? 0,
+                    }))
+                );
+            }).catch(() => {});
+
+            Promise.all(
+                mappedArtists.map(async (artist) => {
+                    try {
+                        const count = await getArtistFollowersCount(artist.artistId || artist.id);
+                        return [artist.id, Number.isFinite(count) ? count : 0];
+                    } catch (_) {
+                        return [artist.id, 0];
+                    }
+                })
+            ).then((followersPairs) => {
+                if (reqId !== loadReqIdRef.current) return;
+                const followersByArtistId = Object.fromEntries(followersPairs || []);
+                setArtists((prev) => prev.map((artist) => ({
+                    ...artist,
+                    followersCount: followersByArtistId[artist.id] ?? 0,
+                })));
+            }).catch(() => {});
+
+            if (!premium) {
+                getBanners()
+                    .then((bannersRes) => {
+                        if (reqId !== loadReqIdRef.current) return;
+                        const firstBanner = (Array.isArray(bannersRes) ? bannersRes : [])
+                            .find((banner) => !!getBannerImageUrl(banner)) || null;
+                        setDiscoverBanner(firstBanner);
+                    })
+                    .catch(() => {});
             } else {
-                const bannersRes = await getBanners();
-                const firstBanner = (bannersRes || []).find((banner) => !!getBannerImageUrl(banner)) || null;
-                setDiscoverBanner(firstBanner);
+                setDiscoverBanner(null);
             }
 
         } catch (e) {
             console.log('Discover load error', e);
+            hasLoadedOnceRef.current = false;
+            if (reqId === loadReqIdRef.current) {
+                setLoading(false);
+            }
         } finally {
-            setLoading(false);
+            if (reqId === loadReqIdRef.current) {
+                setLoading(false);
+            }
         }
     };
 
@@ -515,10 +650,10 @@ export default function DiscoverScreen({ navigation }) {
                                 Popular songs
                             </Text>
 
-                            {tracks.length > 0 && (
+                            {popularTracks.length > 0 && (
                                 <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                                     <View style={styles.row}>
-                                        {tracks.slice(0, 10).map((t, i) => (
+                                        {popularTracks.slice(0, 10).map((t, i) => (
                                             <TouchableOpacity
                                                 key={i}
                                                 style={styles.square}
@@ -543,12 +678,12 @@ export default function DiscoverScreen({ navigation }) {
                                                     }}>
                                                         <BlurView intensity={60} tint="dark" style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
                                                             <Text style={{
-                                                                color: '#FF4D4F',
+                                                                color: '#F5D8CB',
                                                                 fontSize: scale(9),
                                                                 fontFamily: 'Poppins-Medium',
                                                                 textAlign: 'center'
                                                             }}>
-                                                                {getRandomListeners()}
+                                                                {formatPlaysCount(t.playsCount || 0)}
                                                             </Text>
                                                         </BlurView>
                                                     </View>
@@ -743,7 +878,7 @@ const styles = StyleSheet.create({
     artistCardListeners: {
         fontSize: scale(14),
         fontFamily: 'Poppins-Regular',
-        color: '#FF4D4F',
+        color: '#B9B9B9',
         fontWeight: '500',
     },
     artistCardImage: {

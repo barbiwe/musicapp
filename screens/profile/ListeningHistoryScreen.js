@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     View,
     Text,
@@ -15,6 +15,7 @@ import { usePlayerStore } from '../../store/usePlayerStore';
 
 import {
     getIcons,
+    getCachedIcons,
     getCachedTrackCoverUri,
     getRecentlyPlayed,
     getTrackCoverUrl,
@@ -26,6 +27,7 @@ import MiniPlayer from '../../components/MiniPlayer';
 
 const DATE_FORMATTER = new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric' });
 const imagePrefetchCache = new Set();
+let listeningHistorySessionCache = null;
 
 const normalizeItem = (entry, index) => {
     const track = entry?.track || entry;
@@ -56,34 +58,85 @@ const getDateLabel = (dateValue) => {
     return DATE_FORMATTER.format(target);
 };
 
+const normalizeHistoryList = (raw) =>
+    (Array.isArray(raw) ? raw : [])
+        .map((entry, index) => normalizeItem(entry, index))
+        .filter(Boolean)
+        .sort((a, b) => new Date(b.playedAt || 0) - new Date(a.playedAt || 0));
+
 export default function ListeningHistoryScreen({ navigation }) {
     const { setTrack } = usePlayerStore();
-    const [icons, setIcons] = useState({});
-    const [history, setHistory] = useState([]);
-    const [coverMap, setCoverMap] = useState({});
+    const hasLoadedOnceRef = useRef(Boolean(listeningHistorySessionCache));
+    const [icons, setIcons] = useState(() => listeningHistorySessionCache?.icons || getCachedIcons() || {});
+    const [history, setHistory] = useState(() =>
+        Array.isArray(listeningHistorySessionCache?.history)
+            ? listeningHistorySessionCache.history
+            : []
+    );
+    const [coverMap, setCoverMap] = useState(() => listeningHistorySessionCache?.coverMap || {});
 
     useEffect(() => {
+        if (Object.keys(icons || {}).length > 0) return undefined;
         let mounted = true;
         getIcons().then((map) => {
             if (mounted) setIcons(map || {});
         }).catch(() => {});
 
         return () => { mounted = false; };
-    }, []);
+    }, [icons]);
 
-    const loadHistory = useCallback(async () => {
-        const raw = await getRecentlyPlayed(true);
-        const normalized = (Array.isArray(raw) ? raw : [])
-            .map((entry, index) => normalizeItem(entry, index))
-            .filter(Boolean)
-            .sort((a, b) => new Date(b.playedAt || 0) - new Date(a.playedAt || 0));
+    const loadHistory = useCallback(async ({ force = false } = {}) => {
+        if (!force && listeningHistorySessionCache) {
+            setHistory(Array.isArray(listeningHistorySessionCache.history) ? listeningHistorySessionCache.history : []);
+            setCoverMap(listeningHistorySessionCache.coverMap || {});
+            if (listeningHistorySessionCache.icons) setIcons(listeningHistorySessionCache.icons);
+            hasLoadedOnceRef.current = true;
+            return;
+        }
 
-        setHistory(normalized);
-    }, []);
+        if (!force && hasLoadedOnceRef.current) {
+            if (Array.isArray(listeningHistorySessionCache?.history)) {
+                setHistory(listeningHistorySessionCache.history);
+                setCoverMap(listeningHistorySessionCache.coverMap || {});
+                if (listeningHistorySessionCache.icons) setIcons(listeningHistorySessionCache.icons);
+            }
+            return;
+        }
+
+        // 1) Спочатку показуємо кеш (щоб екран не ставав порожнім при тимчасовому фейлі API)
+        const cachedRaw = await getRecentlyPlayed(false);
+        const cached = normalizeHistoryList(cachedRaw);
+        if (cached.length > 0) {
+            setHistory(cached);
+        }
+
+        // 2) Далі пробуємо свіже з бекенду
+        const freshRaw = await getRecentlyPlayed(true);
+        const fresh = normalizeHistoryList(freshRaw);
+
+        // Якщо свіже порожнє, а кеш уже є — не перетираємо UI порожнім станом
+        if (fresh.length > 0 || cached.length === 0) {
+            setHistory(fresh);
+            listeningHistorySessionCache = {
+                history: fresh,
+                coverMap: listeningHistorySessionCache?.coverMap || {},
+                icons: icons || listeningHistorySessionCache?.icons || {},
+            };
+        } else if (cached.length > 0) {
+            listeningHistorySessionCache = {
+                history: cached,
+                coverMap: listeningHistorySessionCache?.coverMap || {},
+                icons: icons || listeningHistorySessionCache?.icons || {},
+            };
+        }
+        hasLoadedOnceRef.current = true;
+    }, [icons]);
 
     useFocusEffect(
         useCallback(() => {
-            loadHistory();
+            if (!hasLoadedOnceRef.current) {
+                loadHistory({ force: false });
+            }
         }, [loadHistory])
     );
 
@@ -123,6 +176,14 @@ export default function ListeningHistoryScreen({ navigation }) {
             });
         });
     }, [history]);
+
+    useEffect(() => {
+        listeningHistorySessionCache = {
+            history,
+            coverMap,
+            icons,
+        };
+    }, [history, coverMap, icons]);
 
     return (
         <LinearGradient

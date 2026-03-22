@@ -21,6 +21,7 @@ const { width, height } = Dimensions.get('window');
 // Розраховуємо ширину так, щоб 3 колонки поміщалися ідеально
 const ITEM_WIDTH = (width - scale(40) - scale(20)) / 3;
 const CIRCLE_RADIUS = ITEM_WIDTH / 2; // Для ідеально круглих карток
+let chooseArtistSessionCache = null;
 
 // 1. КЕШ ТА РЕНДЕР SVG
 const svgCache = {};
@@ -60,8 +61,8 @@ const ColoredSvg = ({ uri, width, height, color }) => {
 };
 
 export default function ChooseArtistScreen({ navigation }) {
-    const [icons, setIcons] = useState({});
-    const [artistsData, setArtistsData] = useState([]);
+    const [icons, setIcons] = useState(() => chooseArtistSessionCache?.icons || {});
+    const [artistsData, setArtistsData] = useState(() => chooseArtistSessionCache?.artistsData || []);
 
     // Стейт для зберігання ID вибраних артистів
     const [selectedArtists, setSelectedArtists] = useState([]);
@@ -83,6 +84,7 @@ export default function ChooseArtistScreen({ navigation }) {
     const ARTISTS_ROWS = chunkArray(ARTISTS_DATA, 3);
 
     useEffect(() => {
+        if (chooseArtistSessionCache) return;
         loadIcons();
     }, []);
 
@@ -140,6 +142,10 @@ export default function ChooseArtistScreen({ navigation }) {
             });
 
             setArtistsData(uniq.slice(0, 11));
+            chooseArtistSessionCache = {
+                icons: loadedIcons || {},
+                artistsData: uniq.slice(0, 11),
+            };
         } catch (e) {
             console.log("Error loading icons:", e);
         }

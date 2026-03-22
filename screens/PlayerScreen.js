@@ -16,7 +16,6 @@ import {
     Image,
     StatusBar,
     Linking,
-    PanResponder,
 } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -24,6 +23,7 @@ import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SvgUri, SvgXml } from 'react-native-svg';
 import { usePlayerStore } from '../store/usePlayerStore';
+import ShareSheetModal from '../components/ShareSheetModal';
 import {
     getStreamUrl,
     likeTrack,
@@ -206,6 +206,8 @@ export default function PlayerScreen({ navigation, route }) {
     const [modalVisible, setModalVisible] = useState(false);
     const [queueVisible, setQueueVisible] = useState(false);
     const [relatedVisible, setRelatedVisible] = useState(false);
+    const [shareVisible, setShareVisible] = useState(false);
+    const [lyricsVisible, setLyricsVisible] = useState(false);
     const isSeeking = useRef(false);
     const progressTrackRef = useRef(null);
     const [progressBarWidth, setProgressBarWidth] = useState(0);
@@ -234,6 +236,18 @@ export default function PlayerScreen({ navigation, route }) {
     useEffect(() => {
         prefetchImageOnce(playerBackgroundUrl);
     }, [playerBackgroundUrl]);
+
+    useEffect(() => {
+        if (adModalVisible && lyricsVisible) {
+            setLyricsVisible(false);
+        }
+    }, [adModalVisible, lyricsVisible]);
+
+    useEffect(() => {
+        if (adModalVisible && relatedVisible) {
+            setRelatedVisible(false);
+        }
+    }, [adModalVisible, relatedVisible]);
 
     useEffect(() => {
         // Прогріваємо найближчі обкладинки в черзі, щоб у модалці відкривались без затримки
@@ -552,43 +566,13 @@ export default function PlayerScreen({ navigation, route }) {
     // --- Modals animations---
     // Початкова позиція шторки — за межами екрану знизу
     const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
-    const modalDragY = useRef(new Animated.Value(0)).current;
-
-    const resetModalDrag = () => {
-        Animated.spring(modalDragY, {
-            toValue: 0,
-            useNativeDriver: true,
-            tension: 120,
-            friction: 12,
-        }).start();
-    };
-
-    const modalPanResponder = useRef(
-        PanResponder.create({
-            onMoveShouldSetPanResponder: (_evt, gesture) =>
-                gesture.dy > 14 && Math.abs(gesture.dy) > Math.abs(gesture.dx),
-            onPanResponderMove: (_evt, gesture) => {
-                modalDragY.setValue(Math.max(0, gesture.dy));
-            },
-            onPanResponderRelease: (_evt, gesture) => {
-                if (gesture.dy > 120 || gesture.vy > 1.1) {
-                    modalDragY.setValue(0);
-                    closeModal();
-                } else {
-                    resetModalDrag();
-                }
-            },
-            onPanResponderTerminate: () => {
-                resetModalDrag();
-            },
-        })
-    ).current;
 
     const openModal = (type) => {
-        modalDragY.setValue(0);
-        if (type === 'menu') setModalVisible(true);
-        if (type === 'queue') setQueueVisible(true);
-        if (type === 'related') setRelatedVisible(true);
+        if (type === 'related' && adModalVisible) return;
+        setModalVisible(type === 'menu');
+        setQueueVisible(type === 'queue');
+        setRelatedVisible(type === 'related');
+        slideAnim.setValue(SCREEN_HEIGHT);
 
         Animated.timing(slideAnim, {
             toValue: 0,
@@ -598,19 +582,14 @@ export default function PlayerScreen({ navigation, route }) {
         }).start();
     };
 
-    // 👇 ВИПРАВЛЕНО: Прибираємо рекурсію в start callback
-    const closeModal = () => {
-        modalDragY.setValue(0);
-        Animated.timing(slideAnim, {
-            toValue: SCREEN_HEIGHT,
-            duration: 250,
-            easing: Easing.in(Easing.cubic),
-            useNativeDriver: true,
-        }).start(() => {
-            setModalVisible(false);
-            setQueueVisible(false);
-            setRelatedVisible(false);
-        });
+    const closeModal = (onClosed) => {
+        setModalVisible(false);
+        setQueueVisible(false);
+        setRelatedVisible(false);
+        slideAnim.setValue(SCREEN_HEIGHT);
+        if (typeof onClosed === 'function') {
+            requestAnimationFrame(onClosed);
+        }
     };
 
     const handleAdPress = async () => {
@@ -623,6 +602,27 @@ export default function PlayerScreen({ navigation, route }) {
     };
 
     // --- MENU ACTIONS ---
+    const getPlayerSharePayload = () => {
+        const sourceTrack = currentTrack?.track || currentTrack || {};
+        const trackId = sourceTrack?.id || sourceTrack?._id;
+        const title = buildPodcastNowPlayingTitle(sourceTrack) || sourceTrack?.title || 'Track';
+        const artist = resolveArtistName(sourceTrack, 'Unknown Artist');
+        const url = sourceTrack?.localUri || (trackId ? getStreamUrl(trackId) : null);
+
+        return {
+            title: `${title} — ${artist}`,
+            url,
+        };
+    };
+
+    const openShareModal = () => {
+        closeModal(() => {
+            requestAnimationFrame(() => {
+                setShareVisible(true);
+            });
+        });
+    };
+
 
     const handleViewArtist = () => {
         closeModal();
@@ -774,6 +774,14 @@ export default function PlayerScreen({ navigation, route }) {
     const visibleQueue = queue.slice(currentIndex);
     const shuffleIconColor = isShuffleEnabled ? '#AC654F' : '#F5D8CB';
     const repeatIconColor = repeatMode === 'off' ? '#F5D8CB' : '#AC654F';
+    const requestBackgroundUrl =
+        icons['request.png'] ||
+        icons['request.jpg'] ||
+        icons['request.jpeg'] ||
+        null;
+    const activeBackgroundUrl = lyricsVisible ? (requestBackgroundUrl || playerBackgroundUrl) : playerBackgroundUrl;
+    const lyricsText = String(currentTrack?.lyrics || currentTrack?.track?.lyrics || '').trim();
+    const hasLyrics = lyricsText.length > 0;
 
     const renderIcon = (iconName, fallbackText, style, tintColor = '#000000') => {
         const iconUrl = icons[iconName];
@@ -852,9 +860,9 @@ export default function PlayerScreen({ navigation, route }) {
             />
 
             {/* 1. ФОН (Абсолютне позиціювання) */}
-            {playerBackgroundUrl ? (
+            {activeBackgroundUrl ? (
                 <Image
-                    source={{ uri: playerBackgroundUrl, cache: 'force-cache' }}
+                    source={{ uri: activeBackgroundUrl, cache: 'force-cache' }}
                     style={styles.fixedBackground}
                     resizeMode="cover"
                 />
@@ -874,7 +882,7 @@ export default function PlayerScreen({ navigation, route }) {
 
 
             {/* 2. КОНТЕНТ (Header, Cover, Controls) */}
-            <View style={styles.contentContainer}>
+            <View style={[styles.contentContainer, lyricsVisible && styles.contentContainerLyrics]}>
                 {adModalVisible ? (
                     <View style={styles.adPlayerContent}>
                         <View style={styles.header}>
@@ -984,12 +992,120 @@ export default function PlayerScreen({ navigation, route }) {
                             <TouchableOpacity onPress={() => openModal('queue')}>
                                 <Text style={styles.footerTab}>Queue</Text>
                             </TouchableOpacity>
-                            <TouchableOpacity>
-                                <Text style={[styles.footerTab, styles.stubText]}>Lyrics</Text>
+                            <TouchableOpacity disabled>
+                                <Text style={[styles.footerTab, styles.controlDisabledText]}>Lyrics</Text>
                             </TouchableOpacity>
-                            <TouchableOpacity onPress={() => openModal('related')}>
-                                <Text style={styles.footerTab}>Related</Text>
+                            <TouchableOpacity disabled style={styles.controlDisabled}>
+                                <Text style={[styles.footerTab, styles.controlDisabledText]}>Related</Text>
                             </TouchableOpacity>
+                        </View>
+                    </View>
+                ) : lyricsVisible ? (
+                    <View style={styles.lyricsScreenContent}>
+                        <View style={styles.lyricsHeader}>
+                            <TouchableOpacity
+                                onPress={() => setLyricsVisible(false)}
+                                hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
+                            >
+                                {renderIcon('arrow-left.svg', 'Back', { width: 24, height: 24 }, '#F5D8CB')}
+                            </TouchableOpacity>
+                        </View>
+
+                        <ScrollView
+                            style={styles.lyricsScroll}
+                            contentContainerStyle={styles.lyricsScrollContent}
+                            showsVerticalScrollIndicator={false}
+                        >
+                            <Text style={styles.lyricsText}>
+                                {hasLyrics ? lyricsText : 'Lyrics are not available for this track yet.'}
+                            </Text>
+                        </ScrollView>
+
+                        <View style={styles.lyricsMiniShell}>
+                            <LinearGradient
+                                colors={['rgba(255, 255, 255, 0.15)', 'rgba(255, 255, 255, 0.1)', 'rgba(255, 255, 255, 0.05)']}
+                                locations={[0, 0.2, 1]}
+                                start={{ x: 0.5, y: 0 }}
+                                end={{ x: 0.5, y: 1 }}
+                                style={styles.lyricsMiniBorderGradient}
+                            >
+                                <BlurView intensity={40} tint="dark" style={styles.lyricsMiniGlass}>
+                                    <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(30, 10, 8, 0.85)' }]} />
+
+                                    <View style={styles.lyricsMiniPlayer}>
+                                        <View style={styles.lyricsMiniTopRow}>
+                                            <View style={styles.lyricsMiniCoverWrap}>
+                                                <View style={styles.lyricsMiniVinylLayer}>
+                                                    {renderIcon('vinyl.svg', '', { width: 56, height: 56 }, null)}
+                                                </View>
+                                                {coverUrl ? (
+                                                    <Image
+                                                        source={{ uri: coverUrl, cache: 'force-cache' }}
+                                                        style={styles.lyricsMiniInnerCover}
+                                                        resizeMode="cover"
+                                                    />
+                                                ) : (
+                                                    <View style={[styles.lyricsMiniInnerCover, styles.lyricsMiniInnerCoverFallback]} />
+                                                )}
+                                            </View>
+
+                                            <View style={styles.lyricsMiniTrackMeta}>
+                                                <Text style={styles.lyricsMiniTitle} numberOfLines={1}>
+                                                    {trackTitle}
+                                                </Text>
+                                                <Text style={styles.lyricsMiniArtist} numberOfLines={1}>
+                                                    {trackArtist}
+                                                </Text>
+                                            </View>
+
+                                            <TouchableOpacity
+                                                style={styles.lyricsMiniPlayButton}
+                                                onPress={togglePlay}
+                                                activeOpacity={0.85}
+                                            >
+                                                {isPlaying
+                                                    ? renderIcon('pause.svg', '||', { width: 12, height: 12 }, '#300C0A')
+                                                    : renderIcon('play.svg', '>', { width: 12, height: 12 }, '#300C0A')}
+                                            </TouchableOpacity>
+
+                                            {!isPodcastTrack && (
+                                                <TouchableOpacity
+                                                    style={styles.lyricsMiniLikeButton}
+                                                    onPress={() => handleItemLikeToggle(currentTrack)}
+                                                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                                                >
+                                                    {likedTrackIds.includes(currentTrack.id || currentTrack._id)
+                                                        ? renderIcon('added.svg', 'Lik', { width: 26, height: 26 }, '#F5D8CB')
+                                                        : renderIcon('add.svg', 'Lik', { width: 26, height: 26 }, '#F5D8CB')}
+                                                </TouchableOpacity>
+                                            )}
+                                        </View>
+
+                                        <View style={styles.lyricsMiniProgressWrap}>
+                                            <View style={styles.lyricsMiniProgressTrack}>
+                                                <View style={styles.progressLineBg}>
+                                                    <View
+                                                        style={[
+                                                            styles.progressLineFill,
+                                                            styles.lyricsMiniProgressFill,
+                                                            { width: `${progressPercent}%` }
+                                                        ]}
+                                                    />
+                                                </View>
+                                                <View
+                                                    style={[
+                                                        styles.lyricsMiniProgressKnob,
+                                                        { left: `${progressPercent}%` }
+                                                    ]}
+                                                    pointerEvents="none"
+                                                >
+                                                    <View style={styles.lyricsMiniProgressKnobVisual} />
+                                                </View>
+                                            </View>
+                                        </View>
+                                    </View>
+                                </BlurView>
+                            </LinearGradient>
                         </View>
                     </View>
                 ) : (
@@ -1191,8 +1307,14 @@ export default function PlayerScreen({ navigation, route }) {
                     <TouchableOpacity onPress={() => openModal('queue')}>
                         <Text style={styles.footerTab}>Queue</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity disabled={isPodcastTrack}>
-                        <Text style={[styles.footerTab, styles.stubText, isPodcastTrack && styles.controlDisabledText]}>Lyrics</Text>
+                    <TouchableOpacity
+                        disabled={isPodcastTrack}
+                        onPress={() => {
+                            if (isPodcastTrack) return;
+                            setLyricsVisible(true);
+                        }}
+                    >
+                        <Text style={[styles.footerTab, isPodcastTrack && styles.controlDisabledText]}>Lyrics</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
                         disabled={isPodcastTrack}
@@ -1233,13 +1355,12 @@ export default function PlayerScreen({ navigation, route }) {
             >
                 <TouchableWithoutFeedback onPress={closeModal}>
                     <View style={styles.modalOverlay}>
-                        <TouchableWithoutFeedback>
+                        <TouchableWithoutFeedback onPress={() => {}}>
                             <Animated.View
-                                {...modalPanResponder.panHandlers}
                                 style={[
                                     styles.modalSheetWrapper,
                                     { height: SCREEN_HEIGHT * 0.7,
-                                        transform: [{ translateY: Animated.add(slideAnim, modalDragY) }] }
+                                        transform: [{ translateY: slideAnim }] }
                                 ]}
                             >
                                 <LinearGradient
@@ -1261,8 +1382,8 @@ export default function PlayerScreen({ navigation, route }) {
                                                     <TopAction label="Download" iconName="download.svg" />
                                                 </TouchableOpacity>
 
-                                                <TouchableOpacity onPress={() => console.log('Share')}>
-                                                    <TopAction label="Share" iconName="share.svg" isStub />
+                                                <TouchableOpacity onPress={openShareModal}>
+                                                    <TopAction label="Share" iconName="share.svg" />
                                                 </TouchableOpacity>
 
                                                 <TouchableOpacity onPress={handlePlayNext}>
@@ -1275,7 +1396,6 @@ export default function PlayerScreen({ navigation, route }) {
                                                     label="Add to another playlist"
                                                     iconName="add to another playlist.svg"
                                                     onPress={handleAddToPlaylist}
-                                                    isStub
                                                 />
                                                 <MenuItem
                                                     label="Add to queue"
@@ -1317,6 +1437,15 @@ export default function PlayerScreen({ navigation, route }) {
                 </TouchableWithoutFeedback>
             </Modal>
 
+            <ShareSheetModal
+                visible={shareVisible}
+                onClose={() => setShareVisible(false)}
+                renderIcon={(iconName, style, tintColor) => renderIcon(iconName, '', style, tintColor)}
+                shareTitle={getPlayerSharePayload().title}
+                shareUrl={getPlayerSharePayload().url}
+                onNotify={(text) => showNotification(text)}
+            />
+
             {/* --- QUEUE MODAL --- */}
             <Modal
                 animationType="fade"
@@ -1326,14 +1455,13 @@ export default function PlayerScreen({ navigation, route }) {
             >
                 <TouchableWithoutFeedback onPress={closeModal}>
                     <View style={styles.modalOverlay}>
-                        <TouchableWithoutFeedback>
+                        <TouchableWithoutFeedback onPress={() => {}}>
                             <Animated.View
-                                {...modalPanResponder.panHandlers}
                                 style={[
                                     styles.modalSheetWrapper,
                                     {
                                         height: SCREEN_HEIGHT * 0.7,
-                                        transform: [{ translateY: Animated.add(slideAnim, modalDragY) }]
+                                        transform: [{ translateY: slideAnim }]
                                     }
                                 ]}
                             >
@@ -1408,14 +1536,13 @@ export default function PlayerScreen({ navigation, route }) {
             >
                 <TouchableWithoutFeedback onPress={closeModal}>
                     <View style={styles.modalOverlay}>
-                        <TouchableWithoutFeedback>
+                        <TouchableWithoutFeedback onPress={() => {}}>
                             <Animated.View
-                                {...modalPanResponder.panHandlers}
                                 style={[
                                     styles.modalSheetWrapper,
                                     {
                                         height: SCREEN_HEIGHT * 0.7, // Висота як у Queue
-                                        transform: [{ translateY: Animated.add(slideAnim, modalDragY) }]
+                                        transform: [{ translateY: slideAnim }]
                                     }
                                 ]}
                             >
@@ -1521,6 +1648,10 @@ const styles = StyleSheet.create({
         paddingBottom: 30,
         alignItems: 'center',
         justifyContent: 'space-between',
+    },
+    contentContainerLyrics: {
+        paddingBottom: 0,
+        justifyContent: 'flex-start',
     },
     header: {
         flexDirection: 'row',
@@ -1746,6 +1877,147 @@ const styles = StyleSheet.create({
         fontSize: 16,
         fontFamily: 'Unbounded-Regular',
         color: '#F5D8CB',
+    },
+    lyricsScreenContent: {
+        flex: 1,
+        width: '100%',
+        alignItems: 'center',
+    },
+    lyricsHeader: {
+        width: '100%',
+        height: 50,
+        justifyContent: 'center',
+        paddingHorizontal: 20,
+        marginTop: 2,
+    },
+    lyricsScroll: {
+        flex: 1,
+        width: '100%',
+    },
+    lyricsScrollContent: {
+        paddingHorizontal: 26,
+        paddingBottom: 18,
+        paddingTop: 8,
+    },
+    lyricsText: {
+        color: '#F5D8CB',
+        fontFamily: 'Poppins-Regular',
+        fontSize: 20,
+        lineHeight: 32,
+    },
+    lyricsMiniShell: {
+        width: '100%',
+        marginTop: 8,
+    },
+    lyricsMiniBorderGradient: {
+        borderTopLeftRadius: 28,
+        borderTopRightRadius: 28,
+        paddingTop: 1.5,
+        paddingHorizontal: 1.5,
+        paddingBottom: 0,
+    },
+    lyricsMiniGlass: {
+        borderTopLeftRadius: 28,
+        borderTopRightRadius: 28,
+        overflow: 'hidden',
+        width: '100%',
+    },
+    lyricsMiniPlayer: {
+        width: '100%',
+        paddingTop: 14,
+        paddingBottom: Platform.OS === 'ios' ? 32 : 20,
+        paddingHorizontal: 18,
+        minHeight: 146,
+    },
+    lyricsMiniTopRow: {
+        width: '100%',
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    lyricsMiniCoverWrap: {
+        width: 56,
+        height: 56,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: 12,
+    },
+    lyricsMiniVinylLayer: {
+        position: 'absolute',
+        width: 56,
+        height: 56,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    lyricsMiniInnerCover: {
+        width: 24,
+        height: 24,
+        borderRadius: 12,
+        backgroundColor: '#2A1414',
+    },
+    lyricsMiniInnerCoverFallback: {
+        borderWidth: 1,
+        borderColor: 'rgba(245,216,203,0.25)',
+    },
+    lyricsMiniTrackMeta: {
+        flex: 1,
+        marginRight: 8,
+        justifyContent: 'center',
+    },
+    lyricsMiniTitle: {
+        color: '#F5D8CB',
+        fontFamily: 'Unbounded-SemiBold',
+        fontSize: 16,
+    },
+    lyricsMiniArtist: {
+        color: '#F5D8CB',
+        fontFamily: 'Poppins-Regular',
+        fontSize: 14,
+        marginTop: 2,
+    },
+    lyricsMiniPlayButton: {
+        width: 36,
+        height: 36,
+        borderRadius: 18,
+        backgroundColor: '#F5D8CB',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginLeft: 4,
+    },
+    lyricsMiniLikeButton: {
+        width: 34,
+        height: 34,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginLeft: 10,
+    },
+    lyricsMiniProgressWrap: {
+        width: '100%',
+        marginTop: 14,
+        marginBottom: 2,
+    },
+    lyricsMiniProgressTrack: {
+        width: '100%',
+        height: 14,
+        justifyContent: 'center',
+        position: 'relative',
+    },
+    lyricsMiniProgressKnob: {
+        position: 'absolute',
+        width: 14,
+        height: 14,
+        marginLeft: -7,
+        justifyContent: 'center',
+        alignItems: 'center',
+        top: 0,
+    },
+    lyricsMiniProgressKnobVisual: {
+        width: 10,
+        height: 10,
+        borderRadius: 5,
+        backgroundColor: '#AC654F',
+    },
+    lyricsMiniProgressFill: {
+        backgroundColor: '#AC654F',
     },
 
     /* --- AD PLAYER MODE --- */

@@ -30,6 +30,7 @@ import { usePlayerStore } from '../../store/usePlayerStore';
 
 const RECENT_KEY = 'library_search_recent_v1';
 const API_BASE = api?.defaults?.baseURL || process.env.EXPO_PUBLIC_API_URL || 'http://54.144.57.220:8080';
+let librarySearchSessionCache = null;
 
 const safeText = (value, fallback = '') => {
     const str = String(value || '').trim();
@@ -142,59 +143,22 @@ const mapSearchResult = (data = {}) => {
     return [...artists, ...tracks, ...playlists, ...albums, ...podcasts];
 };
 
-const buildDropdownResults = (items) => {
-    const list = Array.isArray(items) ? items : [];
-    if (list.length <= 8) return list;
-
-    const byType = {
-        artist: list.filter((item) => item.type === 'artist'),
-        track: list.filter((item) => item.type === 'track'),
-        album: list.filter((item) => item.type === 'album'),
-        playlist: list.filter((item) => item.type === 'playlist'),
-        podcast: list.filter((item) => item.type === 'podcast'),
-    };
-
-    const picked = [];
-    const used = new Set();
-    const pushUnique = (item) => {
-        if (!item) return;
-        const key = `${item.type}-${item.id}`;
-        if (used.has(key)) return;
-        used.add(key);
-        picked.push(item);
-    };
-
-    // Guarantees mixed result types in dropdown.
-    pushUnique(byType.artist[0]);
-    pushUnique(byType.track[0]);
-    pushUnique(byType.album[0]);
-    pushUnique(byType.playlist[0]);
-    pushUnique(byType.podcast[0]);
-    pushUnique(byType.track[1]);
-    pushUnique(byType.album[1]);
-    pushUnique(byType.artist[1]);
-
-    if (picked.length < 8) {
-        list.forEach((item) => {
-            if (picked.length >= 8) return;
-            pushUnique(item);
-        });
-    }
-
-    return picked.slice(0, 8);
-};
-
 export default function LibrarySearchScreen({ navigation }) {
     const { setTrack } = usePlayerStore();
     const searchReqIdRef = useRef(0);
-    const [icons, setIcons] = useState({});
-    const [userToken, setUserToken] = useState(null);
-    const [query, setQuery] = useState('');
-    const [results, setResults] = useState([]);
-    const [recent, setRecent] = useState([]);
+    const [icons, setIcons] = useState(() => librarySearchSessionCache?.icons || {});
+    const [userToken, setUserToken] = useState(() => librarySearchSessionCache?.userToken || null);
+    const [query, setQuery] = useState(() => librarySearchSessionCache?.query || '');
+    const [results, setResults] = useState(() => librarySearchSessionCache?.results || []);
+    const [recent, setRecent] = useState(() => librarySearchSessionCache?.recent || []);
 
     useEffect(() => {
         let mounted = true;
+        if (librarySearchSessionCache) {
+            return () => {
+                mounted = false;
+            };
+        }
         const load = async () => {
             try {
                 const [iconsMap, recentRaw, token] = await Promise.all([
@@ -214,6 +178,16 @@ export default function LibrarySearchScreen({ navigation }) {
             mounted = false;
         };
     }, []);
+
+    useEffect(() => {
+        librarySearchSessionCache = {
+            icons,
+            userToken,
+            query,
+            results,
+            recent,
+        };
+    }, [icons, userToken, query, results, recent]);
 
     useEffect(() => {
         const q = query.trim();
@@ -244,10 +218,6 @@ export default function LibrarySearchScreen({ navigation }) {
     const recentTrackCards = useMemo(
         () => visibleRecent.filter((item) => item?.type === 'track').slice(0, 20),
         [visibleRecent]
-    );
-    const dropdownResults = useMemo(
-        () => (query.trim() ? buildDropdownResults(results) : []),
-        [query, results]
     );
     const listToRender = useMemo(
         () => (query.trim() ? results : recentTrackCards),
@@ -375,6 +345,7 @@ export default function LibrarySearchScreen({ navigation }) {
                                 style={styles.searchIcon}
                             />
                         <TextInput
+                            keyboardAppearance="dark"
                             value={query}
                             onChangeText={setQuery}
                             placeholder="Search in library"
@@ -385,102 +356,50 @@ export default function LibrarySearchScreen({ navigation }) {
                             autoCorrect={false}
                         />
                         </View>
+                    </View>
 
-                        {dropdownResults.length > 0 ? (
-                            <View style={styles.dropdownContainer}>
-                                <BlurView intensity={58} tint="dark" style={StyleSheet.absoluteFill} />
-                                <LinearGradient
-                                    colors={['rgba(48,12,10,0.75)', 'rgba(48,12,10,0.62)']}
-                                    start={{ x: 0, y: 0 }}
-                                    end={{ x: 1, y: 1 }}
-                                    style={StyleSheet.absoluteFill}
-                                />
-                                <ScrollView showsVerticalScrollIndicator={false} style={styles.dropdownScroll}>
-                                    {dropdownResults.map((item) => {
-                                        const imageUrl = itemImageUrl(item);
-                                        const imageSource = getImageSource(item, imageUrl);
-                                        return (
-                                            <TouchableOpacity
-                                                key={`drop-${item.type}-${item.id}`}
-                                                style={styles.dropdownItem}
-                                                activeOpacity={0.85}
-                                                onPress={() => onOpenItem(item)}
-                                            >
-                                                {imageSource ? (
-                                                    <Image
-                                                        source={imageSource}
-                                                        style={[
-                                                            styles.dropdownImage,
-                                                            !isRoundImageType(item) && styles.dropdownImageSquare,
-                                                        ]}
-                                                    />
-                                                ) : (
-                                                    <View
-                                                        style={[
-                                                            styles.dropdownImage,
-                                                            !isRoundImageType(item) && styles.dropdownImageSquare,
-                                                            styles.dropdownFallback,
-                                                        ]}
-                                                    >
-                                                        <Text style={styles.dropdownFallbackText}>
-                                                            {String(item.title || '?').charAt(0).toUpperCase()}
-                                                        </Text>
-                                                    </View>
-                                                )}
-                                                <View style={styles.dropdownTextWrap}>
-                                                    <Text style={styles.dropdownTitle} numberOfLines={1}>
-                                                        {item.title}
-                                                    </Text>
-                                                    <Text style={styles.dropdownSubtitle} numberOfLines={1}>
-                                                        {itemSubtitle(item)}
+                    {!query.trim() ? (
+                        <>
+                            <View style={styles.sectionHeader}>
+                                <Text style={styles.sectionTitle}>Recent</Text>
+                                <TouchableOpacity onPress={clearRecent} activeOpacity={0.8}>
+                                    <Text style={styles.clearAll}>Clear all</Text>
+                                </TouchableOpacity>
+                            </View>
+
+                            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.recentRow}>
+                                {visibleRecent.slice(0, 6).map((item) => {
+                                    const imageSource = getImageSource(item, item.imageUrl);
+                                    return (
+                                        <TouchableOpacity key={`recent-${item.type}-${item.id}`} onPress={() => onOpenItem(item)} style={styles.recentItem}>
+                                            {imageSource ? (
+                                                <Image
+                                                    source={imageSource}
+                                                    style={[
+                                                        styles.recentImage,
+                                                        !isRoundImageType(item) && styles.recentImageSquare,
+                                                    ]}
+                                                />
+                                            ) : (
+                                                <View
+                                                    style={[
+                                                        styles.recentImage,
+                                                        !isRoundImageType(item) && styles.recentImageSquare,
+                                                        styles.dropdownFallback,
+                                                    ]}
+                                                >
+                                                    <Text style={styles.dropdownFallbackText}>
+                                                        {String(item.title || '?').charAt(0).toUpperCase()}
                                                     </Text>
                                                 </View>
-                                            </TouchableOpacity>
-                                        );
-                                    })}
-                                </ScrollView>
-                            </View>
-                        ) : null}
-                    </View>
-
-                    <View style={styles.sectionHeader}>
-                        <Text style={styles.sectionTitle}>Recent</Text>
-                        <TouchableOpacity onPress={clearRecent} activeOpacity={0.8}>
-                            <Text style={styles.clearAll}>Clear all</Text>
-                        </TouchableOpacity>
-                    </View>
-
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.recentRow}>
-                        {visibleRecent.slice(0, 6).map((item) => {
-                            const imageSource = getImageSource(item, item.imageUrl);
-                            return (
-                                <TouchableOpacity key={`recent-${item.type}-${item.id}`} onPress={() => onOpenItem(item)} style={styles.recentItem}>
-                                    {imageSource ? (
-                                        <Image
-                                            source={imageSource}
-                                            style={[
-                                                styles.recentImage,
-                                                !isRoundImageType(item) && styles.recentImageSquare,
-                                            ]}
-                                        />
-                                    ) : (
-                                        <View
-                                            style={[
-                                                styles.recentImage,
-                                                !isRoundImageType(item) && styles.recentImageSquare,
-                                                styles.dropdownFallback,
-                                            ]}
-                                        >
-                                            <Text style={styles.dropdownFallbackText}>
-                                                {String(item.title || '?').charAt(0).toUpperCase()}
-                                            </Text>
-                                        </View>
-                                    )}
-                                    <Text style={styles.recentTitle} numberOfLines={1}>{item.title}</Text>
-                                </TouchableOpacity>
-                            );
-                        })}
-                    </ScrollView>
+                                            )}
+                                            <Text style={styles.recentTitle} numberOfLines={1}>{item.title}</Text>
+                                        </TouchableOpacity>
+                                    );
+                                })}
+                            </ScrollView>
+                        </>
+                    ) : null}
 
                     <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.listContent}>
                         {listToRender.map((item) => {
@@ -563,8 +482,6 @@ const styles = StyleSheet.create({
         zIndex: 23,
     },
     searchWrap: {
-        position: 'relative',
-        zIndex: 20,
         marginBottom: scale(22),
     },
     searchIcon: {
@@ -577,40 +494,6 @@ const styles = StyleSheet.create({
         fontSize: scale(20),
         paddingVertical: 0,
     },
-    dropdownContainer: {
-        position: 'absolute',
-        top: scale(18),
-        left: 0,
-        right: 0,
-        maxHeight: scale(280),
-        borderBottomLeftRadius: scale(28),
-        borderBottomRightRadius: scale(28),
-        borderWidth: 1,
-        borderTopWidth: 0,
-        borderColor: 'rgba(245,216,203,0.45)',
-        overflow: 'hidden',
-        zIndex: 22,
-    },
-    dropdownScroll: {
-        paddingHorizontal: scale(14),
-        paddingTop: scale(34),
-        paddingBottom: scale(10),
-    },
-    dropdownItem: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginBottom: scale(12),
-    },
-    dropdownImage: {
-        width: scale(72),
-        height: scale(72),
-        borderRadius: scale(36),
-        backgroundColor: 'rgba(26, 8, 8, 0.8)',
-        marginRight: scale(12),
-    },
-    dropdownImageSquare: {
-        borderRadius: scale(15),
-    },
     dropdownFallback: {
         alignItems: 'center',
         justifyContent: 'center',
@@ -619,21 +502,6 @@ const styles = StyleSheet.create({
         color: '#F5D8CB',
         fontFamily: 'Unbounded-SemiBold',
         fontSize: scale(18),
-    },
-    dropdownTextWrap: {
-        flex: 1,
-    },
-    dropdownTitle: {
-        color: '#F5D8CB',
-        fontFamily: 'Poppins-SemiBold',
-        fontSize: scale(17),
-        marginBottom: scale(2),
-    },
-    dropdownSubtitle: {
-        color: '#F5D8CB',
-        opacity: 0.95,
-        fontFamily: 'Poppins-Regular',
-        fontSize: scale(13),
     },
     sectionHeader: {
         flexDirection: 'row',

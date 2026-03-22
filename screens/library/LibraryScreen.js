@@ -13,8 +13,7 @@ import {
     Modal,
     TouchableWithoutFeedback,
     Animated,
-    Easing,
-    PanResponder
+    Easing
 } from 'react-native';
 import { usePlayerStore } from '../../store/usePlayerStore';
 import { SvgXml } from 'react-native-svg';
@@ -28,7 +27,7 @@ import LibrarySongs from './LibrarySongs';
 import LibraryAlbum from './LibraryAlbum';
 import LibraryArtist from './LibraryArtist';
 
-import { getIcons, scale } from '../../api/api';
+import { getCachedIcons, getIcons, scale } from '../../api/api';
 
 const { width, height } = Dimensions.get('window');
 
@@ -85,47 +84,17 @@ const ColoredSvg = ({ uri, width, height, color }) => {
 export default function LibraryScreen({ navigation }) {
     const { setTrack } = usePlayerStore();
     const [activeTab, setActiveTab] = useState('All');
-    const [icons, setIcons] = useState({});
+    const [icons, setIcons] = useState(() => getCachedIcons() || {});
 
     const [modalVisible, setModalVisible] = useState(false);
 
     // Анімація для виїзду шторки
     const slideAnim = useRef(new Animated.Value(height)).current;
-    const modalDragY = useRef(new Animated.Value(0)).current;
-
-    const resetModalDrag = () => {
-        Animated.spring(modalDragY, {
-            toValue: 0,
-            useNativeDriver: true,
-            tension: 120,
-            friction: 12,
-        }).start();
-    };
-
-    const modalPanResponder = useRef(
-        PanResponder.create({
-            onMoveShouldSetPanResponder: (_evt, gesture) =>
-                gesture.dy > 14 && Math.abs(gesture.dy) > Math.abs(gesture.dx),
-            onPanResponderMove: (_evt, gesture) => {
-                modalDragY.setValue(Math.max(0, gesture.dy));
-            },
-            onPanResponderRelease: (_evt, gesture) => {
-                if (gesture.dy > 120 || gesture.vy > 1.1) {
-                    modalDragY.setValue(0);
-                    closeModal();
-                } else {
-                    resetModalDrag();
-                }
-            },
-            onPanResponderTerminate: () => {
-                resetModalDrag();
-            },
-        })
-    ).current;
 
     const tabs = ['All', 'Playlist','Songs','Album',  'Artist', 'Podcast'];
 
     useEffect(() => {
+        if (Object.keys(icons || {}).length > 0) return;
         loadIcons();
     }, []);
 
@@ -136,8 +105,8 @@ export default function LibraryScreen({ navigation }) {
 
     // Логіка відкриття
     const openModal = () => {
-        modalDragY.setValue(0);
         setModalVisible(true);
+        slideAnim.setValue(height);
         Animated.timing(slideAnim, {
             toValue: 0,
             duration: 300,
@@ -148,14 +117,15 @@ export default function LibraryScreen({ navigation }) {
 
     // Логіка закриття
     const closeModal = () => {
-        modalDragY.setValue(0);
+        slideAnim.stopAnimation();
         Animated.timing(slideAnim, {
             toValue: height,
-            duration: 250,
+            duration: 220,
             easing: Easing.in(Easing.cubic),
             useNativeDriver: true,
         }).start(() => {
             setModalVisible(false);
+            slideAnim.setValue(height);
         });
     };
 
@@ -282,10 +252,9 @@ export default function LibraryScreen({ navigation }) {
                     <View style={styles.modalOverlay}>
                         <TouchableWithoutFeedback>
                             <Animated.View
-                                {...modalPanResponder.panHandlers}
                                 style={[
                                     styles.modalSheetWrapper,
-                                    { transform: [{ translateY: Animated.add(slideAnim, modalDragY) }] }
+                                    { transform: [{ translateY: slideAnim }] }
                                 ]}
                             >
                                 <LinearGradient

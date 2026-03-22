@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
     View,
     Text,
@@ -15,6 +15,7 @@ import { getSubscriptions, getUserAvatarUrl, scale } from '../../api/api';
 
 const { width, height } = Dimensions.get('window');
 const ITEM_WIDTH = (width - scale(60)) / 3;
+let libraryArtistSessionCache = null;
 
 const resolveArtistFromSubscription = (item, index) => {
     const id =
@@ -55,17 +56,27 @@ const resolveArtistFromSubscription = (item, index) => {
 
 export default function LibraryArtist({ navigation }) {
     const isFocused = useIsFocused();
-    const [loading, setLoading] = useState(true);
-    const [artists, setArtists] = useState([]);
+    const hasLoadedOnceRef = useRef(Boolean(libraryArtistSessionCache));
+    const [loading, setLoading] = useState(!libraryArtistSessionCache);
+    const [artists, setArtists] = useState(() => libraryArtistSessionCache?.artists || []);
     const [brokenImages, setBrokenImages] = useState({});
 
     useEffect(() => {
-        if (isFocused) {
-            loadSubscriptions();
-        }
+        if (!isFocused) return;
+        if (hasLoadedOnceRef.current) return;
+        hasLoadedOnceRef.current = true;
+        loadSubscriptions({ force: false });
     }, [isFocused]);
 
-    const loadSubscriptions = async () => {
+    const loadSubscriptions = async ({ force = false } = {}) => {
+        if (!force && libraryArtistSessionCache) {
+            setArtists(libraryArtistSessionCache.artists || []);
+            setBrokenImages({});
+            setLoading(false);
+            hasLoadedOnceRef.current = true;
+            return;
+        }
+
         setLoading(true);
         try {
             const raw = await getSubscriptions();
@@ -82,8 +93,11 @@ export default function LibraryArtist({ navigation }) {
             });
 
             setArtists(unique);
+            libraryArtistSessionCache = { artists: unique };
         } catch (_) {
+            hasLoadedOnceRef.current = false;
             setArtists([]);
+            libraryArtistSessionCache = { artists: [] };
         } finally {
             setLoading(false);
         }

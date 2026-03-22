@@ -469,6 +469,7 @@ export default function SearchScreen({ navigation }) {
                                 {renderIcon('search.svg', scale(22), 'rgba(245, 216, 203, 0.95)')}
                             </View>
                             <TextInput
+                            keyboardAppearance="dark"
                                 value={query}
                                 onChangeText={setQuery}
                                 placeholder="Artists, songs, genres"

@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
     View,
     Text,
@@ -24,6 +24,7 @@ import {
     changeAvatar,
     logoutUser,
     getIcons,
+    getCachedIcons,
     scale // Обов'язково імпортуємо scale
 } from '../../api/api';
 
@@ -31,6 +32,7 @@ const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 // 0. ГЛОБАЛЬНИЙ КЕШ SVG
 const svgCache = {};
+let profileSessionCache = null;
 
 const ColoredSvg = ({ uri, width, height, color }) => {
     const cacheKey = `${uri}_${color || 'original'}`;
@@ -67,32 +69,79 @@ const ColoredSvg = ({ uri, width, height, color }) => {
 };
 
 export default function ProfileScreen({ navigation }) {
+    const hasLoadedOnceRef = useRef(false);
     const [loading, setLoading] = useState(true);
-    const [username, setUsername] = useState('User');
-    const [avatarUri, setAvatarUri] = useState(null);
-    const [icons, setIcons] = useState({});
+    const [username, setUsername] = useState(() => profileSessionCache?.username || 'User');
+    const [avatarUri, setAvatarUri] = useState(() => profileSessionCache?.avatarUri || null);
+    const [icons, setIcons] = useState(() => profileSessionCache?.icons || getCachedIcons() || {});
 
     useFocusEffect(
         useCallback(() => {
-            loadProfileData();
-        }, [])
+            if (!hasLoadedOnceRef.current) {
+                hasLoadedOnceRef.current = true;
+                loadProfileData();
+                return;
+            }
+            syncLocalProfileData();
+        }, [icons])
     );
 
+    const syncLocalProfileData = async () => {
+        try {
+            const [storedName, storedId] = await Promise.all([
+                AsyncStorage.getItem('username'),
+                AsyncStorage.getItem('userId'),
+            ]);
+
+            const safeUsername = storedName || 'User';
+            const safeAvatarUri = storedId ? `${getUserAvatarUrl(storedId)}?t=${Date.now()}` : null;
+
+            setUsername(safeUsername);
+            setAvatarUri(safeAvatarUri);
+
+            profileSessionCache = {
+                username: safeUsername,
+                avatarUri: safeAvatarUri,
+                icons: icons || getCachedIcons() || {},
+            };
+        } catch (_) {
+            // ignore local sync errors
+        }
+    };
+
     const loadProfileData = async () => {
+        if (profileSessionCache) {
+            setUsername(profileSessionCache.username || 'User');
+            setAvatarUri(profileSessionCache.avatarUri || null);
+            setIcons(profileSessionCache.icons || getCachedIcons() || {});
+            setLoading(false);
+            return;
+        }
+
         setLoading(true);
         try {
             // Завантажуємо іконки з бекенду
             const iconsData = await getIcons();
-            setIcons(iconsData || {});
+            const safeIcons = iconsData || {};
+            setIcons(safeIcons);
 
             const storedName = await AsyncStorage.getItem('username');
-            if (storedName) setUsername(storedName);
+            const safeUsername = storedName || 'User';
+            setUsername(safeUsername);
 
             const storedId = await AsyncStorage.getItem('userId');
+            let safeAvatarUri = null;
             if (storedId) {
-                setAvatarUri(`${getUserAvatarUrl(storedId)}?t=${new Date().getTime()}`);
+                safeAvatarUri = `${getUserAvatarUrl(storedId)}?t=${new Date().getTime()}`;
+                setAvatarUri(safeAvatarUri);
             }
+            profileSessionCache = {
+                username: safeUsername,
+                avatarUri: safeAvatarUri,
+                icons: safeIcons,
+            };
         } catch (e) {
+            hasLoadedOnceRef.current = false;
             console.error("Profile Load Error:", e);
         } finally {
             setLoading(false);
@@ -116,11 +165,19 @@ export default function ProfileScreen({ navigation }) {
         if (!result.canceled) {
             const asset = result.assets[0];
             setAvatarUri(asset.uri); // Оптимістичне оновлення UI
+            profileSessionCache = {
+                ...(profileSessionCache || {}),
+                username,
+                icons,
+                avatarUri: asset.uri,
+            };
 
             const res = await changeAvatar(asset.uri);
             if (res.error) {
                 Alert.alert('Error', 'Avatar upload failed.');
             } else {
+                profileSessionCache = null;
+                hasLoadedOnceRef.current = false;
                 loadProfileData();
             }
         }
@@ -232,7 +289,11 @@ export default function ProfileScreen({ navigation }) {
                                 </View>
 
                                 {/* Кнопка редагування */}
-                                <TouchableOpacity onPress={pickAvatar} style={styles.editButton} hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}>
+                                <TouchableOpacity
+                                    onPress={() => navigation.navigate('EditProfile')}
+                                    style={styles.editButton}
+                                    hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
+                                >
                                     {renderIcon('edit.svg', '✎', { width: scale(24), height: scale(24) }, '#F5D8CB')}
                                 </TouchableOpacity>
                             </View>

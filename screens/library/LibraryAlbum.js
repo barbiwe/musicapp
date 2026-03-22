@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     View,
     Text,
@@ -43,10 +43,13 @@ const resolveAlbumArtist = (album) =>
 const resolveAlbumTitle = (album) =>
     String(album?.title || album?.name || 'Untitled album').trim();
 
+let libraryAlbumSessionCache = null;
+
 export default function LibraryAlbum({ navigation }) {
     const isFocused = useIsFocused();
-    const [loading, setLoading] = useState(true);
-    const [albums, setAlbums] = useState([]);
+    const hasLoadedOnceRef = useRef(Boolean(libraryAlbumSessionCache));
+    const [loading, setLoading] = useState(!libraryAlbumSessionCache);
+    const [albums, setAlbums] = useState(() => libraryAlbumSessionCache?.albums || []);
 
     const toArray = (value) => {
         if (Array.isArray(value)) return value;
@@ -56,7 +59,14 @@ export default function LibraryAlbum({ navigation }) {
         return [];
     };
 
-    const loadAlbums = useCallback(async () => {
+    const loadAlbums = useCallback(async ({ force = false } = {}) => {
+        if (!force && libraryAlbumSessionCache) {
+            setAlbums(libraryAlbumSessionCache.albums || []);
+            setLoading(false);
+            hasLoadedOnceRef.current = true;
+            return;
+        }
+
         setLoading(true);
         try {
             const [myAlbumsRaw, likedAlbumIdsRaw, allAlbumsRaw] = await Promise.all([
@@ -114,17 +124,21 @@ export default function LibraryAlbum({ navigation }) {
                 .sort((a, b) => a.title.localeCompare(b.title));
 
             setAlbums(mapped);
+            libraryAlbumSessionCache = { albums: mapped };
         } catch (_) {
+            hasLoadedOnceRef.current = false;
             setAlbums([]);
+            libraryAlbumSessionCache = { albums: [] };
         } finally {
             setLoading(false);
         }
     }, []);
 
     useEffect(() => {
-        if (isFocused) {
-            loadAlbums();
-        }
+        if (!isFocused) return;
+        if (hasLoadedOnceRef.current) return;
+        hasLoadedOnceRef.current = true;
+        loadAlbums({ force: false });
     }, [isFocused, loadAlbums]);
 
     const content = useMemo(() => {

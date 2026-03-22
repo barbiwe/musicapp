@@ -30,6 +30,7 @@ import {
 const { width, height } = Dimensions.get('window');
 
 const ITEM_WIDTH = (width - scale(40) - scale(20)) / 3;
+let choosePodcastSessionCache = null;
 
 const svgCache = {};
 
@@ -153,19 +154,19 @@ const buildRowsByGenre = (podcasts, genres) => {
 };
 
 export default function ChoosePodcastScreen({ navigation }) {
-    const [icons, setIcons] = useState({});
+    const [icons, setIcons] = useState(() => choosePodcastSessionCache?.icons || {});
 
-    const [allPodcasts, setAllPodcasts] = useState([]);
-    const [allGenres, setAllGenres] = useState([]);
+    const [allPodcasts, setAllPodcasts] = useState(() => choosePodcastSessionCache?.allPodcasts || []);
+    const [allGenres, setAllGenres] = useState(() => choosePodcastSessionCache?.allGenres || []);
 
-    const [selectedPodcasts, setSelectedPodcasts] = useState([]);
-    const [initialLikedPodcasts, setInitialLikedPodcasts] = useState([]);
+    const [selectedPodcasts, setSelectedPodcasts] = useState(() => choosePodcastSessionCache?.selectedPodcasts || []);
+    const [initialLikedPodcasts, setInitialLikedPodcasts] = useState(() => choosePodcastSessionCache?.initialLikedPodcasts || []);
 
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState(!choosePodcastSessionCache);
     const [saving, setSaving] = useState(false);
 
     useEffect(() => {
-        loadData();
+        loadData({ force: false });
     }, []);
 
     const rows = useMemo(
@@ -173,7 +174,17 @@ export default function ChoosePodcastScreen({ navigation }) {
         [allPodcasts, allGenres]
     );
 
-    const loadData = async () => {
+    const loadData = async ({ force = false } = {}) => {
+        if (!force && choosePodcastSessionCache) {
+            setIcons(choosePodcastSessionCache.icons || {});
+            setAllPodcasts(choosePodcastSessionCache.allPodcasts || []);
+            setAllGenres(choosePodcastSessionCache.allGenres || []);
+            setSelectedPodcasts(choosePodcastSessionCache.selectedPodcasts || []);
+            setInitialLikedPodcasts(choosePodcastSessionCache.initialLikedPodcasts || []);
+            setLoading(false);
+            return;
+        }
+
         setLoading(true);
 
         try {
@@ -214,13 +225,34 @@ export default function ChoosePodcastScreen({ navigation }) {
 
                 setSelectedPodcasts(likedIds);
                 setInitialLikedPodcasts(likedIds);
+                choosePodcastSessionCache = {
+                    icons: loadedIcons || {},
+                    allGenres: normalizedGenres,
+                    allPodcasts: genreSortedPodcasts,
+                    selectedPodcasts: likedIds,
+                    initialLikedPodcasts: likedIds,
+                };
             } else {
                 setSelectedPodcasts([]);
                 setInitialLikedPodcasts([]);
+                choosePodcastSessionCache = {
+                    icons: loadedIcons || {},
+                    allGenres: normalizedGenres,
+                    allPodcasts: genreSortedPodcasts,
+                    selectedPodcasts: [],
+                    initialLikedPodcasts: [],
+                };
             }
         } catch (_) {
             setAllGenres([]);
             setAllPodcasts([]);
+            choosePodcastSessionCache = {
+                icons: {},
+                allGenres: [],
+                allPodcasts: [],
+                selectedPodcasts: [],
+                initialLikedPodcasts: [],
+            };
         } finally {
             setLoading(false);
         }
@@ -294,6 +326,14 @@ export default function ChoosePodcastScreen({ navigation }) {
         }
 
         setInitialLikedPodcasts(selectedPodcasts);
+        choosePodcastSessionCache = {
+            ...(choosePodcastSessionCache || {}),
+            icons,
+            allGenres,
+            allPodcasts,
+            selectedPodcasts: [...selectedPodcasts],
+            initialLikedPodcasts: [...selectedPodcasts],
+        };
         navigation.goBack();
     };
 

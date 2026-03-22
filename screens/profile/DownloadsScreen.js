@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
     View,
     Text,
@@ -18,29 +18,51 @@ import RemoteTintIcon from '../../components/RemoteTintIcon';
 import MiniPlayer from '../../components/MiniPlayer';
 
 const imagePrefetchCache = new Set();
+let downloadsSessionCache = null;
 
 export default function DownloadsScreen({ navigation }) {
     const { setTrack } = usePlayerStore();
-    const [icons, setIcons] = useState({});
-    const [items, setItems] = useState([]);
-    const [coverMap, setCoverMap] = useState({});
+    const hasLoadedOnceRef = useRef(Boolean(downloadsSessionCache));
+    const [icons, setIcons] = useState(() => downloadsSessionCache?.icons || {});
+    const [items, setItems] = useState(() => downloadsSessionCache?.items || []);
+    const [coverMap, setCoverMap] = useState(() => downloadsSessionCache?.coverMap || {});
 
     useEffect(() => {
+        if (Object.keys(icons || {}).length > 0) return undefined;
         let mounted = true;
         getIcons().then((map) => {
             if (mounted) setIcons(map || {});
         }).catch(() => {});
         return () => { mounted = false; };
-    }, []);
+    }, [icons]);
 
-    const loadDownloads = useCallback(async () => {
+    const loadDownloads = useCallback(async ({ force = false } = {}) => {
+        if (!force && downloadsSessionCache) {
+            setItems(downloadsSessionCache.items || []);
+            setCoverMap(downloadsSessionCache.coverMap || {});
+            if (downloadsSessionCache.icons) setIcons(downloadsSessionCache.icons);
+            hasLoadedOnceRef.current = true;
+            return;
+        }
+
+        if (!force && hasLoadedOnceRef.current) return;
+
         const saved = await getOfflineDownloads();
-        setItems(Array.isArray(saved) ? saved : []);
-    }, []);
+        const normalized = Array.isArray(saved) ? saved : [];
+        setItems(normalized);
+        downloadsSessionCache = {
+            items: normalized,
+            coverMap: downloadsSessionCache?.coverMap || {},
+            icons: icons || downloadsSessionCache?.icons || {},
+        };
+        hasLoadedOnceRef.current = true;
+    }, [icons]);
 
     useFocusEffect(
         useCallback(() => {
-            loadDownloads();
+            if (!hasLoadedOnceRef.current) {
+                loadDownloads({ force: false });
+            }
         }, [loadDownloads])
     );
 
@@ -64,6 +86,14 @@ export default function DownloadsScreen({ navigation }) {
             });
         });
     }, [items]);
+
+    useEffect(() => {
+        downloadsSessionCache = {
+            items,
+            coverMap,
+            icons,
+        };
+    }, [items, coverMap, icons]);
 
     return (
         <LinearGradient

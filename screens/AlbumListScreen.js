@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import {
     View,
     Text,
@@ -13,17 +13,31 @@ import { useFocusEffect } from '@react-navigation/native';
 // 👇 Використовуємо getAlbums (всі), а не getMyAlbums
 import { getAlbums, getAlbumCoverUrl } from '../api/api';
 
+let albumListSessionCache = null;
+
 export default function AlbumListScreen({ navigation }) {
+    const hasLoadedOnceRef = useRef(false);
     const [albums, setAlbums] = useState([]);
     const [loading, setLoading] = useState(false);
 
     useFocusEffect(
         useCallback(() => {
-            loadAlbums();
+            if (!hasLoadedOnceRef.current) {
+                loadAlbums({ force: false });
+            }
         }, [])
     );
 
-    const loadAlbums = async () => {
+    const loadAlbums = async ({ force = true } = {}) => {
+        if (!force) {
+            if (hasLoadedOnceRef.current) return;
+            if (Array.isArray(albumListSessionCache)) {
+                setAlbums(albumListSessionCache);
+                hasLoadedOnceRef.current = true;
+                return;
+            }
+        }
+
         setLoading(true);
         try {
 
@@ -32,10 +46,14 @@ export default function AlbumListScreen({ navigation }) {
 
             if (Array.isArray(data)) {
                 setAlbums(data);
+                albumListSessionCache = data;
             } else {
                 setAlbums([]);
+                albumListSessionCache = [];
             }
+            hasLoadedOnceRef.current = true;
         } catch (e) {
+            hasLoadedOnceRef.current = false;
         } finally {
             setLoading(false);
         }
@@ -104,7 +122,7 @@ export default function AlbumListScreen({ navigation }) {
                     renderItem={renderItem}
                     contentContainerStyle={{ paddingBottom: 20 }}
                     refreshControl={
-                        <RefreshControl refreshing={loading} onRefresh={loadAlbums} />
+                        <RefreshControl refreshing={loading} onRefresh={() => loadAlbums({ force: true })} />
                     }
                     ListEmptyComponent={
                         <Text style={styles.emptyText}>

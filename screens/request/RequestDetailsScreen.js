@@ -297,6 +297,7 @@ export default function RequestDetailsScreen({ navigation }) {
                                 style={StyleSheet.absoluteFill}
                             />
                             <TextInput
+                            keyboardAppearance="dark"
                                 value={nick}
                                 onChangeText={setNick}
                                 placeholder="Your nick"
@@ -482,6 +483,7 @@ export default function RequestDetailsScreen({ navigation }) {
                                 style={StyleSheet.absoluteFill}
                             />
                             <TextInput
+                            keyboardAppearance="dark"
                                 value={description}
                                 onChangeText={(text) => setDescription(text.slice(0, MAX_DESCRIPTION))}
                                 placeholder="Your description"

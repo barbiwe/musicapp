@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
     View,
     Text,
@@ -56,14 +56,25 @@ const extractLikedTrackObjects = (raw) => {
         .filter(Boolean);
 };
 
+let librarySongsSessionCache = null;
+
 export default function LibrarySongs({ navigation, setTrack }) {
     const isFocused = useIsFocused();
+    const hasLoadedOnceRef = useRef(Boolean(librarySongsSessionCache));
 
-    const [loading, setLoading] = useState(true);
-    const [tracks, setTracks] = useState([]);
+    const [loading, setLoading] = useState(!librarySongsSessionCache);
+    const [tracks, setTracks] = useState(() => librarySongsSessionCache?.tracks || []);
     const [brokenCovers, setBrokenCovers] = useState({});
 
-    const loadData = async () => {
+    const loadData = async ({ force = false } = {}) => {
+        if (!force && librarySongsSessionCache) {
+            setTracks(librarySongsSessionCache.tracks || []);
+            setBrokenCovers({});
+            setLoading(false);
+            hasLoadedOnceRef.current = true;
+            return;
+        }
+
         setLoading(true);
 
         try {
@@ -99,17 +110,21 @@ export default function LibrarySongs({ navigation, setTrack }) {
 
             setTracks(merged);
             setBrokenCovers({});
+            librarySongsSessionCache = { tracks: merged };
         } catch (_) {
+            hasLoadedOnceRef.current = false;
             setTracks([]);
+            librarySongsSessionCache = { tracks: [] };
         } finally {
             setLoading(false);
         }
     };
 
     useEffect(() => {
-        if (isFocused) {
-            loadData();
-        }
+        if (!isFocused) return;
+        if (hasLoadedOnceRef.current) return;
+        hasLoadedOnceRef.current = true;
+        loadData({ force: false });
     }, [isFocused]);
 
     const sortedTracks = useMemo(() => {

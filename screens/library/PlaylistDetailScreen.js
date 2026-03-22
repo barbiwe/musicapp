@@ -1,11 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-    Animated,
     ActivityIndicator,
     Alert,
     Image,
     Modal,
-    PanResponder,
     Pressable,
     ScrollView,
     StatusBar,
@@ -14,26 +12,30 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { useIsFocused } from '@react-navigation/native';
-import * as ImagePicker from 'expo-image-picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as FileSystem from 'expo-file-system';
+import { LinearGradient } from 'expo-linear-gradient';
+import { BlurView } from 'expo-blur';
+import { useIsFocused } from '@react-navigation/native';
 
 import {
     addTrackToPlaylist,
-    deletePlaylist,
     getIcons,
+    getMyPlaylists,
     getPlaylistCoverUrl,
     getPlaylistDetails,
-    getTrackCoverUrl,
+    getStreamUrl,
     getTracks,
+    getLikedTracks,
+    likeTrack,
     resolveArtistName,
+    saveOfflineDownload,
     scale,
-    uploadPlaylistCover,
+    unlikeTrack,
 } from '../../api/api';
 import RemoteTintIcon from '../../components/RemoteTintIcon';
+import ShareSheetModal from '../../components/ShareSheetModal';
 import { usePlayerStore } from '../../store/usePlayerStore';
-const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
 const getTrackId = (track) =>
     String(
@@ -44,70 +46,6 @@ const getTrackId = (track) =>
         track?.track?.id ||
         ''
     ).trim();
-
-const normalizeTrack = (item) => {
-    const src = item?.track || item;
-    const id = getTrackId(src) || getTrackId(item);
-    if (!id) return null;
-    return {
-        ...item,
-        ...src,
-        id,
-        _id: id,
-    };
-};
-
-const mergeTracksWithCatalog = (playlistTracks, catalogTracks) => {
-    const map = new Map(
-        (Array.isArray(catalogTracks) ? catalogTracks : []).map((item) => [getTrackId(item), item])
-    );
-
-    return (Array.isArray(playlistTracks) ? playlistTracks : [])
-        .map((track) => {
-            const id = getTrackId(track);
-            if (!id) return null;
-            const base = map.get(id) || {};
-            return {
-                ...base,
-                ...track,
-                id,
-                _id: id,
-                artistName:
-                    track?.artistName ||
-                    base?.artistName ||
-                    track?.artist?.name ||
-                    base?.artist?.name ||
-                    null,
-                artist:
-                    track?.artist ||
-                    base?.artist ||
-                    null,
-                coverFileId:
-                    track?.coverFileId ||
-                    base?.coverFileId ||
-                    null,
-                ownerId:
-                    track?.ownerId ||
-                    base?.ownerId ||
-                    track?.artistId ||
-                    base?.artistId ||
-                    null,
-            };
-        })
-        .filter(Boolean);
-};
-
-const extractPlaylistTracks = (playlist) => {
-    if (Array.isArray(playlist?.tracks)) return playlist.tracks.map(normalizeTrack).filter(Boolean);
-    if (Array.isArray(playlist?.Tracks)) return playlist.Tracks.map(normalizeTrack).filter(Boolean);
-    if (Array.isArray(playlist?.playlistTracks)) {
-        return playlist.playlistTracks.map((item) => normalizeTrack(item?.track || item)).filter(Boolean);
-    }
-    if (Array.isArray(playlist?.PlaylistTracks)) {
-        return playlist.PlaylistTracks.map((item) => normalizeTrack(item?.track || item)).filter(Boolean);
-    }
-    return [];
-};
 
 const getPlaylistId = (playlist, fallbackId = '') =>
     String(
@@ -136,58 +74,134 @@ const getPlaylistDescription = (playlist) =>
         ''
     ).trim();
 
+const getPlaylistOwnerName = (playlist) =>
+    String(
+        playlist?.ownerName ||
+        playlist?.OwnerName ||
+        playlist?.creatorName ||
+        playlist?.CreatorName ||
+        playlist?.author ||
+        playlist?.Author ||
+        playlist?.userName ||
+        playlist?.UserName ||
+        playlist?.artistName ||
+        playlist?.ArtistName ||
+        ''
+    ).trim();
+
+const normalizeTrack = (item) => {
+    const src = item?.track || item;
+    const id = getTrackId(src) || getTrackId(item);
+    if (!id) return null;
+    return {
+        ...item,
+        ...src,
+        id,
+        _id: id,
+    };
+};
+
+const extractPlaylistTracks = (playlist) => {
+    if (Array.isArray(playlist?.tracks)) return playlist.tracks.map(normalizeTrack).filter(Boolean);
+    if (Array.isArray(playlist?.Tracks)) return playlist.Tracks.map(normalizeTrack).filter(Boolean);
+    if (Array.isArray(playlist?.playlistTracks)) {
+        return playlist.playlistTracks.map((item) => normalizeTrack(item?.track || item)).filter(Boolean);
+    }
+    if (Array.isArray(playlist?.PlaylistTracks)) {
+        return playlist.PlaylistTracks.map((item) => normalizeTrack(item?.track || item)).filter(Boolean);
+    }
+    return [];
+};
+
+const mergeTracksWithCatalog = (playlistTracks, catalogTracks) => {
+    const map = new Map(
+        (Array.isArray(catalogTracks) ? catalogTracks : []).map((item) => [getTrackId(item), item])
+    );
+
+    return (Array.isArray(playlistTracks) ? playlistTracks : [])
+        .map((track) => {
+            const id = getTrackId(track);
+            if (!id) return null;
+            const base = map.get(id) || {};
+            return {
+                ...base,
+                ...track,
+                id,
+                _id: id,
+                artistName:
+                    track?.artistName ||
+                    base?.artistName ||
+                    track?.artist?.name ||
+                    base?.artist?.name ||
+                    null,
+                artist: track?.artist || base?.artist || null,
+                ownerId:
+                    track?.ownerId ||
+                    base?.ownerId ||
+                    track?.artistId ||
+                    base?.artistId ||
+                    null,
+            };
+        })
+        .filter(Boolean);
+};
+
+const extractLikedIds = (raw) => {
+    if (!Array.isArray(raw)) return [];
+    const set = new Set();
+
+    raw.forEach((item) => {
+        if (typeof item === 'string') {
+            const id = String(item).trim();
+            if (id) set.add(id);
+            return;
+        }
+        const id = getTrackId(item?.track || item);
+        if (id) set.add(id);
+    });
+
+    return Array.from(set);
+};
+
+const playlistDetailSessionCache = new Map();
+
 export default function PlaylistDetailScreen({ navigation, route }) {
     const isFocused = useIsFocused();
-    const setTrack = usePlayerStore((state) => state.setTrack);
+    const {
+        setQueue,
+        togglePlay,
+        addToQueue,
+        isPlaying,
+        currentTrack,
+        queue,
+    } = usePlayerStore();
+
+    const hasLoadedOnceRef = useRef(false);
 
     const initialPlaylistId = String(route?.params?.playlistId || '').trim();
     const initialPlaylistName = String(route?.params?.playlistName || 'Playlist').trim();
+    const cacheKey = initialPlaylistId;
 
     const [icons, setIcons] = useState({});
     const [loading, setLoading] = useState(true);
-    const [playlist, setPlaylist] = useState({ id: initialPlaylistId, name: initialPlaylistName, description: '' });
+    const [playlist, setPlaylist] = useState({
+        id: initialPlaylistId,
+        name: initialPlaylistName,
+        description: '',
+    });
     const [tracks, setTracks] = useState([]);
     const [allTracks, setAllTracks] = useState([]);
+    const [likedTrackIds, setLikedTrackIds] = useState([]);
     const [userToken, setUserToken] = useState(null);
-    const [addModalVisible, setAddModalVisible] = useState(false);
-    const [addingTrackId, setAddingTrackId] = useState('');
-    const [deleting, setDeleting] = useState(false);
-    const [uploadingCover, setUploadingCover] = useState(false);
     const [coverVersion, setCoverVersion] = useState(0);
-    const [localCoverUri, setLocalCoverUri] = useState(null);
     const [mainCoverBroken, setMainCoverBroken] = useState(false);
-    const [brokenTrackCovers, setBrokenTrackCovers] = useState({});
-    const modalDragY = useRef(new Animated.Value(0)).current;
-
-    const resetModalDrag = () => {
-        Animated.spring(modalDragY, {
-            toValue: 0,
-            useNativeDriver: true,
-            tension: 120,
-            friction: 12,
-        }).start();
-    };
-
-    const modalPanResponder = useRef(
-        PanResponder.create({
-            onMoveShouldSetPanResponder: (_evt, gesture) =>
-                gesture.dy > 14 && Math.abs(gesture.dy) > Math.abs(gesture.dx),
-            onPanResponderMove: (_evt, gesture) => {
-                modalDragY.setValue(Math.max(0, gesture.dy));
-            },
-            onPanResponderRelease: (_evt, gesture) => {
-                if (gesture.dy > 120 || gesture.vy > 1.1) {
-                    modalDragY.setValue(0);
-                    setAddModalVisible(false);
-                } else {
-                    resetModalDrag();
-                }
-            },
-            onPanResponderTerminate: () => {
-                resetModalDrag();
-            },
-        })
-    ).current;
+    const [shareVisible, setShareVisible] = useState(false);
+    const [moreVisible, setMoreVisible] = useState(false);
+    const [copyModalVisible, setCopyModalVisible] = useState(false);
+    const [myPlaylists, setMyPlaylists] = useState([]);
+    const [copyingToPlaylistId, setCopyingToPlaylistId] = useState('');
+    const [downloadingAll, setDownloadingAll] = useState(false);
+    const [likingAll, setLikingAll] = useState(false);
 
     const resolveIconName = (name) => {
         if (!name) return '';
@@ -197,63 +211,107 @@ export default function PlaylistDetailScreen({ navigation, route }) {
         return found || name;
     };
 
-    const loadData = async () => {
+    const renderIcon = (iconName, style, tintColor = '#F5D8CB') => (
+        <RemoteTintIcon
+            icons={icons}
+            iconName={resolveIconName(iconName)}
+            width={style?.width || scale(24)}
+            height={style?.height || scale(24)}
+            color={tintColor}
+            fallback=""
+        />
+    );
+
+    const hydrateFromCache = (cached) => {
+        if (!cached) return false;
+        setIcons(cached.icons || {});
+        setPlaylist(cached.playlist || { id: initialPlaylistId, name: initialPlaylistName, description: '' });
+        setTracks(Array.isArray(cached.tracks) ? cached.tracks : []);
+        setAllTracks(Array.isArray(cached.allTracks) ? cached.allTracks : []);
+        setLikedTrackIds(Array.isArray(cached.likedTrackIds) ? cached.likedTrackIds : []);
+        setUserToken(cached.userToken || null);
+        setMainCoverBroken(false);
+        return true;
+    };
+
+    const persistToCache = (patch = {}) => {
+        if (!cacheKey) return;
+        const prev = playlistDetailSessionCache.get(cacheKey) || {};
+        playlistDetailSessionCache.set(cacheKey, { ...prev, ...patch });
+    };
+
+    const loadData = async ({ force = false } = {}) => {
         if (!initialPlaylistId) {
             setLoading(false);
             return;
         }
 
+        if (!force) {
+            const cached = playlistDetailSessionCache.get(cacheKey);
+            if (hydrateFromCache(cached)) {
+                hasLoadedOnceRef.current = true;
+                setLoading(false);
+                return;
+            }
+        }
+
         setLoading(true);
         try {
-            const [iconsMap, details, tracksRaw] = await Promise.all([
+            const [iconsMap, details, tracksRaw, likedRaw] = await Promise.all([
                 getIcons(),
                 getPlaylistDetails(initialPlaylistId),
                 getTracks(),
+                getLikedTracks(),
             ]);
 
             const normalizedTracks = extractPlaylistTracks(details);
-            const normalizedAll = (Array.isArray(tracksRaw) ? tracksRaw : [])
-                .map(normalizeTrack)
-                .filter(Boolean);
+            const normalizedAll = (Array.isArray(tracksRaw) ? tracksRaw : []).map(normalizeTrack).filter(Boolean);
             const mergedTracks = mergeTracksWithCatalog(normalizedTracks, normalizedAll);
             const token = await AsyncStorage.getItem('userToken');
-
-            setIcons(iconsMap || {});
-            setPlaylist({
+            const nextPlaylist = {
                 id: getPlaylistId(details, initialPlaylistId),
                 name: getPlaylistName(details, initialPlaylistName),
                 description: getPlaylistDescription(details),
-            });
+                ownerName: getPlaylistOwnerName(details),
+            };
+            const nextLikedTrackIds = extractLikedIds(likedRaw);
+
+            setIcons(iconsMap || {});
+            setPlaylist(nextPlaylist);
             setTracks(mergedTracks);
             setAllTracks(normalizedAll);
+            setLikedTrackIds(nextLikedTrackIds);
             setUserToken(token || null);
             setMainCoverBroken(false);
-            setLocalCoverUri(null);
-            setBrokenTrackCovers({});
+            persistToCache({
+                icons: iconsMap || {},
+                playlist: nextPlaylist,
+                tracks: mergedTracks,
+                allTracks: normalizedAll,
+                likedTrackIds: nextLikedTrackIds,
+                userToken: token || null,
+            });
+            hasLoadedOnceRef.current = true;
         } catch (_) {
             setPlaylist({ id: initialPlaylistId, name: initialPlaylistName, description: '' });
             setTracks([]);
             setAllTracks([]);
+            setLikedTrackIds([]);
+            playlistDetailSessionCache.delete(cacheKey);
+            hasLoadedOnceRef.current = false;
         } finally {
             setLoading(false);
         }
     };
 
-    const refreshDetailsOnly = async () => {
-        if (!playlist?.id) return;
-        const details = await getPlaylistDetails(playlist.id);
-        const normalizedTracks = extractPlaylistTracks(details);
-        setTracks(mergeTracksWithCatalog(normalizedTracks, allTracks));
-        setPlaylist((prev) => ({
-            id: getPlaylistId(details, prev.id),
-            name: getPlaylistName(details, prev.name),
-            description: getPlaylistDescription(details),
-        }));
-    };
+    useEffect(() => {
+        hasLoadedOnceRef.current = false;
+    }, [initialPlaylistId]);
 
     useEffect(() => {
-        if (isFocused) {
-            loadData();
+        if (!isFocused || !initialPlaylistId) return;
+        if (!hasLoadedOnceRef.current) {
+            loadData({ force: false });
         }
     }, [isFocused, initialPlaylistId]);
 
@@ -266,92 +324,227 @@ export default function PlaylistDetailScreen({ navigation, route }) {
         return `${base}${query}`;
     }, [playlist?.id, coverVersion]);
 
-    const availableTracks = useMemo(() => {
-        const used = new Set(tracks.map((item) => getTrackId(item)));
-        return allTracks.filter((item) => {
+    const currentTrackId = getTrackId(currentTrack);
+    const isCurrentTrackFromPlaylist = tracks.some((item) => getTrackId(item) === currentTrackId);
+    const isPlaylistPlaying = isCurrentTrackFromPlaylist && isPlaying;
+
+    const trackIds = useMemo(() => tracks.map((item) => getTrackId(item)).filter(Boolean), [tracks]);
+    const allTracksLiked = useMemo(() => trackIds.length > 0 && trackIds.every((id) => likedTrackIds.includes(id)), [trackIds, likedTrackIds]);
+
+    const onPlayPausePlaylist = async () => {
+        if (!tracks.length) return;
+        if (isCurrentTrackFromPlaylist) {
+            await togglePlay();
+            return;
+        }
+        await setQueue(tracks, 0);
+    };
+
+    const onPlayTrack = async (track, index) => {
+        if (!track) return;
+        const safeIndex = Number.isFinite(index) ? index : tracks.findIndex((item) => getTrackId(item) === getTrackId(track));
+        const targetIndex = safeIndex >= 0 ? safeIndex : 0;
+        await setQueue(tracks, targetIndex);
+    };
+
+    const onToggleTrackLike = async (track) => {
+        const id = getTrackId(track);
+        if (!id) return;
+        const isLiked = likedTrackIds.includes(id);
+        const prev = likedTrackIds;
+        const next = isLiked ? likedTrackIds.filter((x) => x !== id) : [...likedTrackIds, id];
+        setLikedTrackIds(next);
+
+        const ok = isLiked ? await unlikeTrack(id) : await likeTrack(id);
+        if (!ok) setLikedTrackIds(prev);
+        persistToCache({ likedTrackIds: ok ? next : prev });
+    };
+
+    const onToggleLikeAll = async () => {
+        if (!trackIds.length || likingAll) return;
+        setLikingAll(true);
+
+        const prev = likedTrackIds;
+        const next = allTracksLiked
+            ? likedTrackIds.filter((id) => !trackIds.includes(id))
+            : Array.from(new Set([...likedTrackIds, ...trackIds]));
+        setLikedTrackIds(next);
+
+        const action = allTracksLiked ? unlikeTrack : likeTrack;
+        const results = await Promise.all(trackIds.map((id) => action(id)));
+        const ok = results.every(Boolean);
+        if (!ok) {
+            setLikedTrackIds(prev);
+            persistToCache({ likedTrackIds: prev });
+        } else {
+            persistToCache({ likedTrackIds: next });
+        }
+
+        setLikingAll(false);
+    };
+
+    const onShufflePlaylist = async () => {
+        if (tracks.length <= 1) {
+            if (tracks.length === 1) await setQueue(tracks, 0);
+            return;
+        }
+
+        const shuffled = [...tracks];
+        for (let i = shuffled.length - 1; i > 0; i -= 1) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+        }
+        await setQueue(shuffled, 0);
+    };
+
+    const ensureDownloadDir = async () => {
+        const downloadsDir = `${FileSystem.documentDirectory}downloads`;
+        const dirInfo = await FileSystem.getInfoAsync(downloadsDir);
+        if (!dirInfo.exists) {
+            await FileSystem.makeDirectoryAsync(downloadsDir, { intermediates: true });
+        }
+        return downloadsDir;
+    };
+
+    const downloadSingleTrack = async (track, downloadsDir, authHeaders) => {
+        const sourceTrack = track?.track || track;
+        const trackId = sourceTrack?.id || sourceTrack?._id;
+        if (!trackId) return false;
+
+        const fileUri = `${downloadsDir}/${trackId}.mp3`;
+        const existing = await FileSystem.getInfoAsync(fileUri);
+        if (!existing.exists) {
+            await FileSystem.downloadAsync(getStreamUrl(trackId), fileUri, {
+                headers: authHeaders,
+            });
+        }
+
+        const payload = {
+            ...sourceTrack,
+            id: sourceTrack.id || sourceTrack._id,
+            title: sourceTrack.title || 'Unknown title',
+            artistName: resolveArtistName(sourceTrack, 'Unknown Artist'),
+            localUri: fileUri,
+            downloadedAt: new Date().toISOString(),
+        };
+
+        const saveResult = await saveOfflineDownload(payload);
+        return !saveResult?.error;
+    };
+
+    const onDownloadPlaylist = async () => {
+        if (!tracks.length || downloadingAll) return;
+        setDownloadingAll(true);
+
+        try {
+            const token = userToken || (await AsyncStorage.getItem('userToken'));
+            const authHeaders = token ? { Authorization: `Bearer ${token}` } : undefined;
+            const downloadsDir = await ensureDownloadDir();
+
+            let success = 0;
+            let fail = 0;
+            // Sequential to avoid overloading network/file system
+            for (const track of tracks) {
+                try {
+                    // eslint-disable-next-line no-await-in-loop
+                    const ok = await downloadSingleTrack(track, downloadsDir, authHeaders);
+                    if (ok) success += 1;
+                    else fail += 1;
+                } catch (_) {
+                    fail += 1;
+                }
+            }
+
+            if (fail > 0) {
+                Alert.alert('Downloads', `Downloaded: ${success}\nFailed: ${fail}`);
+            } else {
+                Alert.alert('Downloads', `Downloaded ${success} ${success === 1 ? 'track' : 'tracks'}`);
+            }
+        } catch (e) {
+            Alert.alert('Downloads', 'Failed to download playlist');
+        } finally {
+            setDownloadingAll(false);
+        }
+    };
+
+    const onOpenMore = () => {
+        setMoreVisible(true);
+    };
+
+    const onCloseMore = () => {
+        setMoreVisible(false);
+    };
+
+    const onAddPlaylistToQueue = async () => {
+        onCloseMore();
+        if (!tracks.length) return;
+
+        if (!currentTrackId) {
+            await setQueue(tracks, 0);
+            return;
+        }
+
+        const existingIds = new Set((Array.isArray(queue) ? queue : []).map((item) => getTrackId(item)).filter(Boolean));
+        const unique = tracks.filter((item) => {
             const id = getTrackId(item);
-            return id && !used.has(id);
-        });
-    }, [allTracks, tracks]);
-
-    const onPlayTrack = async (track) => {
-        const trackId = getTrackId(track);
-        const fullTrack = allTracks.find((item) => getTrackId(item) === trackId);
-        await setTrack(fullTrack || track);
-    };
-
-    const onAddTrack = async (track) => {
-        const trackId = getTrackId(track);
-        if (!trackId || !playlist?.id || addingTrackId) return;
-
-        setAddingTrackId(trackId);
-        const res = await addTrackToPlaylist(playlist.id, trackId);
-        setAddingTrackId('');
-
-        if (res?.error) {
-            Alert.alert('Playlist', typeof res.error === 'string' ? res.error : 'Failed to add track');
-            return;
-        }
-
-        await refreshDetailsOnly();
-    };
-
-    const onDeletePlaylist = () => {
-        if (!playlist?.id || deleting) return;
-
-        Alert.alert('Delete playlist', 'Are you sure you want to delete this playlist?', [
-            { text: 'Cancel', style: 'cancel' },
-            {
-                text: 'Delete',
-                style: 'destructive',
-                onPress: async () => {
-                    setDeleting(true);
-                    const res = await deletePlaylist(playlist.id);
-                    setDeleting(false);
-
-                    if (res?.error) {
-                        Alert.alert('Playlist', typeof res.error === 'string' ? res.error : 'Delete failed');
-                        return;
-                    }
-
-                    navigation.goBack();
-                },
-            },
-        ]);
-    };
-
-    const onChangeCover = async () => {
-        if (!playlist?.id || uploadingCover) return;
-
-        const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-        if (!permission?.granted) {
-            Alert.alert('Playlist', 'Allow photo access to upload playlist cover.');
-            return;
-        }
-
-        const result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.Images,
-            allowsEditing: true,
-            aspect: [1, 1],
-            quality: 0.9,
+            return id && !existingIds.has(id);
         });
 
-        if (result.canceled || !result.assets?.[0]) return;
+        unique.forEach((item) => addToQueue(item));
+        Alert.alert('Queue', `Added ${unique.length} ${unique.length === 1 ? 'track' : 'tracks'} to queue`);
+    };
 
-        setUploadingCover(true);
-        const res = await uploadPlaylistCover(playlist.id, result.assets[0]);
-        setUploadingCover(false);
+    const loadMyPlaylists = async () => {
+        try {
+            const raw = await getMyPlaylists();
+            const list = Array.isArray(raw) ? raw : [];
+            const normalized = list
+                .map((item) => ({
+                    id: getPlaylistId(item),
+                    name: getPlaylistName(item, 'Playlist'),
+                }))
+                .filter((item) => item.id && item.id !== playlist.id);
+            setMyPlaylists(normalized);
+        } catch (_) {
+            setMyPlaylists([]);
+        }
+    };
 
-        if (res?.error) {
-            Alert.alert('Playlist', typeof res.error === 'string' ? res.error : 'Cover upload failed');
-            return;
+    const onOpenCopyModal = async () => {
+        onCloseMore();
+        await loadMyPlaylists();
+        setCopyModalVisible(true);
+    };
+
+    const onCopyAllTracksToPlaylist = async (targetPlaylistId) => {
+        if (!targetPlaylistId || !tracks.length || copyingToPlaylistId) return;
+        setCopyingToPlaylistId(targetPlaylistId);
+
+        let added = 0;
+        let failed = 0;
+        for (const track of tracks) {
+            const trackId = getTrackId(track);
+            if (!trackId) {
+                failed += 1;
+                continue;
+            }
+            try {
+                // eslint-disable-next-line no-await-in-loop
+                const res = await addTrackToPlaylist(targetPlaylistId, trackId);
+                if (res?.error) failed += 1;
+                else added += 1;
+            } catch (_) {
+                failed += 1;
+            }
         }
 
-        setMainCoverBroken(false);
-        setLocalCoverUri(result.assets[0].uri);
-        setCoverVersion(Date.now());
-        await refreshDetailsOnly();
+        setCopyingToPlaylistId('');
+        setCopyModalVisible(false);
+        Alert.alert('Playlist', `Added: ${added}\nSkipped: ${failed}`);
     };
+
+    const shareUrl = playlistCoverUri;
+    const shareTitle = `${playlist?.name || 'Playlist'}${playlist?.description ? ` — ${playlist.description}` : ''}`;
 
     return (
         <LinearGradient
@@ -366,20 +559,11 @@ export default function PlaylistDetailScreen({ navigation, route }) {
             <View style={styles.container}>
                 <View style={styles.headerRow}>
                     <TouchableOpacity style={styles.headerIconBtn} activeOpacity={0.8} onPress={() => navigation.goBack()}>
-                        <RemoteTintIcon
-                            icons={icons}
-                            iconName={resolveIconName('arrow-left.svg')}
-                            width={scale(24)}
-                            height={scale(24)}
-                            color="#F5D8CB"
-                            fallback=""
-                        />
+                        {renderIcon('arrow-left.svg', { width: scale(24), height: scale(24) })}
                     </TouchableOpacity>
-
-                    <Text style={styles.headerTitle} numberOfLines={1}>{playlist.name || 'Playlist'}</Text>
-
-                    <TouchableOpacity style={styles.deleteBtn} activeOpacity={0.8} onPress={onDeletePlaylist} disabled={deleting}>
-                        {deleting ? <ActivityIndicator size="small" color="#FF4D4F" /> : <Text style={styles.deleteBtnText}>Delete</Text>}
+                    <View style={styles.headerSpacer} />
+                    <TouchableOpacity style={styles.headerIconBtn} activeOpacity={0.8} onPress={onOpenMore}>
+                        {renderIcon('more.svg', { width: scale(24), height: scale(24) })}
                     </TouchableOpacity>
                 </View>
 
@@ -390,15 +574,15 @@ export default function PlaylistDetailScreen({ navigation, route }) {
                 ) : (
                     <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
                         <View style={styles.coverWrap}>
-                            {(localCoverUri || playlistCoverUri) && !mainCoverBroken ? (
+                            {playlistCoverUri && !mainCoverBroken ? (
                                 <Image
                                     source={
-                                        userToken && !localCoverUri
+                                        userToken
                                             ? {
                                                 uri: playlistCoverUri,
                                                 headers: { Authorization: `Bearer ${userToken}` },
                                             }
-                                            : { uri: localCoverUri || playlistCoverUri }
+                                            : { uri: playlistCoverUri }
                                     }
                                     style={styles.mainCover}
                                     resizeMode="cover"
@@ -407,129 +591,162 @@ export default function PlaylistDetailScreen({ navigation, route }) {
                             ) : (
                                 <View style={[styles.mainCover, styles.mainCoverFallback]}>
                                     <Text style={styles.mainCoverFallbackText}>
-                                        {(playlist.name || 'P').charAt(0).toUpperCase()}
+                                        {(playlist?.name || 'P').charAt(0).toUpperCase()}
                                     </Text>
                                 </View>
                             )}
                         </View>
 
-                        <Text style={styles.playlistName}>{playlist.name || 'Playlist'}</Text>
-                        {playlist.description ? (
-                            <Text style={styles.playlistDescription}>{playlist.description}</Text>
-                        ) : null}
-                        <Text style={styles.playlistMeta}>{tracks.length} {tracks.length === 1 ? 'track' : 'tracks'}</Text>
+                        <Text style={styles.playlistName} numberOfLines={2}>
+                            {playlist?.name || 'Playlist'}
+                        </Text>
 
                         <View style={styles.actionsRow}>
-                            <TouchableOpacity style={styles.actionBtn} activeOpacity={0.8} onPress={() => setAddModalVisible(true)}>
-                                <Text style={styles.actionBtnText}>Add tracks</Text>
+                            <TouchableOpacity style={styles.actionCircle} activeOpacity={0.85} onPress={onDownloadPlaylist} disabled={downloadingAll}>
+                                {downloadingAll ? (
+                                    <ActivityIndicator size="small" color="#F5D8CB" />
+                                ) : (
+                                    renderIcon('download.svg', { width: scale(24), height: scale(24) })
+                                )}
                             </TouchableOpacity>
-                            <TouchableOpacity style={styles.actionBtn} activeOpacity={0.8} onPress={onChangeCover} disabled={uploadingCover}>
-                                {uploadingCover
-                                    ? <ActivityIndicator size="small" color="#F5D8CB" />
-                                    : <Text style={styles.actionBtnText}>Change cover</Text>}
+
+                            <TouchableOpacity style={styles.actionCircle} activeOpacity={0.85} onPress={onToggleLikeAll} disabled={likingAll}>
+                                {likingAll ? (
+                                    <ActivityIndicator size="small" color="#F5D8CB" />
+                                ) : (
+                                    renderIcon(allTracksLiked ? 'added.svg' : 'add.svg', { width: scale(24), height: scale(24) })
+                                )}
+                            </TouchableOpacity>
+
+                            <TouchableOpacity style={styles.playCircle} activeOpacity={0.9} onPress={onPlayPausePlaylist}>
+                                {renderIcon(isPlaylistPlaying ? 'pause.svg' : 'play.svg', { width: scale(24), height: scale(24) }, '#300C0A')}
+                            </TouchableOpacity>
+
+                            <TouchableOpacity style={styles.actionCircle} activeOpacity={0.85} onPress={() => setShareVisible(true)}>
+                                {renderIcon('share.svg', { width: scale(24), height: scale(24) })}
+                            </TouchableOpacity>
+
+                            <TouchableOpacity style={styles.actionCircle} activeOpacity={0.85} onPress={onShufflePlaylist}>
+                                {renderIcon('shuffle.svg', { width: scale(24), height: scale(24) })}
                             </TouchableOpacity>
                         </View>
 
-                        <Text style={styles.sectionTitle}>Tracks</Text>
-
-                        {tracks.length === 0 ? (
-                            <Text style={styles.emptyText}>No tracks in this playlist yet</Text>
-                        ) : (
-                            tracks.map((track) => {
+                        <View style={styles.listBlock}>
+                            {tracks.map((track, index) => {
                                 const id = getTrackId(track);
-                                const coverUri = getTrackCoverUrl(track);
-                                const broken = brokenTrackCovers[id];
+                                const isLiked = likedTrackIds.includes(id);
 
                                 return (
                                     <TouchableOpacity
-                                        key={id}
+                                        key={`${id}-${index}`}
                                         style={styles.trackRow}
-                                        activeOpacity={0.8}
-                                        onPress={() => onPlayTrack(track)}
+                                        activeOpacity={0.85}
+                                        onPress={() => onPlayTrack(track, index)}
                                     >
-                                        {coverUri && !broken ? (
-                                            <Image
-                                                source={{ uri: coverUri }}
-                                                style={styles.trackCover}
-                                                resizeMode="cover"
-                                                onError={() => setBrokenTrackCovers((prev) => ({ ...prev, [id]: true }))}
-                                            />
-                                        ) : (
-                                            <View style={[styles.trackCover, styles.trackCoverFallback]} />
-                                        )}
-
-                                        <View style={styles.trackMeta}>
+                                        <View style={styles.trackTextWrap}>
                                             <Text style={styles.trackTitle} numberOfLines={1}>{track?.title || 'Unknown title'}</Text>
-                                            <Text style={styles.trackArtist} numberOfLines={1}>{resolveArtistName(track)}</Text>
+                                            <Text style={styles.trackArtist} numberOfLines={1}>{resolveArtistName(track, 'Unknown Artist')}</Text>
                                         </View>
 
+                                        <TouchableOpacity
+                                            style={styles.trackLikeBtn}
+                                            activeOpacity={0.8}
+                                            onPress={(e) => {
+                                                e.stopPropagation();
+                                                onToggleTrackLike(track);
+                                            }}
+                                        >
+                                            {renderIcon(isLiked ? 'added.svg' : 'add.svg', { width: scale(24), height: scale(24) })}
+                                        </TouchableOpacity>
+
+                                        <View style={styles.trackDivider} />
                                     </TouchableOpacity>
                                 );
-                            })
-                        )}
+                            })}
+
+                            {!tracks.length ? (
+                                <Text style={styles.emptyText}>No tracks in this playlist yet</Text>
+                            ) : null}
+                        </View>
 
                         <View style={{ height: scale(120) }} />
                     </ScrollView>
                 )}
             </View>
 
-            <Modal
-                visible={addModalVisible}
-                transparent
-                animationType="fade"
-                onRequestClose={() => {
-                    modalDragY.setValue(0);
-                    setAddModalVisible(false);
-                }}
-            >
-                <Pressable
-                    style={styles.modalOverlay}
-                    onPress={() => {
-                        modalDragY.setValue(0);
-                        setAddModalVisible(false);
-                    }}
-                >
-                    <AnimatedPressable
-                        onPress={() => {}}
-                        {...modalPanResponder.panHandlers}
-                        style={[styles.modalCard, { transform: [{ translateY: modalDragY }] }]}
-                    >
-                        <Text style={styles.modalTitle}>Add tracks</Text>
+            <Modal visible={moreVisible} transparent animationType="fade" onRequestClose={onCloseMore}>
+                <Pressable style={styles.modalOverlay} onPress={onCloseMore}>
+                    <Pressable style={styles.moreSheet} onPress={() => {}}>
+                        <LinearGradient
+                            colors={['rgba(255, 255, 255, 0.15)', 'rgba(255, 255, 255, 0.1)', 'rgba(255, 255, 255, 0.05)']}
+                            locations={[0, 0.2, 1]}
+                            start={{ x: 0.5, y: 0 }}
+                            end={{ x: 0.5, y: 1 }}
+                            style={styles.moreBorderGradient}
+                        >
+                            <BlurView intensity={40} tint="dark" style={styles.moreGlassContainer}>
+                                <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(30, 10, 8, 0.86)' }]} />
 
-                        <ScrollView showsVerticalScrollIndicator={false}>
-                            {availableTracks.length === 0 ? (
-                                <Text style={styles.modalEmptyText}>No available tracks</Text>
-                            ) : (
-                                availableTracks.map((track) => {
-                                    const id = getTrackId(track);
-                                    const busy = addingTrackId === id;
-                                    return (
-                                        <View key={id} style={styles.modalTrackRow}>
-                                            <View style={styles.modalTrackTextWrap}>
-                                                <Text style={styles.modalTrackTitle} numberOfLines={1}>{track?.title || 'Unknown title'}</Text>
-                                                <Text style={styles.modalTrackArtist} numberOfLines={1}>{resolveArtistName(track)}</Text>
-                                            </View>
+                                <View style={styles.moreInner}>
+                                    <Text style={styles.moreTitle}>More</Text>
 
-                                            <TouchableOpacity
-                                                style={styles.modalAddBtn}
-                                                activeOpacity={0.8}
-                                                onPress={() => onAddTrack(track)}
-                                                disabled={busy}
-                                            >
-                                                {busy ? (
-                                                    <ActivityIndicator size="small" color="#300C0A" />
-                                                ) : (
-                                                    <Text style={styles.modalAddBtnText}>Add</Text>
-                                                )}
-                                            </TouchableOpacity>
+                                    <TouchableOpacity style={styles.moreItem} activeOpacity={0.85} onPress={onOpenCopyModal}>
+                                        <View style={styles.moreItemIconCircle}>
+                                            {renderIcon('added.svg', { width: scale(24), height: scale(24) })}
                                         </View>
-                                    );
-                                })
-                            )}
-                        </ScrollView>
-                    </AnimatedPressable>
+                                        <Text style={styles.moreItemText}>Add to another playlist</Text>
+                                    </TouchableOpacity>
+
+                                    <TouchableOpacity style={styles.moreItem} activeOpacity={0.85} onPress={onAddPlaylistToQueue}>
+                                        <View style={styles.moreItemIconCircle}>
+                                            {renderIcon('add to queue.svg', { width: scale(24), height: scale(24) })}
+                                        </View>
+                                        <Text style={styles.moreItemText}>Add to queue</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            </BlurView>
+                        </LinearGradient>
+                    </Pressable>
                 </Pressable>
             </Modal>
+
+            <Modal visible={copyModalVisible} transparent animationType="fade" onRequestClose={() => setCopyModalVisible(false)}>
+                <Pressable style={styles.modalOverlay} onPress={() => setCopyModalVisible(false)}>
+                    <Pressable style={styles.copyCard} onPress={() => {}}>
+                        <Text style={styles.copyTitle}>Choose playlist</Text>
+                        <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: scale(280) }}>
+                            {myPlaylists.length === 0 ? (
+                                <Text style={styles.copyEmpty}>No playlists available</Text>
+                            ) : (
+                                myPlaylists.map((item) => (
+                                    <TouchableOpacity
+                                        key={item.id}
+                                        style={styles.copyRow}
+                                        activeOpacity={0.85}
+                                        disabled={Boolean(copyingToPlaylistId)}
+                                        onPress={() => onCopyAllTracksToPlaylist(item.id)}
+                                    >
+                                        <Text style={styles.copyRowText} numberOfLines={1}>{item.name}</Text>
+                                        {copyingToPlaylistId === item.id ? (
+                                            <ActivityIndicator size="small" color="#300C0A" />
+                                        ) : (
+                                            <Text style={styles.copyAdd}>Add</Text>
+                                        )}
+                                    </TouchableOpacity>
+                                ))
+                            )}
+                        </ScrollView>
+                    </Pressable>
+                </Pressable>
+            </Modal>
+
+            <ShareSheetModal
+                visible={shareVisible}
+                onClose={() => setShareVisible(false)}
+                renderIcon={(iconName, style, color) => renderIcon(iconName, style, color)}
+                shareTitle={shareTitle}
+                shareUrl={shareUrl}
+            />
         </LinearGradient>
     );
 }
@@ -545,32 +762,19 @@ const styles = StyleSheet.create({
     headerRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        paddingHorizontal: scale(16),
+        justifyContent: 'space-between',
+        paddingHorizontal: scale(20),
+        marginBottom: scale(14),
     },
     headerIconBtn: {
-        width: scale(32),
-        height: scale(32),
+        width: scale(24),
+        height: scale(24),
         alignItems: 'center',
         justifyContent: 'center',
     },
-    headerTitle: {
-        flex: 1,
-        color: '#F5D8CB',
-        fontFamily: 'Unbounded-Regular',
-        fontSize: scale(20),
-        textAlign: 'center',
-        paddingHorizontal: scale(8),
-    },
-    deleteBtn: {
-        minWidth: scale(54),
-        height: scale(32),
-        alignItems: 'flex-end',
-        justifyContent: 'center',
-    },
-    deleteBtnText: {
-        color: '#FF4D4F',
-        fontFamily: 'Poppins-Regular',
-        fontSize: scale(13),
+    headerSpacer: {
+        width: scale(24),
+        height: scale(24),
     },
     loaderWrap: {
         flex: 1,
@@ -579,18 +783,19 @@ const styles = StyleSheet.create({
     },
     content: {
         paddingHorizontal: scale(16),
-        paddingTop: scale(18),
-        paddingBottom: scale(10),
+        paddingBottom: scale(12),
     },
     coverWrap: {
         alignItems: 'center',
-        marginBottom: scale(14),
+        marginBottom: 0,
+        marginTop: scale(10),
     },
     mainCover: {
-        width: scale(170),
-        height: scale(170),
-        borderRadius: scale(20),
-        backgroundColor: '#3a1a18',
+        width: scale(198),
+        height: scale(198),
+        borderRadius: scale(24),
+        backgroundColor: '#2d1312',
+        marginBottom: scale(20),
     },
     mainCoverFallback: {
         alignItems: 'center',
@@ -600,159 +805,192 @@ const styles = StyleSheet.create({
     mainCoverFallbackText: {
         color: '#F5D8CB',
         fontFamily: 'Unbounded-SemiBold',
-        fontSize: scale(52),
+        fontSize: scale(64),
     },
     playlistName: {
-        color: '#F5D8CB',
+        color: '#fff',
         fontFamily: 'Unbounded-SemiBold',
         fontSize: scale(20),
         textAlign: 'center',
-    },
-    playlistDescription: {
-        color: 'rgba(245,216,203,0.9)',
-        fontFamily: 'Poppins-Regular',
-        fontSize: scale(13),
-        textAlign: 'center',
-        marginTop: scale(6),
-    },
-    playlistMeta: {
-        color: 'rgba(245,216,203,0.8)',
-        fontFamily: 'Poppins-Regular',
-        fontSize: scale(12),
-        textAlign: 'center',
-        marginTop: scale(6),
+        marginBottom: scale(5),
     },
     actionsRow: {
         flexDirection: 'row',
-        marginTop: scale(16),
-        marginBottom: scale(18),
-        columnGap: scale(10),
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        width: '100%',
+        paddingHorizontal: scale(15),
+        marginTop: scale(10),
+        marginBottom: scale(20),
     },
-    actionBtn: {
-        flex: 1,
-        height: scale(38),
-        borderRadius: scale(20),
+    actionCircle: {
+        width: scale(48),
+        height: scale(48),
+        borderRadius: scale(24),
         borderWidth: 1,
-        borderColor: 'rgba(245,216,203,0.5)',
+        borderColor: '#F5D8CB',
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: 'rgba(48, 12, 10, 0.35)',
+        backgroundColor: 'transparent',
     },
-    actionBtnText: {
-        color: '#F5D8CB',
-        fontFamily: 'Poppins-Regular',
-        fontSize: scale(13),
+    playCircle: {
+        width: scale(60),
+        height: scale(60),
+        borderRadius: scale(30),
+        backgroundColor: '#F5D8CB',
+        alignItems: 'center',
+        justifyContent: 'center',
     },
-    sectionTitle: {
+    listBlock: {
+        marginTop: scale(4),
+    },
+    trackRow: {
+        position: 'relative',
+        flexDirection: 'row',
+        alignItems: 'center',
+        minHeight: scale(66),
+    },
+    trackTextWrap: {
+        flex: 1,
+        paddingRight: scale(10),
+    },
+    trackTitle: {
         color: '#F5D8CB',
         fontFamily: 'Unbounded-SemiBold',
-        fontSize: scale(18),
-        marginBottom: scale(10),
+        fontSize: scale(16),
+        marginBottom: scale(2),
+    },
+    trackArtist: {
+        color: '#F5D8CB',
+        fontFamily: 'Poppins-Regular',
+        fontSize: scale(15),
+    },
+    trackLikeBtn: {
+        width: scale(34),
+        height: scale(34),
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    trackDivider: {
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        bottom: 0,
+        height: 1,
+        backgroundColor: 'rgba(245, 216, 203, 0.8)',
     },
     emptyText: {
         color: 'rgba(245,216,203,0.85)',
         fontFamily: 'Poppins-Regular',
         fontSize: scale(14),
         textAlign: 'center',
-        marginTop: scale(16),
-    },
-    trackRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: 'rgba(48, 12, 10, 0.2)',
-        borderRadius: scale(20),
-        marginBottom: scale(12),
-        borderTopLeftRadius: scale(40),
-        borderBottomLeftRadius: scale(40),
-        paddingRight: scale(10),
-    },
-    trackCover: {
-        width: scale(72),
-        height: scale(72),
-        borderRadius: scale(14),
-        backgroundColor: '#2b1312',
-    },
-    trackCoverFallback: {
-        backgroundColor: 'rgba(30, 10, 8, 0.9)',
-    },
-    trackMeta: {
-        flex: 1,
-        paddingLeft: scale(12),
-        paddingRight: scale(8),
-    },
-    trackTitle: {
-        color: '#F5D8CB',
-        fontFamily: 'Poppins-Regular',
-        fontSize: scale(14),
-    },
-    trackArtist: {
-        color: 'rgba(245,216,203,0.85)',
-        fontFamily: 'Poppins-Light',
-        fontSize: scale(10.5),
-        marginTop: scale(2),
+        marginTop: scale(18),
     },
     modalOverlay: {
         flex: 1,
-        backgroundColor: 'rgba(0,0,0,0.4)',
+        backgroundColor: 'rgba(0,0,0,0.42)',
         justifyContent: 'flex-end',
-        paddingHorizontal: scale(12),
-        paddingBottom: scale(24),
     },
-    modalCard: {
-        maxHeight: '65%',
-        borderRadius: scale(24),
+    moreSheet: {
+        width: '100%',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: -10 },
+        shadowOpacity: 0.3,
+        shadowRadius: 20,
+        elevation: 15,
+    },
+    moreBorderGradient: {
+        width: '100%',
+        borderTopLeftRadius: scale(40),
+        borderTopRightRadius: scale(40),
+        paddingTop: 1.5,
+        paddingHorizontal: 1.5,
+        paddingBottom: 0,
+    },
+    moreGlassContainer: {
+        borderTopLeftRadius: scale(40),
+        borderTopRightRadius: scale(40),
+        overflow: 'hidden',
+    },
+    moreInner: {
+        paddingHorizontal: scale(20),
+        paddingTop: scale(18),
+        paddingBottom: scale(26),
+    },
+    moreTitle: {
+        textAlign: 'center',
+        fontFamily: 'Unbounded-SemiBold',
+        fontSize: scale(24),
+        color: '#F5D8CB',
+        marginBottom: scale(18),
+    },
+    moreItem: {
+        height: scale(52),
+        borderWidth: 1,
+        borderColor: '#F5D8CB',
+        borderRadius: scale(26),
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingRight: scale(16),
+        marginBottom: scale(14),
+    },
+    moreItemIconCircle: {
+        width: scale(52),
+        height: scale(52),
+        borderRadius: scale(26),
+        borderWidth: 1,
+        borderColor: '#F5D8CB',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginRight: scale(14),
+    },
+    moreItemText: {
+        color: '#F5D8CB',
+        fontFamily: 'Poppins-Regular',
+        fontSize: scale(17),
+    },
+    copyCard: {
+        marginHorizontal: scale(16),
+        marginBottom: scale(26),
+        borderRadius: scale(22),
         backgroundColor: 'rgba(42, 14, 12, 0.98)',
         borderWidth: 1,
         borderColor: 'rgba(245,216,203,0.3)',
         paddingHorizontal: scale(14),
         paddingTop: scale(14),
-        paddingBottom: scale(10),
+        paddingBottom: scale(12),
     },
-    modalTitle: {
+    copyTitle: {
         color: '#F5D8CB',
         fontFamily: 'Unbounded-SemiBold',
         fontSize: scale(16),
         marginBottom: scale(10),
     },
-    modalEmptyText: {
+    copyEmpty: {
         color: 'rgba(245,216,203,0.85)',
         fontFamily: 'Poppins-Regular',
         fontSize: scale(14),
         textAlign: 'center',
         paddingVertical: scale(20),
     },
-    modalTrackRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingVertical: scale(8),
+    copyRow: {
+        minHeight: scale(42),
         borderBottomWidth: 1,
         borderBottomColor: 'rgba(245,216,203,0.15)',
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingVertical: scale(8),
     },
-    modalTrackTextWrap: {
+    copyRowText: {
         flex: 1,
-        paddingRight: scale(10),
-    },
-    modalTrackTitle: {
         color: '#F5D8CB',
         fontFamily: 'Poppins-Regular',
         fontSize: scale(14),
+        marginRight: scale(10),
     },
-    modalTrackArtist: {
-        color: 'rgba(245,216,203,0.8)',
-        fontFamily: 'Poppins-Light',
-        fontSize: scale(11),
-    },
-    modalAddBtn: {
-        minWidth: scale(62),
-        height: scale(32),
-        borderRadius: scale(16),
-        backgroundColor: '#F5D8CB',
-        alignItems: 'center',
-        justifyContent: 'center',
-        paddingHorizontal: scale(12),
-    },
-    modalAddBtnText: {
-        color: '#300C0A',
+    copyAdd: {
+        color: '#F5D8CB',
         fontFamily: 'Poppins-SemiBold',
         fontSize: scale(12),
     },

@@ -8,10 +8,11 @@ import {
     Platform,
     ImageBackground,
     Animated,
-    StatusBar
+    StatusBar,
+    ActivityIndicator,
+    Image,
 } from 'react-native';
-import { SvgUri, SvgXml } from 'react-native-svg';
-import { scale } from '../../api/api';
+import { getIcons, scale } from '../../api/api';
 
 const { width, height } = Dimensions.get('window');
 
@@ -29,65 +30,69 @@ const SPACER_ITEM_SIZE = (width - ITEM_SIZE) / 2;
 
 const DATA = [
     { key: 'left-spacer' },
-    { key: '1', color: '#300C0A' },
-    { key: '2', color: '#300C0A' },
-    { key: '3', color: '#300C0A' },
+    { key: '1', color: '#300C0A', iconName: 'card-1.png' },
+    { key: '2', color: '#300C0A', iconName: 'card-2.png' },
+    { key: '3', color: '#300C0A', iconName: 'card-3.png' },
     { key: 'right-spacer' },
 ];
-const svgCache = {};
-// 👇 Цей компонент завантажує SVG, чистить, фарбує і КЕШУЄ результат
-const ColoredSvg = ({ uri, width, height, color }) => {
-    const cacheKey = `${uri}_${color || 'original'}`;
-    const [xml, setXml] = useState(svgCache[cacheKey] || null);
-
-    useEffect(() => {
-        let isMounted = true;
-
-        // 1. Якщо у нас вже є правильна картинка в кеші — беремо її і виходимо
-        if (svgCache[cacheKey]) {
-            setXml(svgCache[cacheKey]);
-            return;
-        }
-
-        // 2. Якщо в кеші немає — вантажимо
-        if (uri) {
-            fetch(uri)
-                .then(response => response.text())
-                .then(svgContent => {
-                    if (isMounted) {
-                        let cleanXml = svgContent.replace(/fill=['"]none['"]/gi, '###NONE###');
-
-                        if (color) {
-                            cleanXml = cleanXml.replace(/fill=['"][^'"]*['"]/g, `fill="${color}"`);
-                            cleanXml = cleanXml.replace(/stroke=['"][^'"]*['"]/g, `stroke="${color}"`);
-                        }
-
-                        cleanXml = cleanXml.replace(/###NONE###/g, 'fill="none"');
-
-                        // Зберігаємо в кеш
-                        svgCache[cacheKey] = cleanXml;
-                        setXml(cleanXml);
-                    }
-                })
-                .catch(err => console.log("SVG Error:", err));
-        }
-
-        return () => { isMounted = false; };
-    }, [cacheKey]); // 🔥 Головне: реагуємо на зміну ключа, а не ігноруємо її
-
-    if (!xml) return <View style={{ width, height }} />;
-
-    return (
-        <SvgXml
-            xml={xml}
-            width={width}
-            height={height}
-        />
-    );
-};
 
 export default function OnboardingScreen({ navigation }) {
-    const scrollX = useRef(new Animated.Value(0)).current;
+    const scrollX = useRef(new Animated.Value(ITEM_SIZE)).current;
+    const carouselRef = useRef(null);
+    const didCenterInitialCard = useRef(false);
+    const [cardImages, setCardImages] = useState({});
+    const [isCardsReady, setIsCardsReady] = useState(false);
+
+    useEffect(() => {
+        let mounted = true;
+
+        const loadCards = async () => {
+            try {
+                const map = (await getIcons()) || {};
+                const resolveIconUrl = (name) => {
+                    if (!name) return null;
+                    if (map?.[name]) return map[name];
+                    const lower = String(name).toLowerCase();
+                    const foundKey = Object.keys(map || {}).find((k) => String(k).toLowerCase() === lower);
+                    return foundKey ? map[foundKey] : null;
+                };
+
+                const nextImages = {
+                    '1': resolveIconUrl('card-1.png'),
+                    '2': resolveIconUrl('card-2.png'),
+                    '3': resolveIconUrl('card-3.png'),
+                };
+
+                const urls = Object.values(nextImages).filter(Boolean);
+                await Promise.allSettled(urls.map((uri) => Image.prefetch(uri)));
+
+                if (!mounted) return;
+                setCardImages(nextImages);
+                setIsCardsReady(true);
+            } catch (_) {
+                if (!mounted) return;
+                setCardImages({});
+                setIsCardsReady(true);
+            }
+        };
+
+        loadCards();
+
+        return () => {
+            mounted = false;
+        };
+    }, []);
+
+    const centerSecondCardOnOpen = () => {
+        if (didCenterInitialCard.current) return;
+        didCenterInitialCard.current = true;
+        requestAnimationFrame(() => {
+            carouselRef.current?.scrollToOffset?.({
+                offset: ITEM_SIZE,
+                animated: false,
+            });
+        });
+    };
 
     const renderItem = ({ item, index }) => {
         // Рендеримо пустишки по боках
@@ -113,6 +118,8 @@ export default function OnboardingScreen({ navigation }) {
             extrapolate: 'clamp',
         });
 
+        const cardImage = cardImages[item.key];
+
         return (
             // Контейнер, який займає повний крок (картка + відступи)
             <View style={{ width: ITEM_SIZE, alignItems: 'center', justifyContent: 'center' }}>
@@ -124,7 +131,15 @@ export default function OnboardingScreen({ navigation }) {
                             transform: [{ scale: scaleValue }],
                         }
                     ]}
-                />
+                >
+                    {isCardsReady && cardImage ? (
+                        <Animated.Image
+                            source={{ uri: cardImage }}
+                            style={[styles.cardImage, { opacity }]}
+                            resizeMode="cover"
+                        />
+                    ) : null}
+                </Animated.View>
             </View>
         );
     };
@@ -142,23 +157,31 @@ export default function OnboardingScreen({ navigation }) {
 
                     {/* КАРУСЕЛЬ */}
                     <View style={styles.carouselWrapper}>
-                        <Animated.FlatList
-                            data={DATA}
-                            keyExtractor={(item) => item.key}
-                            horizontal
-                            showsHorizontalScrollIndicator={false}
-                            contentContainerStyle={{ alignItems: 'center' }}
-                            snapToInterval={ITEM_SIZE}
-                            decelerationRate="fast"
-                            bounces={false}
-                            renderToHardwareTextureAndroid
-                            onScroll={Animated.event(
-                                [{ nativeEvent: { contentOffset: { x: scrollX } } }],
-                                { useNativeDriver: true }
-                            )}
-                            scrollEventThrottle={16}
-                            renderItem={renderItem}
-                        />
+                        {!isCardsReady ? (
+                            <View style={styles.carouselLoaderWrap}>
+                                <ActivityIndicator size="small" color="#F5D8CB" />
+                            </View>
+                        ) : (
+                            <Animated.FlatList
+                                ref={carouselRef}
+                                data={DATA}
+                                keyExtractor={(item) => item.key}
+                                horizontal
+                                showsHorizontalScrollIndicator={false}
+                                contentContainerStyle={{ alignItems: 'center' }}
+                                snapToInterval={ITEM_SIZE}
+                                decelerationRate="fast"
+                                bounces={false}
+                                renderToHardwareTextureAndroid
+                                onLayout={centerSecondCardOnOpen}
+                                onScroll={Animated.event(
+                                    [{ nativeEvent: { contentOffset: { x: scrollX } } }],
+                                    { useNativeDriver: true }
+                                )}
+                                scrollEventThrottle={16}
+                                renderItem={renderItem}
+                            />
+                        )}
                     </View>
 
                     {/* ТЕКСТ І КНОПКА */}
@@ -207,11 +230,22 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
     },
+    carouselLoaderWrap: {
+        width: '100%',
+        height: CARD_HEIGHT + scale(40),
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
     cardContainer: {
         width: CARD_WIDTH,
         height: CARD_HEIGHT,
         borderRadius: scale(30),
         backgroundColor: '#300C0A',
+        overflow: 'hidden',
+    },
+    cardImage: {
+        width: '100%',
+        height: '100%',
     },
     bottomSection: {
         alignItems: 'center',

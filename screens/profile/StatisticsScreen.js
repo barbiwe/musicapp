@@ -14,7 +14,15 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { SvgXml } from 'react-native-svg';
 
-import { getIcons, scale } from '../../api/api';
+import {
+    getIcons,
+    getTracks,
+    getTrackCoverUrl,
+    getTrackPlays,
+    getUserAvatarUrl,
+    resolveArtistName,
+    scale,
+} from '../../api/api';
 
 // --- КЕШ SVG ---
 const svgCache = {};
@@ -53,19 +61,86 @@ const ColoredSvg = ({ uri, width, height, color }) => {
     return <SvgXml xml={xml} width={width} height={height} />;
 };
 
-// --- ФЕЙКОВІ ДАНІ ---
-const mockData = {
-    'This week': {
-        topArtistName: 'Jessie Murph',
-        topSongName: 'Bad As The Rest',
-        artistImage: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQyXB8jW4oeqlSUmof4lCqdK_lHIn6Yc1VSxg&s',
-        listenCount: 12,
-        waveSongName: 'Come closer',
-        waveArtistName: 'Sombr',
-        waveImage: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQyXB8jW4oeqlSUmof4lCqdK_lHIn6Yc1VSxg&s'
-    },
-    'This month': null,
-    'This year': null
+const EMPTY_STATS = {
+    topArtistName: 'Unknown Artist',
+    topSongName: 'Unknown Song',
+    artistImage: null,
+    listenCount: 0,
+    waveSongName: 'Unknown Song',
+    waveArtistName: 'Unknown Artist',
+    waveImage: null,
+};
+
+const getTrackId = (track) =>
+    String(track?.id || track?._id || track?.trackId || track?.track?.id || '').trim();
+
+const pickRandomTrack = (tracks, used = new Set()) => {
+    if (!Array.isArray(tracks) || tracks.length === 0) return null;
+
+    const attempts = tracks.length * 2;
+    let i = 0;
+    while (i < attempts) {
+        const candidate = tracks[Math.floor(Math.random() * tracks.length)];
+        const key = getTrackId(candidate) || `${candidate?.title || ''}_${resolveArtistName(candidate)}`;
+        if (!used.has(key)) {
+            used.add(key);
+            return candidate;
+        }
+        i += 1;
+    }
+
+    return tracks[Math.floor(Math.random() * tracks.length)] || null;
+};
+
+const buildRandomStatsFromTracks = (tracks, playsMap = {}) => {
+    const safeTracks = Array.isArray(tracks)
+        ? tracks.filter((track) => !!getTrackId(track) || !!track?.title)
+        : [];
+
+    if (safeTracks.length === 0) {
+        return { ...EMPTY_STATS };
+    }
+
+    const usedTracks = new Set();
+    const topSongTrack = pickRandomTrack(safeTracks, usedTracks) || safeTracks[0];
+    const waveTrack = pickRandomTrack(safeTracks, usedTracks) || topSongTrack;
+
+    const uniqueArtists = [];
+    const seenArtists = new Set();
+    safeTracks.forEach((track) => {
+        const name = resolveArtistName(track, '').trim();
+        const ownerId = String(track?.ownerId || '').trim();
+        if (!name) return;
+        const artistKey = `${name.toLowerCase()}__${ownerId}`;
+        if (seenArtists.has(artistKey)) return;
+        seenArtists.add(artistKey);
+        uniqueArtists.push({
+            name,
+            ownerId,
+            fallbackCover: getTrackCoverUrl(track),
+        });
+    });
+
+    const topArtist =
+        uniqueArtists[Math.floor(Math.random() * uniqueArtists.length)] || {
+            name: resolveArtistName(topSongTrack, 'Unknown Artist'),
+            ownerId: String(topSongTrack?.ownerId || '').trim(),
+            fallbackCover: getTrackCoverUrl(topSongTrack),
+        };
+
+    const topSongId = getTrackId(topSongTrack);
+    const realPlays = Number(playsMap[topSongId] || 0);
+    const listenCount = realPlays > 0 ? realPlays : Math.floor(Math.random() * 40) + 6;
+
+    return {
+        topArtistName: topArtist?.name || 'Unknown Artist',
+        topSongName: topSongTrack?.title || 'Unknown Song',
+        artistImage: topArtist?.ownerId ? getUserAvatarUrl(topArtist.ownerId) : (topArtist?.fallbackCover || null),
+        listenCount,
+        waveSongName: waveTrack?.title || topSongTrack?.title || 'Unknown Song',
+        waveArtistName: resolveArtistName(waveTrack, 'Unknown Artist'),
+        waveImage: getTrackCoverUrl(waveTrack) || topArtist?.fallbackCover || null,
+    };
 };
 
 // --- КОМПОНЕНТ СУЦІЛЬНОГО DROPDOWN ---
@@ -117,21 +192,53 @@ const GlassDropdown = ({ selectedPeriod, isDropdownOpen, setIsDropdownOpen, peri
 export default function StatisticsScreen({ navigation }) {
     const [icons, setIcons] = useState({});
     const [isDropdownOpen, setIsDropdownOpen] = useState(false);
-    const [selectedPeriod, setSelectedPeriod] = useState(null);
+    const [selectedPeriod, setSelectedPeriod] = useState('This week');
+    const [statsMap, setStatsMap] = useState({});
     const [statsData, setStatsData] = useState(null);
 
     const periods = ['This week', 'This month', 'This year'];
 
     useEffect(() => {
-        loadIcons();
+        loadData();
     }, []);
 
-    const loadIcons = async () => {
+    const loadData = async () => {
         try {
-            const iconsData = await getIcons();
+            const [iconsData, tracksRaw] = await Promise.all([
+                getIcons(),
+                getTracks(),
+            ]);
+
             setIcons(iconsData || {});
-        } catch (e) {
-            console.error("Icons Load Error:", e);
+
+            const tracks = Array.isArray(tracksRaw) ? tracksRaw : [];
+            const sampleTracks = tracks.slice(0, 20);
+            const playsPairs = await Promise.all(
+                sampleTracks.map(async (track) => {
+                    const id = getTrackId(track);
+                    if (!id) return [id, 0];
+                    const plays = await getTrackPlays(id);
+                    return [id, Number.isFinite(plays) ? plays : 0];
+                })
+            );
+            const playsMap = Object.fromEntries((playsPairs || []).filter(([id]) => !!id));
+
+            const nextStatsMap = {
+                'This week': buildRandomStatsFromTracks(tracks, playsMap),
+                'This month': buildRandomStatsFromTracks(tracks, playsMap),
+                'This year': buildRandomStatsFromTracks(tracks, playsMap),
+            };
+
+            setStatsMap(nextStatsMap);
+            setStatsData(nextStatsMap['This week'] || { ...EMPTY_STATS });
+        } catch (_) {
+            const fallbackMap = {
+                'This week': { ...EMPTY_STATS },
+                'This month': { ...EMPTY_STATS },
+                'This year': { ...EMPTY_STATS },
+            };
+            setStatsMap(fallbackMap);
+            setStatsData(fallbackMap['This week']);
         }
     };
 
@@ -161,7 +268,7 @@ export default function StatisticsScreen({ navigation }) {
     const handleSelectPeriod = (period) => {
         setSelectedPeriod(period);
         setIsDropdownOpen(false);
-        setStatsData(mockData[period]);
+        setStatsData(statsMap[period] || { ...EMPTY_STATS });
     };
 
     return (
@@ -373,7 +480,7 @@ const styles = StyleSheet.create({
     periodTitle: {
         fontSize: scale(22),
         fontFamily: 'Unbounded-SemiBold',
-        color: '#FF4D4F',
+        color: '#F5D8CB',
         marginBottom: scale(15),
     },
 
@@ -409,13 +516,13 @@ const styles = StyleSheet.create({
     labelText: {
         fontSize: scale(12),
         fontFamily: 'Poppins-Regular',
-        color: '#FF4D4F',
+        color: 'rgba(245, 216, 203, 0.8)',
         marginBottom: scale(2),
     },
     valueText: {
         fontSize: scale(12),
         fontFamily: 'Unbounded-Regular',
-        color: '#FF4D4F',
+        color: '#F5D8CB',
     },
 
     /* Картка 2: Main Stats */
@@ -439,7 +546,7 @@ const styles = StyleSheet.create({
     listenCountText: {
         fontSize: scale(19),
         fontFamily: 'Unbounded-Regular',
-        color: '#FF4D4F',
+        color: '#F5D8CB',
         textAlign: 'center',
         marginBottom: scale(5),
     },
@@ -471,12 +578,12 @@ const styles = StyleSheet.create({
     waveSongTitle: {
         fontSize: scale(14),
         fontFamily: 'Unbounded-Regular',
-        color: '#FF4D4F',
+        color: '#F5D8CB',
         marginBottom: scale(2),
     },
     waveSongArtist: {
         fontSize: scale(10),
         fontFamily: 'Poppins-Light',
-        color: '#FF4D4F',
+        color: '#F5D8CB',
     },
 });

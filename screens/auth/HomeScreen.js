@@ -19,6 +19,7 @@ import * as WebBrowser from "expo-web-browser";
 import * as Google from "expo-auth-session/providers/google";
 // 👇 Імпорти API та утиліт
 import { registerUser, googleLogin, scale, getIcons } from "../../api/api";
+import { getGoogleAuthRequestConfig } from '../../config/googleAuthConfig';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -88,11 +89,9 @@ export default function RegisterScreen({ navigation }) {
     /* =========================
        GOOGLE AUTH CONFIG
     ========================= */
-    const [request, response, promptAsync] = Google.useIdTokenAuthRequest({
-        iosClientId: '651816373430-s2bjgg2rh5pjga66kuevbt3u8e6e56e6.apps.googleusercontent.com',
-        clientId: '651816373430-hjii65stgn3ei6q1lrfs4e0dm298j9gn.apps.googleusercontent.com',
-        redirectUri: 'com.googleusercontent.apps.651816373430-s2bjgg2rh5pjga66kuevbt3u8e6e56e6:/oauth2redirect/google'
-    });
+    const [request, response, promptAsync] = Google.useIdTokenAuthRequest(
+        getGoogleAuthRequestConfig()
+    );
 
     // 1. Завантаження іконок
     useEffect(() => {
@@ -233,6 +232,7 @@ export default function RegisterScreen({ navigation }) {
                                 {renderIcon('user.svg', 'U', { width: scale(20), height: scale(20) }, '#F5D8CB')}
                             </View>
                             <TextInput
+                            keyboardAppearance="dark"
                                 placeholder="Name"
                                 value={username}
                                 onChangeText={setUsername}
@@ -247,6 +247,7 @@ export default function RegisterScreen({ navigation }) {
                                 {renderIcon('email.svg', '@', { width: scale(24), height: scale(24) }, '#F5D8CB')}
                             </View>
                             <TextInput
+                            keyboardAppearance="dark"
                                 placeholder="Email"
                                 value={email}
                                 onChangeText={setEmail}
@@ -267,6 +268,7 @@ export default function RegisterScreen({ navigation }) {
                             </View>
 
                             <TextInput
+                            keyboardAppearance="dark"
                                 placeholder="Password"
                                 value={password}
                                 onChangeText={setPassword}
@@ -313,23 +315,22 @@ export default function RegisterScreen({ navigation }) {
                     <Text style={styles.or}>or continue with</Text>
 
                     <View style={styles.socialRow}>
-                        {/* GOOGLE BUTTON */}
                         <TouchableOpacity
-                            style={styles.socialButton}
+                            style={styles.googleWideButton}
                             onPress={() => {
-                                if (request) promptAsync();
+                                if (request) {
+                                    promptAsync(
+                                        Platform.OS === 'android'
+                                            ? { useProxy: false }
+                                            : undefined
+                                    );
+                                }
                             }}
                             disabled={!request}
+                            activeOpacity={0.85}
                         >
-                            {renderIcon('google.svg', 'G', { width: scale(24), height: scale(24) }, '#F5D8CB')}
-                        </TouchableOpacity>
-
-                        {/* DISCORD BUTTON */}
-                        <TouchableOpacity
-                            style={[styles.socialButton, styles.stubSocialButton]}
-                            onPress={() => Alert.alert("Discord", "Coming soon")}
-                        >
-                            {renderIcon('discord.svg', 'D', { width: scale(24), height: scale(24) }, '#FF4D4F')}
+                            {renderIcon('google.svg', 'G', { width: scale(22), height: scale(22) }, '#F5D8CB')}
+                            <Text style={styles.googleWideText}>Google</Text>
                         </TouchableOpacity>
                     </View>
 
@@ -442,19 +443,22 @@ const styles = StyleSheet.create({
         marginTop: scale(20),
         flexDirection: "row",
         justifyContent: "center",
-        gap: scale(20)
     },
-    socialButton: {
-        width: scale(48),
+    googleWideButton: {
+        width: scale(182),
         height: scale(48),
         borderRadius: scale(24),
         borderWidth: 1,
         borderColor: '#F5D8CB',
+        flexDirection: 'row',
+        gap: scale(10),
         alignItems: 'center',
         justifyContent: 'center'
     },
-    stubSocialButton: {
-        borderColor: '#FF4D4F',
+    googleWideText: {
+        color: '#F5D8CB',
+        fontFamily: 'Unbounded-Regular',
+        fontSize: scale(14),
     },
 
     /* FOOTER */

@@ -13,6 +13,7 @@ import {
     Alert,
     Linking,
     ActivityIndicator,
+    AppState,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SvgXml } from 'react-native-svg';
@@ -30,6 +31,7 @@ import {
 
 const { width, height } = Dimensions.get('window');
 const PENDING_PREMIUM_SESSION_KEY = 'pending_premium_session_id_v1';
+const PREMIUM_BANNER_INVALIDATE_KEY = 'premium_banner_invalidate_v1';
 
 // 1. КЕШ ТА РЕНДЕР SVG
 const svgCache = {};
@@ -74,7 +76,9 @@ export default function ProScreen({ navigation }) {
     const [buying, setBuying] = useState(false);
     const [confirmingPayment, setConfirmingPayment] = useState(false);
     const [isPremium, setIsPremium] = useState(false);
+    const hasLoadedOnceRef = useRef(false);
     const handledSessionIdsRef = useRef(new Set());
+    const appStateRef = useRef(AppState.currentState);
     const premiumLog = (...args) => {
         console.log('[PREMIUM]', ...args);
     };
@@ -97,9 +101,11 @@ export default function ProScreen({ navigation }) {
             ]);
             setIcons(loadedIcons || {});
             setIsPremium(!!premium);
+            hasLoadedOnceRef.current = true;
             premiumLog('loadData:done', { premium: !!premium, icons: Object.keys(loadedIcons || {}).length });
         } catch (e) {
             console.log("Error loading icons:", e);
+            hasLoadedOnceRef.current = false;
             premiumLog('loadData:error', String(e?.message || e));
         }
     }, []);
@@ -159,7 +165,6 @@ export default function ProScreen({ navigation }) {
             const confirmRes = await confirmPremiumCheckout(sessionId);
             if (confirmRes?.error) {
                 premiumLog('confirmSessionIfNeeded:confirmPremiumCheckout:error', confirmRes.error);
-                Alert.alert('Payment status', stringifyError(confirmRes.error));
                 return;
             }
             premiumLog('confirmSessionIfNeeded:confirmPremiumCheckout:ok');
@@ -168,7 +173,6 @@ export default function ProScreen({ navigation }) {
             const refreshRes = await refreshUserToken();
             if (refreshRes?.error) {
                 premiumLog('confirmSessionIfNeeded:refreshUserToken:error', refreshRes.error);
-                Alert.alert('Payment status', 'Payment confirmed. Please re-login to refresh Premium role.');
                 return;
             }
             premiumLog('confirmSessionIfNeeded:refreshUserToken:ok', {
@@ -176,11 +180,10 @@ export default function ProScreen({ navigation }) {
             });
 
             await loadData();
+            await AsyncStorage.setItem(PREMIUM_BANNER_INVALIDATE_KEY, String(Date.now()));
             premiumLog('confirmSessionIfNeeded:loadData:done');
-            Alert.alert('Success', 'Premium is now active.');
         } catch (err) {
             premiumLog('confirmSessionIfNeeded:exception', String(err?.message || err));
-            Alert.alert('Payment status', 'Payment confirmed, but role refresh failed. Please re-login.');
         } finally {
             setConfirmingPayment(false);
             premiumLog('confirmSessionIfNeeded:finish');
@@ -210,6 +213,7 @@ export default function ProScreen({ navigation }) {
             });
 
             await loadData();
+            await AsyncStorage.setItem(PREMIUM_BANNER_INVALIDATE_KEY, String(Date.now()));
             await AsyncStorage.removeItem(PENDING_PREMIUM_SESSION_KEY);
             premiumLog('confirmPendingSessionIfNeeded:done');
         } catch (err) {
@@ -220,11 +224,31 @@ export default function ProScreen({ navigation }) {
     }, [loadData]);
 
     useEffect(() => {
-        if (isFocused) {
+        if (!isFocused) return;
+
+        if (!hasLoadedOnceRef.current) {
             loadData({ forceRefresh: true });
-            void confirmPendingSessionIfNeeded();
         }
+        void confirmPendingSessionIfNeeded();
     }, [isFocused, loadData, confirmPendingSessionIfNeeded]);
+
+    useEffect(() => {
+        const subscription = AppState.addEventListener('change', (nextState) => {
+            const prevState = appStateRef.current;
+            appStateRef.current = nextState;
+            const cameToForeground =
+                (prevState === 'background' || prevState === 'inactive') && nextState === 'active';
+
+            if (cameToForeground) {
+                premiumLog('appState:foreground -> confirmPendingSessionIfNeeded');
+                void confirmPendingSessionIfNeeded();
+            }
+        });
+
+        return () => {
+            subscription?.remove?.();
+        };
+    }, [confirmPendingSessionIfNeeded]);
 
     useEffect(() => {
         let mounted = true;
@@ -281,10 +305,6 @@ export default function ProScreen({ navigation }) {
 
             await Linking.openURL(res.url);
             premiumLog('handleBuyPremium:openURL:done');
-            Alert.alert(
-                'Checkout opened',
-                'After payment, return to app. Premium will be activated automatically.'
-            );
         } catch (err) {
             premiumLog('handleBuyPremium:exception', String(err?.message || err));
             Alert.alert('Payment error', 'Failed to start checkout.');

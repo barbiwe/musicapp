@@ -33,9 +33,12 @@ export default function RequestScreen({ navigation }) {
     }, []);
 
     const requestBackgroundUrl =
-        icons['request.png'] ||
-        icons['request.jpg'] ||
-        icons['request.jpeg'] ||
+        icons['artist-img.png'] ||
+        icons['artist-img.jpg'] ||
+        icons['artist-img.jpeg'] ||
+        icons['artistimg.png'] ||
+        icons['artistimg.jpg'] ||
+        icons['artistimg.jpeg'] ||
         null;
 
     const Content = (

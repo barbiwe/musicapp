@@ -102,6 +102,7 @@ export default function ConfirmEmailScreen({ navigation, route }) {
                     <View style={styles.codeRow}>
                         {digits.map((digit, index) => (
                             <TextInput
+                            keyboardAppearance="dark"
                                 key={`${index}`}
                                 ref={(el) => { inputsRef.current[index] = el; }}
                                 style={styles.codeInput}

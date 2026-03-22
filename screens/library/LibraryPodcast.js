@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
     View,
     Text,
@@ -19,6 +19,7 @@ import {
 } from '../../api/api';
 
 const { width, height } = Dimensions.get('window');
+let libraryPodcastSessionCache = null;
 
 const normalizePodcast = (item) => {
     const id = String(item?.id ?? item?._id ?? item?.podcastId ?? '').trim();
@@ -40,16 +41,25 @@ const normalizePodcast = (item) => {
 
 export default function LibraryPodcast({ navigation }) {
     const isFocused = useIsFocused();
-    const [loading, setLoading] = useState(true);
-    const [podcasts, setPodcasts] = useState([]);
+    const hasLoadedOnceRef = useRef(Boolean(libraryPodcastSessionCache));
+    const [loading, setLoading] = useState(!libraryPodcastSessionCache);
+    const [podcasts, setPodcasts] = useState(() => libraryPodcastSessionCache?.podcasts || []);
 
     useEffect(() => {
-        if (isFocused) {
-            loadPodcasts();
-        }
+        if (!isFocused) return;
+        if (hasLoadedOnceRef.current) return;
+        hasLoadedOnceRef.current = true;
+        loadPodcasts({ force: false });
     }, [isFocused]);
 
-    const loadPodcasts = async () => {
+    const loadPodcasts = async ({ force = false } = {}) => {
+        if (!force && libraryPodcastSessionCache) {
+            setPodcasts(libraryPodcastSessionCache.podcasts || []);
+            setLoading(false);
+            hasLoadedOnceRef.current = true;
+            return;
+        }
+
         setLoading(true);
 
         try {
@@ -76,8 +86,11 @@ export default function LibraryPodcast({ navigation }) {
             const likedPodcasts = all.filter((podcast) => likedIds.has(podcast.id));
 
             setPodcasts(likedPodcasts);
+            libraryPodcastSessionCache = { podcasts: likedPodcasts };
         } catch (_) {
+            hasLoadedOnceRef.current = false;
             setPodcasts([]);
+            libraryPodcastSessionCache = { podcasts: [] };
         } finally {
             setLoading(false);
         }

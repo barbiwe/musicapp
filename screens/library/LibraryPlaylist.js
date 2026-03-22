@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
     View,
     Text,
@@ -71,21 +71,35 @@ const getCoverUri = (playlist, tracks) => {
     return firstTrack ? getTrackCoverUrl(firstTrack) : null;
 };
 
+let libraryPlaylistSessionCache = null;
+
 export default function LibraryPlaylist({ navigation }) {
     const isFocused = useIsFocused();
-    const [loading, setLoading] = useState(true);
-    const [playlists, setPlaylists] = useState([]);
+    const hasLoadedOnceRef = useRef(Boolean(libraryPlaylistSessionCache));
+    const [loading, setLoading] = useState(!libraryPlaylistSessionCache);
+    const [playlists, setPlaylists] = useState(() => libraryPlaylistSessionCache?.playlists || []);
     const [failedPrimaryCovers, setFailedPrimaryCovers] = useState({});
     const [brokenCovers, setBrokenCovers] = useState({});
-    const [userToken, setUserToken] = useState(null);
+    const [userToken, setUserToken] = useState(() => libraryPlaylistSessionCache?.userToken || null);
 
     useEffect(() => {
-        if (isFocused) {
-            loadPlaylists();
-        }
+        if (!isFocused) return;
+        if (hasLoadedOnceRef.current) return;
+        hasLoadedOnceRef.current = true;
+        loadPlaylists({ force: false });
     }, [isFocused]);
 
-    const loadPlaylists = async () => {
+    const loadPlaylists = async ({ force = false } = {}) => {
+        if (!force && libraryPlaylistSessionCache) {
+            setPlaylists(libraryPlaylistSessionCache.playlists || []);
+            setUserToken(libraryPlaylistSessionCache.userToken || null);
+            setFailedPrimaryCovers({});
+            setBrokenCovers({});
+            setLoading(false);
+            hasLoadedOnceRef.current = true;
+            return;
+        }
+
         setLoading(true);
         try {
             const [raw, token] = await Promise.all([
@@ -114,8 +128,17 @@ export default function LibraryPlaylist({ navigation }) {
             setUserToken(token || null);
             setFailedPrimaryCovers({});
             setBrokenCovers({});
+            libraryPlaylistSessionCache = {
+                playlists: list,
+                userToken: token || null,
+            };
         } catch (_) {
+            hasLoadedOnceRef.current = false;
             setPlaylists([]);
+            libraryPlaylistSessionCache = {
+                playlists: [],
+                userToken: null,
+            };
         } finally {
             setLoading(false);
         }

@@ -1,0 +1,631 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+    ActivityIndicator,
+    Alert,
+    Image,
+    Modal,
+    Pressable,
+    ScrollView,
+    StatusBar,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
+} from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as ImagePicker from 'expo-image-picker';
+import { LinearGradient } from 'expo-linear-gradient';
+
+import {
+    changeAvatar,
+    getGenres,
+    getIcons,
+    getPodcastGenres,
+    getUserAvatarUrl,
+    scale,
+} from '../../api/api';
+import RemoteTintIcon from '../../components/RemoteTintIcon';
+
+const STORAGE_KEYS = {
+    username: 'username',
+    userId: 'userId',
+    musicGenres: 'profile_music_genres_v1',
+    podcastGenres: 'profile_podcast_genres_v1',
+    favoriteGenreNames: 'favoriteGenreNames',
+};
+
+const normalizeGenre = (item, index = 0) => {
+    if (typeof item === 'string') {
+        const name = item.trim();
+        if (!name) return null;
+        return { id: name.toLowerCase(), name };
+    }
+
+    if (!item || typeof item !== 'object') return null;
+
+    const rawId =
+        item.id ??
+        item.Id ??
+        item.genreId ??
+        item.GenreId ??
+        item.slug ??
+        item.Slug ??
+        `${index}`;
+    const rawName =
+        item.name ??
+        item.Name ??
+        item.title ??
+        item.Title ??
+        item.label ??
+        item.Label ??
+        '';
+
+    const name = String(rawName || '').trim();
+    if (!name) return null;
+    const id = String(rawId || name).trim().toLowerCase();
+    return { id, name };
+};
+
+const parseStoredArray = async (key) => {
+    try {
+        const raw = await AsyncStorage.getItem(key);
+        if (!raw) return [];
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed.map((v) => String(v || '').trim()).filter(Boolean) : [];
+    } catch (_) {
+        return [];
+    }
+};
+
+const toUnique = (arr) => {
+    const seen = new Set();
+    return arr.filter((item) => {
+        const key = String(item || '').trim().toLowerCase();
+        if (!key || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
+};
+
+export default function EditProfileScreen({ navigation }) {
+    const [loading, setLoading] = useState(true);
+    const [savingAvatar, setSavingAvatar] = useState(false);
+    const [icons, setIcons] = useState({});
+    const [username, setUsername] = useState('');
+    const [avatarUri, setAvatarUri] = useState(null);
+    const [musicGenres, setMusicGenres] = useState([]);
+    const [podcastGenres, setPodcastGenres] = useState([]);
+    const [allMusicGenres, setAllMusicGenres] = useState([]);
+    const [allPodcastGenres, setAllPodcastGenres] = useState([]);
+    const [pickerVisible, setPickerVisible] = useState(false);
+    const [pickerType, setPickerType] = useState('music');
+
+    useEffect(() => {
+        const load = async () => {
+            setLoading(true);
+            try {
+                const [iconsMap, tracksGenresRaw, podcastsGenresRaw, storedName, storedUserId] = await Promise.all([
+                    getIcons(),
+                    getGenres(),
+                    getPodcastGenres(),
+                    AsyncStorage.getItem(STORAGE_KEYS.username),
+                    AsyncStorage.getItem(STORAGE_KEYS.userId),
+                ]);
+
+                const normalizedTrackGenres = (Array.isArray(tracksGenresRaw) ? tracksGenresRaw : [])
+                    .map((item, index) => normalizeGenre(item, index))
+                    .filter(Boolean);
+                const normalizedPodcastGenres = (Array.isArray(podcastsGenresRaw) ? podcastsGenresRaw : [])
+                    .map((item, index) => normalizeGenre(item, index))
+                    .filter(Boolean);
+
+                const savedMusic = await parseStoredArray(STORAGE_KEYS.musicGenres);
+                const savedPodcast = await parseStoredArray(STORAGE_KEYS.podcastGenres);
+                const favoriteFromOnboarding = await parseStoredArray(STORAGE_KEYS.favoriteGenreNames);
+
+                const initialMusic = toUnique(savedMusic.length ? savedMusic : favoriteFromOnboarding);
+                const initialPodcast = toUnique(savedPodcast);
+
+                setIcons(iconsMap || {});
+                setAllMusicGenres(normalizedTrackGenres);
+                setAllPodcastGenres(normalizedPodcastGenres);
+                setMusicGenres(initialMusic);
+                setPodcastGenres(initialPodcast);
+                setUsername(String(storedName || ''));
+                if (storedUserId) {
+                    setAvatarUri(`${getUserAvatarUrl(storedUserId)}?t=${Date.now()}`);
+                } else {
+                    setAvatarUri(null);
+                }
+            } catch (_) {
+                // keep screen usable with local defaults
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        load();
+    }, []);
+
+    useEffect(() => {
+        AsyncStorage.setItem(STORAGE_KEYS.musicGenres, JSON.stringify(musicGenres)).catch(() => {});
+    }, [musicGenres]);
+
+    useEffect(() => {
+        AsyncStorage.setItem(STORAGE_KEYS.podcastGenres, JSON.stringify(podcastGenres)).catch(() => {});
+    }, [podcastGenres]);
+
+    const resolveIconName = (name) => {
+        if (!name) return '';
+        if (icons?.[name]) return name;
+        const lower = String(name).toLowerCase();
+        const found = Object.keys(icons || {}).find((key) => String(key).toLowerCase() === lower);
+        return found || name;
+    };
+
+    const renderIcon = (iconName, width, height, color = '#F5D8CB', fallback = '') => (
+        <RemoteTintIcon
+            icons={icons}
+            iconName={resolveIconName(iconName)}
+            width={width}
+            height={height}
+            color={color}
+            fallback={fallback}
+        />
+    );
+
+    const availableMusic = useMemo(() => {
+        const selected = new Set(musicGenres.map((g) => g.toLowerCase()));
+        return allMusicGenres.filter((g) => !selected.has(g.name.toLowerCase()));
+    }, [allMusicGenres, musicGenres]);
+
+    const availablePodcast = useMemo(() => {
+        const selected = new Set(podcastGenres.map((g) => g.toLowerCase()));
+        return allPodcastGenres.filter((g) => !selected.has(g.name.toLowerCase()));
+    }, [allPodcastGenres, podcastGenres]);
+
+    const saveUsername = async (value) => {
+        const safe = String(value || '').trim();
+        const finalName = safe || 'User';
+        setUsername(finalName);
+        await AsyncStorage.setItem(STORAGE_KEYS.username, finalName);
+    };
+
+    const pickAvatar = async () => {
+        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (status !== 'granted') {
+            Alert.alert('Permission denied', 'Need access to gallery');
+            return;
+        }
+
+        const result = await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+            allowsEditing: true,
+            aspect: [1, 1],
+            quality: 0.8,
+        });
+
+        if (result.canceled || !result.assets?.[0]?.uri) return;
+        const uri = result.assets[0].uri;
+        setAvatarUri(uri);
+        setSavingAvatar(true);
+        try {
+            const res = await changeAvatar(uri);
+            if (res?.error) {
+                Alert.alert('Error', 'Avatar upload failed');
+                return;
+            }
+            const userId = await AsyncStorage.getItem(STORAGE_KEYS.userId);
+            if (userId) setAvatarUri(`${getUserAvatarUrl(userId)}?t=${Date.now()}`);
+        } catch (_) {
+            Alert.alert('Error', 'Avatar upload failed');
+        } finally {
+            setSavingAvatar(false);
+        }
+    };
+
+    const openGenrePicker = (type) => {
+        setPickerType(type);
+        setPickerVisible(true);
+    };
+
+    const onAddGenre = (name) => {
+        if (!name) return;
+        if (pickerType === 'music') {
+            setMusicGenres((prev) => toUnique([...prev, name]));
+        } else {
+            setPodcastGenres((prev) => toUnique([...prev, name]));
+        }
+        setPickerVisible(false);
+    };
+
+    const onRemoveGenre = (type, name) => {
+        if (!name) return;
+        if (type === 'music') {
+            setMusicGenres((prev) => prev.filter((g) => g.toLowerCase() !== name.toLowerCase()));
+        } else {
+            setPodcastGenres((prev) => prev.filter((g) => g.toLowerCase() !== name.toLowerCase()));
+        }
+    };
+
+    const currentPickerList = pickerType === 'music' ? availableMusic : availablePodcast;
+
+    if (loading) {
+        return (
+            <LinearGradient
+                colors={['#9A4B39', '#80291E', '#190707']}
+                locations={[0, 0.2, 0.59]}
+                start={{ x: 1, y: 0 }}
+                end={{ x: 0.5, y: 1 }}
+                style={styles.gradient}
+            >
+                <View style={styles.loadingWrap}>
+                    <ActivityIndicator color="#F5D8CB" />
+                </View>
+            </LinearGradient>
+        );
+    }
+
+    return (
+        <LinearGradient
+            colors={['#9A4B39', '#80291E', '#190707']}
+            locations={[0, 0.2, 0.59]}
+            start={{ x: 1, y: 0 }}
+            end={{ x: 0.5, y: 1 }}
+            style={styles.gradient}
+        >
+            <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
+            <View style={styles.container}>
+                <View style={styles.header}>
+                    <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+                        {renderIcon('arrow-left.svg', scale(24), scale(24), '#F5D8CB', '<')}
+                    </TouchableOpacity>
+                    <Text style={styles.headerTitle}>Edit Profile</Text>
+                    <View style={styles.headerRight} />
+                </View>
+
+                <ScrollView
+                    showsVerticalScrollIndicator={false}
+                    contentContainerStyle={styles.scrollContent}
+                    keyboardShouldPersistTaps="handled"
+                >
+                    <View style={styles.avatarWrap}>
+                        <View style={styles.avatarMainWrap}>
+                            {avatarUri ? (
+                                <Image source={{ uri: avatarUri }} style={styles.avatar} />
+                            ) : (
+                                <View style={[styles.avatar, styles.avatarPlaceholder]}>
+                                    <Text style={styles.avatarPlaceholderText}>
+                                        {(username || 'U').charAt(0).toUpperCase()}
+                                    </Text>
+                                </View>
+                            )}
+
+                            <TouchableOpacity style={styles.avatarEditBtn} activeOpacity={0.85} onPress={pickAvatar}>
+                                {savingAvatar ? (
+                                    <ActivityIndicator size="small" color="#F5D8CB" />
+                                ) : (
+                                    renderIcon('edit.svg', scale(18), scale(18), '#F5D8CB', '✎')
+                                )}
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+
+                    <View style={styles.inputCapsule}>
+                        <View style={styles.inputIconCircle}>
+                            {renderIcon('user.svg', scale(24), scale(24), '#F5D8CB', '👤')}
+                        </View>
+                        <TextInput
+                            value={username}
+                            onChangeText={setUsername}
+                            onBlur={() => saveUsername(username)}
+                            placeholder="Your nick"
+                            placeholderTextColor="rgba(245,216,203,0.55)"
+                            style={styles.input}
+                            selectionColor="#F5D8CB"
+                            autoCapitalize="none"
+                        />
+                    </View>
+
+                    <View style={styles.sectionHeader}>
+                        <Text style={styles.sectionTitle}>Music genres</Text>
+                        <TouchableOpacity onPress={() => openGenrePicker('music')} activeOpacity={0.8}>
+                            {renderIcon('libplus.svg', scale(26), scale(26), '#F5D8CB', '+')}
+                        </TouchableOpacity>
+                    </View>
+
+                    <View style={styles.chipsRow}>
+                        {musicGenres.map((genre) => (
+                            <View key={`music-${genre}`} style={styles.chip}>
+                                <Text style={styles.chipText} numberOfLines={1}>{genre}</Text>
+                                <TouchableOpacity onPress={() => onRemoveGenre('music', genre)} style={styles.chipCloseBtn}>
+                                    <View style={styles.chipCloseIcon}>
+                                        <View style={[styles.chipCloseLine, styles.chipCloseLineA]} />
+                                        <View style={[styles.chipCloseLine, styles.chipCloseLineB]} />
+                                    </View>
+                                </TouchableOpacity>
+                            </View>
+                        ))}
+                    </View>
+
+                    <View style={styles.sectionHeader}>
+                        <Text style={styles.sectionTitle}>Podcast genres</Text>
+                        <TouchableOpacity onPress={() => openGenrePicker('podcast')} activeOpacity={0.8}>
+                            {renderIcon('libplus.svg', scale(26), scale(26), '#F5D8CB', '+')}
+                        </TouchableOpacity>
+                    </View>
+
+                    <View style={styles.chipsRow}>
+                        {podcastGenres.map((genre) => (
+                            <View key={`podcast-${genre}`} style={styles.chip}>
+                                <Text style={styles.chipText} numberOfLines={1}>{genre}</Text>
+                                <TouchableOpacity onPress={() => onRemoveGenre('podcast', genre)} style={styles.chipCloseBtn}>
+                                    <View style={styles.chipCloseIcon}>
+                                        <View style={[styles.chipCloseLine, styles.chipCloseLineA]} />
+                                        <View style={[styles.chipCloseLine, styles.chipCloseLineB]} />
+                                    </View>
+                                </TouchableOpacity>
+                            </View>
+                        ))}
+                    </View>
+
+                    <TouchableOpacity
+                        style={styles.deleteBtn}
+                        onPress={() => Alert.alert('Delete Account', 'Account delete endpoint is not connected yet.')}
+                        activeOpacity={0.8}
+                    >
+                        <Text style={styles.deleteText}>Delete Account</Text>
+                    </TouchableOpacity>
+
+                    <View style={{ height: scale(40) }} />
+                </ScrollView>
+            </View>
+
+            <Modal
+                visible={pickerVisible}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setPickerVisible(false)}
+            >
+                <Pressable style={styles.modalOverlay} onPress={() => setPickerVisible(false)}>
+                    <Pressable style={styles.pickerCard} onPress={() => {}}>
+                        <Text style={styles.pickerTitle}>
+                            {pickerType === 'music' ? 'Select music genre' : 'Select podcast genre'}
+                        </Text>
+                        <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: scale(320) }}>
+                            {currentPickerList.length === 0 ? (
+                                <Text style={styles.pickerEmpty}>No genres left</Text>
+                            ) : (
+                                currentPickerList.map((item) => (
+                                    <TouchableOpacity
+                                        key={`${pickerType}-${item.id}`}
+                                        style={styles.pickerRow}
+                                        onPress={() => onAddGenre(item.name)}
+                                        activeOpacity={0.85}
+                                    >
+                                        <Text style={styles.pickerRowText}>{item.name}</Text>
+                                    </TouchableOpacity>
+                                ))
+                            )}
+                        </ScrollView>
+                    </Pressable>
+                </Pressable>
+            </Modal>
+        </LinearGradient>
+    );
+}
+
+const styles = StyleSheet.create({
+    gradient: {
+        flex: 1,
+    },
+    container: {
+        flex: 1,
+        paddingTop: scale(56),
+    },
+    loadingWrap: {
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    header: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingHorizontal: scale(20),
+        marginTop: scale(6),
+        marginBottom: scale(10),
+    },
+    backButton: {
+        width: scale(24),
+        height: scale(24),
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    headerTitle: {
+        color: '#F5D8CB',
+        fontFamily: 'Unbounded-SemiBold',
+        fontSize: scale(16),
+    },
+    headerRight: {
+        width: scale(24),
+        height: scale(24),
+    },
+    scrollContent: {
+        paddingHorizontal: scale(16),
+        paddingBottom: scale(16),
+    },
+    avatarWrap: {
+        alignItems: 'center',
+        marginTop: scale(10),
+        marginBottom: scale(18),
+    },
+    avatarMainWrap: {
+        position: 'relative',
+    },
+    avatar: {
+        width: scale(144),
+        height: scale(144),
+        borderRadius: scale(72),
+        backgroundColor: 'rgba(30, 10, 8, 0.9)',
+    },
+    avatarPlaceholder: {
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    avatarPlaceholderText: {
+        color: '#F5D8CB',
+        fontFamily: 'Unbounded-SemiBold',
+        fontSize: scale(36),
+    },
+    avatarEditBtn: {
+        position: 'absolute',
+        right: scale(-2),
+        bottom: scale(-2),
+        width: scale(40),
+        height: scale(40),
+        borderRadius: scale(20),
+        backgroundColor: 'rgba(48, 12, 10, 1)',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    inputCapsule: {
+        height: scale(60),
+        borderRadius: scale(30),
+        borderWidth: 1,
+        borderColor: '#F5D8CB',
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingRight: scale(16),
+        marginBottom: scale(22),
+    },
+    inputIconCircle: {
+        width: scale(60),
+        height: scale(60),
+        borderRadius: scale(30),
+        borderWidth: 1,
+        borderColor: '#F5D8CB',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginRight: scale(10),
+        marginLeft: scale(-1),
+    },
+    input: {
+        flex: 1,
+        color: '#F5D8CB',
+        fontFamily: 'Poppins-Regular',
+        fontSize: scale(14),
+        paddingVertical: 0,
+    },
+    sectionHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: scale(12),
+        marginTop: scale(4),
+    },
+    sectionTitle: {
+        color: '#F5D8CB',
+        fontFamily: 'Unbounded-SemiBold',
+        fontSize: scale(15),
+    },
+    chipsRow: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        justifyContent: 'space-between',
+        marginBottom: scale(14),
+    },
+    chip: {
+        width: '48%',
+        minHeight: scale(40),
+        borderRadius: scale(20),
+        borderWidth: 1,
+        borderColor: 'rgba(245,216,203,0.55)',
+        backgroundColor: 'rgba(48, 12, 10, 0.35)',
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: scale(12),
+        marginBottom: scale(10),
+    },
+    chipText: {
+        flex: 1,
+        color: '#F5D8CB',
+        fontFamily: 'Poppins-Regular',
+        fontSize: scale(12.5),
+        marginRight: scale(8),
+    },
+    chipCloseBtn: {
+        width: scale(18),
+        height: scale(18),
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    chipCloseIcon: {
+        width: scale(12),
+        height: scale(12),
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    chipCloseLine: {
+        position: 'absolute',
+        width: scale(10),
+        height: 1.5,
+        borderRadius: 1,
+        backgroundColor: '#F5D8CB',
+    },
+    chipCloseLineA: {
+        transform: [{ rotate: '45deg' }],
+    },
+    chipCloseLineB: {
+        transform: [{ rotate: '-45deg' }],
+    },
+    deleteBtn: {
+        alignSelf: 'center',
+        marginTop: scale(52),
+    },
+    deleteText: {
+        color: 'rgba(245,216,203,0.45)',
+        fontFamily: 'Poppins-Regular',
+        fontSize: scale(13),
+    },
+    modalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.45)',
+        justifyContent: 'flex-end',
+    },
+    pickerCard: {
+        borderTopLeftRadius: scale(22),
+        borderTopRightRadius: scale(22),
+        borderWidth: 1,
+        borderColor: 'rgba(245,216,203,0.25)',
+        backgroundColor: 'rgba(38, 13, 11, 0.98)',
+        paddingHorizontal: scale(16),
+        paddingTop: scale(14),
+        paddingBottom: scale(22),
+    },
+    pickerTitle: {
+        color: '#F5D8CB',
+        fontFamily: 'Unbounded-SemiBold',
+        fontSize: scale(13),
+        marginBottom: scale(10),
+    },
+    pickerEmpty: {
+        color: 'rgba(245,216,203,0.8)',
+        fontFamily: 'Poppins-Regular',
+        fontSize: scale(12),
+        paddingVertical: scale(16),
+        textAlign: 'center',
+    },
+    pickerRow: {
+        minHeight: scale(38),
+        justifyContent: 'center',
+        borderBottomWidth: 1,
+        borderBottomColor: 'rgba(245,216,203,0.15)',
+    },
+    pickerRowText: {
+        color: '#F5D8CB',
+        fontFamily: 'Poppins-Regular',
+        fontSize: scale(13),
+    },
+});

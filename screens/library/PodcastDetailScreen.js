@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     View,
     Text,
@@ -11,12 +11,12 @@ import {
     Dimensions,
     StatusBar,
     Platform,
-    Share,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SvgXml } from 'react-native-svg';
 import { useFocusEffect } from '@react-navigation/native';
 import MiniPlayer from '../../components/MiniPlayer';
+import ShareSheetModal from '../../components/ShareSheetModal';
 import { usePlayerStore } from '../../store/usePlayerStore';
 import {
     getPodcastById,
@@ -36,6 +36,7 @@ import {
 import { readPodcastProgressForPodcast } from '../../store/podcastProgressStorage';
 
 const { height } = Dimensions.get('window');
+const podcastDetailSessionCache = new Map();
 
 const getEntityId = (item) =>
     String(item?.id || item?._id || item?.podcastId || item?.episodeId || '').trim();
@@ -156,6 +157,15 @@ export default function PodcastDetailScreen({ route, navigation }) {
     const [progressByEpisodeId, setProgressByEpisodeId] = useState({});
     const [isLiked, setIsLiked] = useState(false);
     const [loading, setLoading] = useState(true);
+    const [shareVisible, setShareVisible] = useState(false);
+    const hasLoadedOnceRef = useRef(false);
+    const cacheKey = String(podcastId || '').trim();
+
+    const updateCache = useCallback((patch) => {
+        if (!cacheKey) return;
+        const prev = podcastDetailSessionCache.get(cacheKey) || {};
+        podcastDetailSessionCache.set(cacheKey, { ...prev, ...patch });
+    }, [cacheKey]);
 
     const loadProgressOnly = useCallback(async () => {
         if (!podcastId) {
@@ -163,11 +173,14 @@ export default function PodcastDetailScreen({ route, navigation }) {
             return;
         }
         const progress = await readPodcastProgressForPodcast(podcastId);
-        setProgressByEpisodeId(progress || {});
-    }, [podcastId]);
+        const nextProgress = progress || {};
+        setProgressByEpisodeId(nextProgress);
+        updateCache({ progressByEpisodeId: nextProgress });
+    }, [podcastId, updateCache]);
 
     useEffect(() => {
-        loadData();
+        hasLoadedOnceRef.current = false;
+        loadData({ force: false });
     }, [podcastId]);
 
     useFocusEffect(
@@ -176,7 +189,31 @@ export default function PodcastDetailScreen({ route, navigation }) {
         }, [loadProgressOnly])
     );
 
-    const loadData = async () => {
+    const hydrateFromCache = useCallback((cached) => {
+        if (!cached) return false;
+        setIcons(cached.icons || {});
+        setPodcast(cached.podcast || null);
+        setEpisodes(Array.isArray(cached.episodes) ? cached.episodes : []);
+        setProgressByEpisodeId(cached.progressByEpisodeId || {});
+        setIsLiked(Boolean(cached.isLiked));
+        return true;
+    }, []);
+
+    const loadData = async ({ force = false } = {}) => {
+        if (!podcastId) {
+            setLoading(false);
+            return;
+        }
+
+        if (!force) {
+            const cached = podcastDetailSessionCache.get(cacheKey);
+            if (hydrateFromCache(cached)) {
+                hasLoadedOnceRef.current = true;
+                setLoading(false);
+                return;
+            }
+        }
+
         setLoading(true);
 
         try {
@@ -193,11 +230,21 @@ export default function PodcastDetailScreen({ route, navigation }) {
             setEpisodes(Array.isArray(episodesData) ? episodesData : []);
             setProgressByEpisodeId(progressMap || {});
             setIsLiked(Boolean(liked));
+            updateCache({
+                icons: iconsMap || {},
+                podcast: podcastData || null,
+                episodes: Array.isArray(episodesData) ? episodesData : [],
+                progressByEpisodeId: progressMap || {},
+                isLiked: Boolean(liked),
+            });
+            hasLoadedOnceRef.current = true;
         } catch (_) {
             setPodcast(null);
             setEpisodes([]);
             setProgressByEpisodeId({});
             setIsLiked(false);
+            podcastDetailSessionCache.delete(cacheKey);
+            hasLoadedOnceRef.current = false;
         } finally {
             setLoading(false);
         }
@@ -422,34 +469,19 @@ export default function PodcastDetailScreen({ route, navigation }) {
 
     const handleLikeToggle = async () => {
         const prev = isLiked;
-        setIsLiked(!prev);
+        const next = !prev;
+        setIsLiked(next);
+        updateCache({ isLiked: next });
 
         const result = prev ? await unlikePodcast(podcastId) : await likePodcast(podcastId);
         if (result?.error) {
             setIsLiked(prev);
-        }
-    };
-
-    const handleShare = async () => {
-        try {
-            const title = String(podcast?.title || routePodcast?.title || 'Podcast').trim();
-            const audioUrl = getPodcastAudioUrl(podcast || routePodcast);
-            const message = audioUrl ? `${title}\n${audioUrl}` : title;
-            await Share.share({ message });
-        } catch (_) {
-            // ignore
+            updateCache({ isLiked: prev });
         }
     };
 
     const openMore = () => {
-        Alert.alert(
-            'More',
-            '',
-            [
-                { text: 'Share', onPress: handleShare },
-                { text: 'Cancel', style: 'cancel' },
-            ]
-        );
+        setShareVisible(true);
     };
 
     if (loading) {
@@ -553,7 +585,7 @@ export default function PodcastDetailScreen({ route, navigation }) {
                             <TouchableOpacity
                                 style={styles.circleBtn}
                                 hitSlop={{ top: scale(10), bottom: scale(10), left: scale(10), right: scale(10) }}
-                                onPress={handleShare}
+                                onPress={() => setShareVisible(true)}
                             >
                                 {renderIcon('share.svg', { width: scale(24), height: scale(24) }, '#F5D8CB')}
                             </TouchableOpacity>
@@ -649,6 +681,14 @@ export default function PodcastDetailScreen({ route, navigation }) {
                     </View>
                 </LinearGradient>
             </ScrollView>
+
+            <ShareSheetModal
+                visible={shareVisible}
+                onClose={() => setShareVisible(false)}
+                renderIcon={(iconName, style, tintColor) => renderIcon(iconName, style, tintColor)}
+                shareTitle={`${podcastTitle} — ${authorName}`}
+                shareUrl={getPodcastAudioUrl(podcast || routePodcast)}
+            />
 
             <MiniPlayer bottomOffset={scale(24)} />
         </View>

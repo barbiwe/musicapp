@@ -13,15 +13,16 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 
-import { createPlaylist, getIcons, scale } from '../../api/api';
+import { createPlaylist, getCachedIcons, getIcons, scale } from '../../api/api';
 import RemoteTintIcon from '../../components/RemoteTintIcon';
 
 export default function CreatePlaylistScreen({ navigation }) {
-    const [icons, setIcons] = useState({});
+    const [icons, setIcons] = useState(() => getCachedIcons() || {});
     const [name, setName] = useState('');
     const [creating, setCreating] = useState(false);
 
     useEffect(() => {
+        if (Object.keys(icons || {}).length > 0) return;
         const load = async () => {
             const data = await getIcons();
             setIcons(data || {});
@@ -90,6 +91,7 @@ export default function CreatePlaylistScreen({ navigation }) {
 
                 <View style={styles.formWrap}>
                     <TextInput
+                            keyboardAppearance="dark"
                         value={name}
                         onChangeText={setName}
                         placeholder=""

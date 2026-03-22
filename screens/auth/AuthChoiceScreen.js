@@ -18,6 +18,7 @@ import * as Google from "expo-auth-session/providers/google";
 
 // 👇 Імпортуємо scale та getIcons
 import { googleLogin, scale, getIcons } from "../../api/api";
+import { getGoogleAuthRequestConfig } from '../../config/googleAuthConfig';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -80,11 +81,9 @@ export default function AuthChoiceScreen({ navigation }) {
     /* =========================
        GOOGLE AUTH CONFIG
     ========================= */
-    const [request, response, promptAsync] = Google.useIdTokenAuthRequest({
-        iosClientId: '651816373430-s2bjgg2rh5pjga66kuevbt3u8e6e56e6.apps.googleusercontent.com',
-        clientId: '651816373430-hjii65stgn3ei6q1lrfs4e0dm298j9gn.apps.googleusercontent.com',
-        redirectUri: 'com.googleusercontent.apps.651816373430-s2bjgg2rh5pjga66kuevbt3u8e6e56e6:/oauth2redirect/google'
-    });
+    const [request, response, promptAsync] = Google.useIdTokenAuthRequest(
+        getGoogleAuthRequestConfig()
+    );
 
     // 1. Завантажуємо іконки при старті
     useEffect(() => {
@@ -165,6 +164,14 @@ export default function AuthChoiceScreen({ navigation }) {
         return <Text style={[styles.headerText, { fontSize: 14, color: tintColor || '#F5D8CB' }]}>{fallbackText}</Text>;
     };
 
+    const handleBackPress = () => {
+        if (navigation.canGoBack()) {
+            navigation.goBack();
+            return;
+        }
+        navigation.navigate('Onboarding');
+    };
+
     return (
 
         <LinearGradient
@@ -185,7 +192,7 @@ export default function AuthChoiceScreen({ navigation }) {
                 {/* BACK BUTTON */}
                 <TouchableOpacity
                     style={styles.backButton}
-                    onPress={() => navigation.goBack()}
+                    onPress={handleBackPress}
                     hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                 >
                     {renderIcon('arrow-left.svg', '<', { width: scale(24), height: scale(24) }, '#F5D8CB')}
@@ -225,29 +232,31 @@ export default function AuthChoiceScreen({ navigation }) {
                     <Text style={styles.or}>or continue with</Text>
 
                     <View style={styles.socialRow}>
-                        {/* GOOGLE BUTTON */}
                         <TouchableOpacity
-                            style={styles.socialButton}
+                            style={styles.googleWideButton}
                             disabled={!request || loading}
                             onPress={() => {
-                                if (request) promptAsync();
+                                if (request) {
+                                    promptAsync(
+                                        Platform.OS === 'android'
+                                            ? { useProxy: false }
+                                            : undefined
+                                    );
+                                }
                             }}
+                            activeOpacity={0.85}
                         >
                             {loading ? (
-                                <ActivityIndicator color="#F5D8CB" size="small" />
+                                <>
+                                    <ActivityIndicator color="#F5D8CB" size="small" />
+                                    <Text style={styles.googleWideText}>Google</Text>
+                                </>
                             ) : (
-                                // Припускаємо, що іконка називається 'google.svg'
-                                renderIcon('google.svg', 'G', { width: scale(24), height: scale(24) }, '#F5D8CB')
+                                <>
+                                    {renderIcon('google.svg', 'G', { width: scale(22), height: scale(22) }, '#F5D8CB')}
+                                    <Text style={styles.googleWideText}>Google</Text>
+                                </>
                             )}
-                        </TouchableOpacity>
-
-                        {/* DISCORD BUTTON (Placeholder logic) */}
-                        <TouchableOpacity
-                            style={[styles.socialButton, styles.stubSocialButton]}
-                            onPress={() => Alert.alert("Discord", "Coming soon!")}
-                        >
-                            {/* Припускаємо, що іконка називається 'discord.svg' */}
-                            {renderIcon('discord.svg', 'D', { width: scale(24), height: scale(24) }, '#FF4D4F')}
                         </TouchableOpacity>
                     </View>
                 </View>
@@ -349,20 +358,24 @@ const styles = StyleSheet.create({
 
     socialRow: {
         flexDirection: 'row',
-        gap: scale(20)
+        justifyContent: 'center',
     },
 
-    socialButton: {
-        width: scale(48),
+    googleWideButton: {
+        width: scale(182),
         height: scale(48),
         borderRadius: scale(24),
         borderWidth: 1,
         borderColor: '#F5D8CB',
+        flexDirection: 'row',
+        gap: scale(10),
         alignItems: 'center',
         justifyContent: 'center',
         backgroundColor: 'transparent'
     },
-    stubSocialButton: {
-        borderColor: '#FF4D4F',
+    googleWideText: {
+        color: '#F5D8CB',
+        fontFamily: 'Unbounded-Regular',
+        fontSize: scale(14),
     },
 });

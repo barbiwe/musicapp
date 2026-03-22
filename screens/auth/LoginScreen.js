@@ -21,6 +21,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SvgUri, SvgXml } from 'react-native-svg';
 // 👇 Імпортуємо готові функції та утиліти
 import { loginUser, googleLogin, scale, getIcons } from '../../api/api';
+import { getGoogleAuthRequestConfig } from '../../config/googleAuthConfig';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -90,11 +91,9 @@ export default function LoginScreen({ navigation }) {
     /* =========================
            GOOGLE AUTH CONFIG
     ========================= */
-    const [request, response, promptAsync] = Google.useIdTokenAuthRequest({
-        iosClientId: '651816373430-s2bjgg2rh5pjga66kuevbt3u8e6e56e6.apps.googleusercontent.com',
-        clientId: '651816373430-hjii65stgn3ei6q1lrfs4e0dm298j9gn.apps.googleusercontent.com',
-        redirectUri: 'com.googleusercontent.apps.651816373430-s2bjgg2rh5pjga66kuevbt3u8e6e56e6:/oauth2redirect/google'
-    });
+    const [request, response, promptAsync] = Google.useIdTokenAuthRequest(
+        getGoogleAuthRequestConfig()
+    );
 
     // 1. Завантаження іконок при старті
     useEffect(() => {
@@ -254,6 +253,7 @@ export default function LoginScreen({ navigation }) {
                                 {renderIcon('email.svg', { width: scale(24), height: scale(24) }, '#F5D8CB')}
                             </View>
                             <TextInput
+                            keyboardAppearance="dark"
                                 placeholder="Email"
                                 value={email}
                                 onChangeText={setEmail}
@@ -270,6 +270,7 @@ export default function LoginScreen({ navigation }) {
                                 {renderIcon('password.svg', { width: scale(24), height: scale(24) }, '#F5D8CB')}
                             </View>
                             <TextInput
+                            keyboardAppearance="dark"
                                 placeholder="Password"
                                 value={password}
                                 onChangeText={setPassword}
@@ -310,28 +311,24 @@ export default function LoginScreen({ navigation }) {
 
                     {/* SOCIAL ROW */}
                     <View style={styles.socialRow}>
-                        {/* GOOGLE */}
                         <TouchableOpacity
-                            style={styles.socialButton}
+                            style={styles.googleWideButton}
                             onPress={() => {
                                 if (request) {
-                                    promptAsync();
+                                    promptAsync(
+                                        Platform.OS === 'android'
+                                            ? { useProxy: false }
+                                            : undefined
+                                    );
                                 } else {
                                     Alert.alert("Wait", "Google loading...");
                                 }
                             }}
                             disabled={!request}
+                            activeOpacity={0.85}
                         >
-                            {renderIcon('google.svg', { width: scale(24), height: scale(24) }, '#F5D8CB')}
-                        </TouchableOpacity>
-
-                        {/* APPLE / OTHER (Stub) */}
-                        <TouchableOpacity
-                            style={[styles.socialButton, styles.stubSocialButton]}
-                            onPress={() => Alert.alert("Apple Auth", "Coming soon")}
-                        >
-                            {/* Заглушка або іконка Apple */}
-                            {renderIcon('discord.svg', { width: scale(24), height: scale(24) }, '#FF4D4F')}
+                            {renderIcon('google.svg', { width: scale(22), height: scale(22) }, '#F5D8CB')}
+                            <Text style={styles.googleWideText}>Google</Text>
                         </TouchableOpacity>
                     </View>
 
@@ -451,21 +448,24 @@ const styles = StyleSheet.create({
     socialRow: {
         flexDirection: "row",
         justifyContent: "center",
-        gap: scale(20),
         marginBottom: scale(40)
     },
-    socialButton: {
-        width: scale(48),
+    googleWideButton: {
+        width: scale(182),
         height: scale(48),
         borderRadius: scale(24),
         borderWidth: 1,
         borderColor: '#F5D8CB',
+        flexDirection: 'row',
+        gap: scale(10),
         alignItems: 'center',
         justifyContent: 'center',
         marginBottom: scale(36),
     },
-    stubSocialButton: {
-        borderColor: '#FF4D4F',
+    googleWideText: {
+        color: '#F5D8CB',
+        fontFamily: 'Unbounded-Regular',
+        fontSize: scale(14),
     },
     footerContainer: {
         flexDirection: 'row',

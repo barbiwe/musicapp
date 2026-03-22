@@ -6,6 +6,7 @@ import {
     TouchableOpacity,
     StatusBar,
     Platform,
+    Linking,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 
@@ -14,6 +15,12 @@ import RemoteTintIcon from '../../components/RemoteTintIcon';
 
 export default function AboutUsScreen({ navigation }) {
     const [icons, setIcons] = useState({});
+
+    const openExternalLink = async (url) => {
+        try {
+            await Linking.openURL(url);
+        } catch (_) {}
+    };
 
     useEffect(() => {
         let mounted = true;
@@ -81,7 +88,7 @@ export default function AboutUsScreen({ navigation }) {
                         <TouchableOpacity
                             style={styles.socialBtn}
                             activeOpacity={0.8}
-                            onPress={() => {}}
+                            onPress={() => openExternalLink('https://www.instagram.com/vox.musics?igsh=NnVpc2JwZDJkZTMy&utm_source=qr')}
                             hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
                         >
                             <RemoteTintIcon
@@ -89,7 +96,7 @@ export default function AboutUsScreen({ navigation }) {
                                 iconName="instagram.svg"
                                 width={scale(24)}
                                 height={scale(24)}
-                                color="#FF4D4F"
+                                color="#F5D8CB"
                                 fallback="IG"
                             />
                         </TouchableOpacity>
@@ -97,7 +104,7 @@ export default function AboutUsScreen({ navigation }) {
                         <TouchableOpacity
                             style={[styles.socialBtn, styles.socialBtnMiddle]}
                             activeOpacity={0.8}
-                            onPress={() => {}}
+                            onPress={() => openExternalLink('https://t.me/voxmusics')}
                             hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
                         >
                             <RemoteTintIcon
@@ -105,7 +112,7 @@ export default function AboutUsScreen({ navigation }) {
                                 iconName="telegram.svg"
                                 width={scale(24)}
                                 height={scale(24)}
-                                color="#FF4D4F"
+                                color="#F5D8CB"
                                 fallback="TG"
                             />
                         </TouchableOpacity>
@@ -113,7 +120,7 @@ export default function AboutUsScreen({ navigation }) {
                         <TouchableOpacity
                             style={styles.socialBtn}
                             activeOpacity={0.8}
-                            onPress={() => {}}
+                            onPress={() => openExternalLink('https://discord.gg/nd78GHHZ')}
                             hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
                         >
                             <RemoteTintIcon
@@ -121,7 +128,7 @@ export default function AboutUsScreen({ navigation }) {
                                 iconName="discord.svg"
                                 width={scale(24)}
                                 height={scale(24)}
-                                color="#FF4D4F"
+                                color="#F5D8CB"
                                 fallback="D"
                             />
                         </TouchableOpacity>
@@ -194,7 +201,7 @@ const styles = StyleSheet.create({
         height: scale(37),
         borderRadius: scale(18.5),
         borderWidth: 1,
-        borderColor: '#FF4D4F',
+        borderColor: '#F5D8CB',
         alignItems: 'center',
         justifyContent: 'center',
     },

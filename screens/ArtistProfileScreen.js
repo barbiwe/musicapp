@@ -163,9 +163,12 @@ const collectArtistIdCandidates = (artist, artistTracks, explicitArtistId) => {
     return [...new Set(ids.filter(Boolean).map((id) => String(id)))];
 };
 
+const artistProfileSessionCache = new Map();
+
 export default function ArtistProfileScreen({ navigation, route }) {
     const { artist } = route.params || {};
     const artistId = resolveArtistId(artist);
+    const profileCacheKey = `${String(artistId || '')}:${normalizeName(artist?.name)}`;
 
     const [loading, setLoading] = useState(true);
     const [tracks, setTracks] = useState([]);
@@ -178,10 +181,22 @@ export default function ArtistProfileScreen({ navigation, route }) {
     const loadReqIdRef = useRef(0);
 
     useEffect(() => {
-        loadData({ withLoader: true });
-    }, [artistId, artist?.name]);
+        const cached = artistProfileSessionCache.get(profileCacheKey);
+        if (cached) {
+            setTracks(cached.tracks || []);
+            setAlbums(cached.albums || []);
+            setIcons(cached.icons || {});
+            setSubscriptionArtistId(cached.subscriptionArtistId || (artistId ? String(artistId) : null));
+            setIsFollowing(!!cached.isFollowing);
+            setFollowersCount(Number(cached.followersCount) || 0);
+            setLoading(false);
+            return;
+        }
 
-    const loadData = async ({ withLoader = false } = {}) => {
+        loadData({ withLoader: true, cacheKey: profileCacheKey });
+    }, [profileCacheKey]);
+
+    const loadData = async ({ withLoader = false, cacheKey = profileCacheKey } = {}) => {
         const reqId = ++loadReqIdRef.current;
         if (withLoader) {
             setLoading(true);
@@ -216,6 +231,11 @@ export default function ArtistProfileScreen({ navigation, route }) {
             ) : [];
             setAlbums(artistAlbums);
 
+            // Unblock UI early: subscription/followers details can load in background.
+            if (withLoader && reqId === loadReqIdRef.current) {
+                setLoading(false);
+            }
+
             const subscriptionsRaw = await getSubscriptions();
             const subscriptions = (Array.isArray(subscriptionsRaw) ? subscriptionsRaw : [])
                 .map(resolveSubscriptionArtistFromItem)
@@ -238,31 +258,39 @@ export default function ArtistProfileScreen({ navigation, route }) {
             let detectedSubscribed = !!matchedSubscription;
             let detectedArtistId = matchedSubscription?.id || candidateIds[0] || null;
 
-            if (!detectedSubscribed) {
-                for (const candidateId of candidateIds) {
-                    const candidateSubscribed = await getArtistSubscriptionStatus(candidateId);
-                    if (candidateSubscribed) {
-                        detectedSubscribed = true;
-                        detectedArtistId = candidateId;
-                        break;
-                    }
+            if (!detectedSubscribed && candidateIds.length > 0) {
+                const statusPairs = await Promise.all(
+                    candidateIds.map(async (candidateId) => {
+                        const subscribed = await getArtistSubscriptionStatus(candidateId);
+                        return [candidateId, !!subscribed];
+                    })
+                );
+                const firstSubscribed = statusPairs.find(([, subscribed]) => subscribed);
+                if (firstSubscribed) {
+                    detectedSubscribed = true;
+                    detectedArtistId = firstSubscribed[0];
                 }
             }
 
             const countIds = [...new Set([detectedArtistId, ...candidateIds].filter(Boolean).map((id) => String(id)))];
-            let nextFollowers = 0;
-            for (const countId of countIds) {
-                const candidateCount = Number(await getArtistFollowersCount(countId)) || 0;
-                if (candidateCount > nextFollowers) {
-                    nextFollowers = candidateCount;
-                }
-            }
+            const countValues = await Promise.all(
+                countIds.map(async (countId) => Number(await getArtistFollowersCount(countId)) || 0)
+            );
+            const nextFollowers = countValues.reduce((max, value) => (value > max ? value : max), 0);
 
             if (reqId !== loadReqIdRef.current) return;
 
             setSubscriptionArtistId(detectedArtistId || null);
             setIsFollowing(detectedSubscribed);
             setFollowersCount(Number(nextFollowers) || 0);
+            artistProfileSessionCache.set(cacheKey, {
+                tracks: artistTracks,
+                albums: artistAlbums,
+                icons: iconsRes || {},
+                subscriptionArtistId: detectedArtistId || null,
+                isFollowing: detectedSubscribed,
+                followersCount: Number(nextFollowers) || 0,
+            });
 
         } catch (e) {
             console.log('Profile load error', e);

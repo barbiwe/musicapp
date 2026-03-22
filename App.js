@@ -7,6 +7,7 @@ import {
     StatusBar,
     ActivityIndicator,
     Dimensions,
+    TextInput,
     Image // 👈 Додано Image для рендеру іконок
 } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
@@ -17,7 +18,7 @@ import { useFonts } from 'expo-font';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { SvgXml } from 'react-native-svg';
 
-import { getIcons, getCachedIcons, scale, warmSearchData } from './api/api';
+import { getIcons, getCachedIcons, scale, warmAppStartupData } from './api/api';
 
 /* SCREENS */
 import OnboardingScreen from './screens/auth/OnboardingScreen';
@@ -52,6 +53,7 @@ import StatisticsScreen from './screens/profile/StatisticsScreen';
 import AboutUsScreen from './screens/profile/AboutUsScreen';
 import DownloadsScreen from './screens/profile/DownloadsScreen';
 import ListeningHistoryScreen from './screens/profile/ListeningHistoryScreen';
+import EditProfileScreen from './screens/profile/EditProfileScreen';
 import ProScreen from './screens/ProScreen';
 import ChoosePodcastScreen from './screens/library/ChoosePodcastScreen';
 import ChooseArtistScreen from './screens/library/ChooseArtistScreen';
@@ -69,6 +71,12 @@ const SearchStack = createNativeStackNavigator();
 const LibraryStack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator(); // 👇 Створюємо Таби
 const tabSvgCache = {};
+
+// Global dark keyboard for all TextInput (especially iOS)
+if (!TextInput.defaultProps) {
+    TextInput.defaultProps = {};
+}
+TextInput.defaultProps.keyboardAppearance = 'dark';
 
 /* 🔹 LIQUID GLASS NAVIGATION (Оновлене меню) 🔹 */
 function GlassTabBar({ state, descriptors, navigation }) {
@@ -209,6 +217,10 @@ function LibraryStackScreen() {
 
 /* 🔹 MAIN TABS (Група екранів з нерухомим меню) 🔹 */
 function MainTabs() {
+    useEffect(() => {
+        warmAppStartupData().catch(() => {});
+    }, []);
+
     return (
         // 👇 1. Обгортаємо все у View з flex: 1 👇
         <View style={{ flex: 1 }}>
@@ -261,7 +273,7 @@ export default function App() {
             if (isMounted) {
                 setIsTokenLoading(false);
             }
-        }, 2500);
+        }, 9000);
         const fontsGateTimeoutId = setTimeout(() => {
             if (isMounted) {
                 setIsFontsGateDone(true);
@@ -273,8 +285,16 @@ export default function App() {
                 const token = await AsyncStorage.getItem('userToken');
                 if (token && isMounted) {
                     setInitialRoute('MainTabs');
-                    warmSearchData().catch(() => {});
+                } else {
+                    setInitialRoute('Onboarding');
                 }
+
+                // Global bootstrap preload screen: warm core data before showing app.
+                // Guarded by timeout so launch never hangs forever on bad network.
+                await Promise.race([
+                    warmAppStartupData().catch(() => {}),
+                    new Promise((resolve) => setTimeout(resolve, 6000)),
+                ]);
             } catch (e) {
                 console.log(e);
             } finally {
@@ -337,6 +357,7 @@ export default function App() {
                 <Stack.Screen name="AlbumList" component={AlbumListScreen} />
                 <Stack.Screen name="AlbumDetail" component={AlbumDetailScreen} />
                 <Stack.Screen name="Profile" component={ProfileScreen} />
+                <Stack.Screen name="EditProfile" component={EditProfileScreen} />
                 <Stack.Screen
                     name="Player"
                     component={PlayerScreen}

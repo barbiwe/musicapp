@@ -100,6 +100,7 @@ export default function CreateNewPasswordScreen({ navigation, route }) {
                             />
                         </View>
                         <TextInput
+                            keyboardAppearance="dark"
                             value={password}
                             onChangeText={setPassword}
                             placeholder="New password"
@@ -131,6 +132,7 @@ export default function CreateNewPasswordScreen({ navigation, route }) {
                             />
                         </View>
                         <TextInput
+                            keyboardAppearance="dark"
                             value={confirmPassword}
                             onChangeText={setConfirmPassword}
                             placeholder="Confirm password"

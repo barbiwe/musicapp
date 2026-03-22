@@ -14,8 +14,7 @@ import {
     Modal,
     TouchableWithoutFeedback,
     Animated,
-    Easing,
-    PanResponder
+    Easing
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
@@ -23,6 +22,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { SvgXml } from 'react-native-svg';
 import MiniPlayer from '../components/MiniPlayer';
+import ShareSheetModal from '../components/ShareSheetModal';
 import { usePlayerStore } from '../store/usePlayerStore';
 
 // Імпорт API
@@ -46,6 +46,7 @@ import {
 
 const { height } = Dimensions.get('window');
 const GUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const albumDetailSessionCache = new Map();
 
 const svgCache = {};
 // 👇 Цей компонент завантажує SVG, чистить, фарбує і КЕШУЄ результат
@@ -119,48 +120,20 @@ export default function AlbumDetailScreen({ route, navigation }) {
         routeAlbum?.AlbumId,
     ].filter(Boolean);
     const albumId = rawAlbumIds.find((v) => GUID_REGEX.test(String(v))) || null;
+    const albumCacheKey = albumId ? String(albumId) : '';
+    const cachedAlbumState = albumCacheKey ? albumDetailSessionCache.get(albumCacheKey) : null;
 
-    const [album, setAlbum] = useState(null);
-    const [albumTracks, setAlbumTracks] = useState([]);
-    const [loading, setLoading] = useState(true);
-    const [isOwner, setIsOwner] = useState(false);
-    const [iconsMap, setIconsMap] = useState({});
-    const [likedTrackIds, setLikedTrackIds] = useState([]);
-    const [likedAlbumIds, setLikedAlbumIds] = useState([]);
+    const [album, setAlbum] = useState(() => cachedAlbumState?.album || routeAlbum || null);
+    const [albumTracks, setAlbumTracks] = useState(() => cachedAlbumState?.albumTracks || []);
+    const [loading, setLoading] = useState(() => !cachedAlbumState);
+    const [isOwner, setIsOwner] = useState(() => Boolean(cachedAlbumState?.isOwner));
+    const [iconsMap, setIconsMap] = useState(() => cachedAlbumState?.iconsMap || {});
+    const [likedTrackIds, setLikedTrackIds] = useState(() => cachedAlbumState?.likedTrackIds || []);
+    const [likedAlbumIds, setLikedAlbumIds] = useState(() => cachedAlbumState?.likedAlbumIds || []);
     const [modalVisible, setModalVisible] = useState(false);
+    const [shareVisible, setShareVisible] = useState(false);
 
     const slideAnim = useRef(new Animated.Value(height)).current;
-    const modalDragY = useRef(new Animated.Value(0)).current;
-
-    const resetModalDrag = () => {
-        Animated.spring(modalDragY, {
-            toValue: 0,
-            useNativeDriver: true,
-            tension: 120,
-            friction: 12,
-        }).start();
-    };
-
-    const modalPanResponder = useRef(
-        PanResponder.create({
-            onMoveShouldSetPanResponder: (_evt, gesture) =>
-                gesture.dy > 14 && Math.abs(gesture.dy) > Math.abs(gesture.dx),
-            onPanResponderMove: (_evt, gesture) => {
-                modalDragY.setValue(Math.max(0, gesture.dy));
-            },
-            onPanResponderRelease: (_evt, gesture) => {
-                if (gesture.dy > 120 || gesture.vy > 1.1) {
-                    modalDragY.setValue(0);
-                    closeModal();
-                } else {
-                    resetModalDrag();
-                }
-            },
-            onPanResponderTerminate: () => {
-                resetModalDrag();
-            },
-        })
-    ).current;
     const {
         currentTrack,
         isPlaying,
@@ -173,77 +146,131 @@ export default function AlbumDetailScreen({ route, navigation }) {
     const isAlbumPlaying = albumTracks.some(t => (t.id || t._id) === playingTrackId);
     const isAlbumLiked = albumId ? likedAlbumIds.includes(String(albumId)) : false;
 
+    const persistAlbumCache = (patch = {}) => {
+        if (!albumCacheKey) return;
+        const prev = albumDetailSessionCache.get(albumCacheKey) || {};
+        albumDetailSessionCache.set(albumCacheKey, { ...prev, ...patch });
+    };
+
     useEffect(() => {
-        loadData();
+        loadData({ force: false });
     }, [albumId]);
 
-    const loadData = async () => {
-        setLoading(true);
+    const loadData = async ({ force = false } = {}) => {
+        if (!albumId) {
+            setAlbum(null);
+            setLoading(false);
+            return;
+        }
+
+        const runtimeCache = albumCacheKey ? albumDetailSessionCache.get(albumCacheKey) : null;
+        if (!force && runtimeCache) {
+            setAlbum(runtimeCache.album || routeAlbum || null);
+            setAlbumTracks(runtimeCache.albumTracks || []);
+            setIsOwner(Boolean(runtimeCache.isOwner));
+            setIconsMap(runtimeCache.iconsMap || {});
+            setLikedTrackIds(runtimeCache.likedTrackIds || []);
+            setLikedAlbumIds(runtimeCache.likedAlbumIds || []);
+            setLoading(false);
+            return;
+        }
+
+        if (routeAlbum && !album) {
+            setAlbum(routeAlbum);
+            setLoading(false);
+        } else if (!album) {
+            setLoading(true);
+        }
+
         try {
-            if (!albumId) {
+            const resolveAlbum = async () => {
+                let effectiveAlbum = await getAlbumDetails(albumId);
+                if (!effectiveAlbum) {
+                    if (routeAlbum && rawAlbumIds.length > 0) {
+                        effectiveAlbum = routeAlbum;
+                    } else {
+                        const allAlbums = await getAlbums();
+                        effectiveAlbum = Array.isArray(allAlbums)
+                            ? allAlbums.find((a) => {
+                                const candidateIds = [a.id, a.Id, a._id, a.albumId, a.AlbumId].filter(Boolean);
+                                const candidateGuid = candidateIds.find((v) => GUID_REGEX.test(String(v)));
+                                return candidateGuid && albumId && candidateGuid.toString() === albumId.toString();
+                            })
+                            : null;
+                    }
+                }
+                return effectiveAlbum;
+            };
+
+            const resolveTracks = async () => {
+                let foundTracks = await getAlbumTracks(albumId);
+                if (!foundTracks || foundTracks.length === 0) {
+                    const allTracks = await getTracks();
+                    foundTracks = allTracks.filter((t) => {
+                        const tAlbId = t.albumId || t.AlbumId;
+                        return tAlbId && tAlbId.toString() === albumId.toString();
+                    });
+                }
+                return Array.isArray(foundTracks) ? foundTracks : [];
+            };
+
+            const [
+                icons,
+                likedTrackRaw,
+                likedAlbumRaw,
+                effectiveAlbum,
+                foundTracks,
+                storedName,
+            ] = await Promise.all([
+                getIcons().catch(() => iconsMap || {}),
+                getLikedTracks().catch(() => likedTrackIds),
+                getLikedAlbums().catch(() => likedAlbumIds),
+                resolveAlbum(),
+                resolveTracks(),
+                AsyncStorage.getItem('username').catch(() => null),
+            ]);
+
+            if (!effectiveAlbum) {
                 setAlbum(null);
+                setAlbumTracks([]);
                 setLoading(false);
                 return;
             }
 
-            const icons = await getIcons();
-            setIconsMap(icons || {});
-
-            const [likedTrackRaw, likedAlbumRaw] = await Promise.all([
-                getLikedTracks(),
-                getLikedAlbums(),
-            ]);
-            setLikedTrackIds(Array.isArray(likedTrackRaw) ? likedTrackRaw : []);
-            setLikedAlbumIds(
-                Array.isArray(likedAlbumRaw)
-                    ? likedAlbumRaw.map((id) => String(id)).filter(Boolean)
-                    : []
+            const safeIcons = icons || {};
+            const safeLikedTrackIds = Array.isArray(likedTrackRaw) ? likedTrackRaw : [];
+            const safeLikedAlbumIds = Array.isArray(likedAlbumRaw)
+                ? likedAlbumRaw.map((id) => String(id)).filter(Boolean)
+                : [];
+            const artistName = effectiveAlbum.artist?.name || effectiveAlbum.artist;
+            const safeIsOwner = Boolean(
+                storedName &&
+                artistName &&
+                storedName.toLowerCase().trim() === String(artistName).toLowerCase().trim()
             );
 
-            let effectiveAlbum = await getAlbumDetails(albumId);
-            if (!effectiveAlbum) {
-                if (routeAlbum && rawAlbumIds.length > 0) {
-                    effectiveAlbum = routeAlbum;
-                } else {
-                    // Fallback для випадку, коли API деталей не знаходить, але альбом є у списку
-                    const allAlbums = await getAlbums();
-                    effectiveAlbum = Array.isArray(allAlbums)
-                        ? allAlbums.find((a) => {
-                            const candidateIds = [a.id, a.Id, a._id, a.albumId, a.AlbumId].filter(Boolean);
-                            const candidateGuid = candidateIds.find((v) => GUID_REGEX.test(String(v)));
-                            return candidateGuid && albumId && candidateGuid.toString() === albumId.toString();
-                        })
-                        : null;
-                }
-            }
-
-            if (!effectiveAlbum) {
-                setAlbum(null);
-                setLoading(false);
-                return;
-            }
-
+            setIconsMap(safeIcons);
+            setLikedTrackIds(safeLikedTrackIds);
+            setLikedAlbumIds(safeLikedAlbumIds);
             setAlbum(effectiveAlbum);
+            setIsOwner(safeIsOwner);
+            setAlbumTracks(foundTracks);
 
-            const storedName = await AsyncStorage.getItem('username');
-            const artistName = effectiveAlbum.artist?.name || effectiveAlbum.artist;
-            if (storedName && artistName) {
-                const isMyAlbum = storedName.toLowerCase().trim() === artistName.toLowerCase().trim();
-                setIsOwner(isMyAlbum);
-            }
-
-            let foundTracks = await getAlbumTracks(albumId);
-            if (!foundTracks || foundTracks.length === 0) {
-                const allTracks = await getTracks();
-                foundTracks = allTracks.filter(t => {
-                    const tAlbId = t.albumId || t.AlbumId;
-                    return tAlbId && tAlbId.toString() === albumId.toString();
-                });
-            }
-            setAlbumTracks(Array.isArray(foundTracks) ? foundTracks : []);
+            persistAlbumCache({
+                iconsMap: safeIcons,
+                likedTrackIds: safeLikedTrackIds,
+                likedAlbumIds: safeLikedAlbumIds,
+                album: effectiveAlbum,
+                isOwner: safeIsOwner,
+                albumTracks: foundTracks,
+            });
 
         } catch (e) {
             console.error(e);
+            if (!album) {
+                setAlbum(null);
+                setAlbumTracks([]);
+            }
         }
         setLoading(false);
     };
@@ -317,7 +344,7 @@ export default function AlbumDetailScreen({ route, navigation }) {
                 const success = await uploadAlbumCover(albumId, result.assets[0]);
                 if (success) {
                     Alert.alert('Success', 'Cover updated!');
-                    await loadData();
+                    await loadData({ force: true });
                 } else {
                     Alert.alert('Error', 'Failed to upload cover');
                     setLoading(false);
@@ -340,6 +367,7 @@ export default function AlbumDetailScreen({ route, navigation }) {
             : [...likedTrackIds, trackId];
 
         setLikedTrackIds(nextIds);
+        persistAlbumCache({ likedTrackIds: nextIds });
 
         try {
             if (isLikedNow) {
@@ -350,6 +378,7 @@ export default function AlbumDetailScreen({ route, navigation }) {
         } catch (e) {
             console.log('Track like toggle error:', e);
             setLikedTrackIds(prevIds);
+            persistAlbumCache({ likedTrackIds: prevIds });
         }
     };
 
@@ -363,6 +392,7 @@ export default function AlbumDetailScreen({ route, navigation }) {
             : [...likedAlbumIds, safeAlbumId];
 
         setLikedAlbumIds(next);
+        persistAlbumCache({ likedAlbumIds: next });
 
         try {
             const ok = currentlyLiked
@@ -371,15 +401,17 @@ export default function AlbumDetailScreen({ route, navigation }) {
 
             if (!ok) {
                 setLikedAlbumIds(prev);
+                persistAlbumCache({ likedAlbumIds: prev });
             }
         } catch (_) {
             setLikedAlbumIds(prev);
+            persistAlbumCache({ likedAlbumIds: prev });
         }
     };
 
     const openModal = () => {
-        modalDragY.setValue(0);
         setModalVisible(true);
+        slideAnim.setValue(height);
         Animated.timing(slideAnim, {
             toValue: 0,
             duration: 300,
@@ -389,14 +421,15 @@ export default function AlbumDetailScreen({ route, navigation }) {
     };
 
     const closeModal = () => {
-        modalDragY.setValue(0);
+        slideAnim.stopAnimation();
         Animated.timing(slideAnim, {
             toValue: height,
-            duration: 250,
+            duration: 220,
             easing: Easing.in(Easing.cubic),
             useNativeDriver: true,
         }).start(() => {
             setModalVisible(false);
+            slideAnim.setValue(height);
         });
     };
 
@@ -424,6 +457,10 @@ export default function AlbumDetailScreen({ route, navigation }) {
                 ),
             },
         });
+    };
+
+    const openShareModal = () => {
+        setShareVisible(true);
     };
 
     const findIconUrl = (iconName) => {
@@ -524,7 +561,7 @@ export default function AlbumDetailScreen({ route, navigation }) {
         </View>
     );
 
-    if (loading) {
+    if (loading && !album) {
         return (
             <View style={[styles.container, styles.center]}>
                 <ActivityIndicator size="large" color="#fff" />
@@ -614,7 +651,11 @@ export default function AlbumDetailScreen({ route, navigation }) {
                                 )}
                             </TouchableOpacity>
 
-                            <TouchableOpacity style={styles.circleBtn} hitSlop={{ top: scale(10), bottom: scale(10), left: scale(10), right: scale(10) }}>
+                            <TouchableOpacity
+                                style={styles.circleBtn}
+                                hitSlop={{ top: scale(10), bottom: scale(10), left: scale(10), right: scale(10) }}
+                                onPress={openShareModal}
+                            >
                                 {renderIcon('share.svg', 'Shr', { width: scale(24), height: scale(24) }, '#F5D8CB')}
                             </TouchableOpacity>
 
@@ -671,10 +712,9 @@ export default function AlbumDetailScreen({ route, navigation }) {
                     <View style={styles.modalOverlay}>
                         <TouchableWithoutFeedback>
                             <Animated.View
-                                {...modalPanResponder.panHandlers}
                                 style={[
                                     styles.modalSheetWrapper,
-                                    { transform: [{ translateY: Animated.add(slideAnim, modalDragY) }] }
+                                    { transform: [{ translateY: slideAnim }] }
                                 ]}
                             >
                                 <LinearGradient
@@ -746,6 +786,14 @@ export default function AlbumDetailScreen({ route, navigation }) {
                     </View>
                 </TouchableWithoutFeedback>
             </Modal>
+
+            <ShareSheetModal
+                visible={shareVisible}
+                onClose={() => setShareVisible(false)}
+                renderIcon={(iconName, style, tintColor) => renderIcon(iconName, '', style, tintColor)}
+                shareTitle={`${album?.title || 'Album'} — ${artistName}`}
+                shareUrl={coverUri}
+            />
 
             <MiniPlayer bottomOffset={scale(24)} />
         </View>

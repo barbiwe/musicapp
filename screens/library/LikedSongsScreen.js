@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
     View,
     Text,
@@ -85,20 +85,23 @@ const extractLikedTrackObjects = (raw) => {
         .filter(Boolean);
 };
 
+let likedSongsSessionCache = null;
+
 export default function LikedSongsScreen({ navigation }) {
     const isFocused = useIsFocused();
+    const hasLoadedOnceRef = useRef(Boolean(likedSongsSessionCache));
     const setTrack = usePlayerStore((state) => state.setTrack);
     const setQueue = usePlayerStore((state) => state.setQueue);
 
-    const [icons, setIcons] = useState({});
-    const [loading, setLoading] = useState(true);
-    const [tracks, setTracks] = useState([]);
-    const [likedIds, setLikedIds] = useState([]);
-    const [genres, setGenres] = useState([]);
-    const [selectedGenre, setSelectedGenre] = useState('All');
+    const [icons, setIcons] = useState(() => likedSongsSessionCache?.icons || {});
+    const [loading, setLoading] = useState(!likedSongsSessionCache);
+    const [tracks, setTracks] = useState(() => likedSongsSessionCache?.tracks || []);
+    const [likedIds, setLikedIds] = useState(() => likedSongsSessionCache?.likedIds || []);
+    const [genres, setGenres] = useState(() => likedSongsSessionCache?.genres || []);
+    const [selectedGenre, setSelectedGenre] = useState(() => likedSongsSessionCache?.selectedGenre || 'All');
     const [brokenCovers, setBrokenCovers] = useState({});
     const [sortOpen, setSortOpen] = useState(false);
-    const [selectedSort, setSelectedSort] = useState('recent');
+    const [selectedSort, setSelectedSort] = useState(() => likedSongsSessionCache?.selectedSort || 'recent');
 
     const sortOptions = [
         { key: 'recent', label: 'Recently added' },
@@ -114,7 +117,20 @@ export default function LikedSongsScreen({ navigation }) {
         return found || name;
     };
 
-    const loadData = async () => {
+    const loadData = async ({ force = false } = {}) => {
+        if (!force && likedSongsSessionCache) {
+            setIcons(likedSongsSessionCache.icons || {});
+            setTracks(likedSongsSessionCache.tracks || []);
+            setLikedIds(likedSongsSessionCache.likedIds || []);
+            setGenres(likedSongsSessionCache.genres || []);
+            setSelectedGenre(likedSongsSessionCache.selectedGenre || 'All');
+            setSelectedSort(likedSongsSessionCache.selectedSort || 'recent');
+            setBrokenCovers({});
+            setLoading(false);
+            hasLoadedOnceRef.current = true;
+            return;
+        }
+
         setLoading(true);
         try {
             const [iconsMap, likedRaw, allTracksRaw, genresRaw] = await Promise.all([
@@ -147,27 +163,58 @@ export default function LikedSongsScreen({ navigation }) {
                 const bTime = Date.parse(b?.uploadedAt || b?.createdAt || b?.created || '') || 0;
                 return bTime - aTime;
             });
+            const normalizedGenres = normalizeGenres(genresRaw);
 
             setIcons(iconsMap || {});
             setLikedIds(likedIdList);
             setTracks(merged);
-            setGenres(normalizeGenres(genresRaw));
+            setGenres(normalizedGenres);
             setSelectedGenre('All');
             setBrokenCovers({});
+            likedSongsSessionCache = {
+                icons: iconsMap || {},
+                tracks: merged,
+                likedIds: likedIdList,
+                genres: normalizedGenres,
+                selectedGenre: 'All',
+                selectedSort: selectedSort || 'recent',
+            };
         } catch (_) {
+            hasLoadedOnceRef.current = false;
             setTracks([]);
             setLikedIds([]);
             setGenres([]);
+            likedSongsSessionCache = {
+                icons: {},
+                tracks: [],
+                likedIds: [],
+                genres: [],
+                selectedGenre: 'All',
+                selectedSort: selectedSort || 'recent',
+            };
         } finally {
             setLoading(false);
         }
     };
 
     useEffect(() => {
-        if (isFocused) {
-            loadData();
-        }
+        if (!isFocused) return;
+        if (hasLoadedOnceRef.current) return;
+        hasLoadedOnceRef.current = true;
+        loadData({ force: false });
     }, [isFocused]);
+
+    useEffect(() => {
+        if (!hasLoadedOnceRef.current) return;
+        likedSongsSessionCache = {
+            icons,
+            tracks,
+            likedIds,
+            genres,
+            selectedGenre,
+            selectedSort,
+        };
+    }, [icons, tracks, likedIds, genres, selectedGenre, selectedSort]);
 
     const filteredTracks = useMemo(() => {
         const likedSet = new Set(likedIds);

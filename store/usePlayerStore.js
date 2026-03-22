@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { Image } from 'react-native';
 import TrackPlayer, {
     Capability,
     Event,
@@ -7,9 +8,11 @@ import TrackPlayer, {
     State,
 } from 'react-native-track-player';
 import {
+    addTrackPlay,
     getRadioQueue,
     getRandomAd,
     getStreamUrl,
+    markAdShown,
     markTrackAsPlayed,
     shouldShowAdBeforeStream,
     getTrackCoverUrl,
@@ -70,11 +73,32 @@ let lastPodcastSaveTs = 0;
 let suppressQueueEndedUntil = 0;
 let adFinishTriggered = false;
 let progressPollInterval = null;
+let lastAutoAdvanceAt = 0;
+const adImagePrefetchCache = new Set();
 const DEBUG_LOCKSCREEN = true;
 const debugLog = (...args) => {
     if (DEBUG_LOCKSCREEN) {
         console.log('[TP-STORE]', ...args);
     }
+};
+
+const prefetchAdImage = async (uri, maxWaitMs = 700) => {
+    if (!uri || adImagePrefetchCache.has(uri)) return;
+    adImagePrefetchCache.add(uri);
+
+    const prefetchPromise = Image.prefetch(uri).catch(() => {
+        adImagePrefetchCache.delete(uri);
+    });
+
+    if (maxWaitMs > 0) {
+        await Promise.race([
+            prefetchPromise,
+            new Promise((resolve) => setTimeout(resolve, maxWaitMs)),
+        ]);
+        return;
+    }
+
+    await prefetchPromise;
 };
 
 const toMs = (seconds) => {
@@ -212,10 +236,31 @@ const attachListeners = (set, get) => {
     if (listenersReady) return;
     listenersReady = true;
 
+    const triggerAutoAdvance = async (reason) => {
+        const now = Date.now();
+        if (now - lastAutoAdvanceAt < 900) {
+            debugLog('auto-advance:skip-duplicate', { reason });
+            return;
+        }
+        lastAutoAdvanceAt = now;
+
+        const { adModalVisible } = get();
+        if (adModalVisible) {
+            if (!adFinishTriggered) {
+                adFinishTriggered = true;
+                debugLog('auto-advance:ad-finish', { reason });
+                void get().dismissAdAndPlayPending();
+            }
+            return;
+        }
+
+        debugLog('auto-advance:playNext', { reason });
+        void get().playNext();
+    };
+
     TrackPlayer.addEventListener(Event.PlaybackState, async ({ state }) => {
         const active = isPlaybackActive(state);
         debugLog('event:PlaybackState', { state, active });
-        set({ isPlaying: active });
         try {
             if (active) {
                 await TrackPlayer.setVolume(1);
@@ -230,6 +275,12 @@ const attachListeners = (set, get) => {
         } else {
             clearProgressPolling();
         }
+
+        // Android can finish a track without reliable PlaybackQueueEnded event.
+        // Handle ended state directly with anti-duplicate guard.
+        if (playbackStateValue(state) === State.Ended) {
+            await triggerAutoAdvance('playback-state-ended');
+        }
     });
 
     TrackPlayer.addEventListener(Event.PlaybackPlayWhenReadyChanged, ({ playWhenReady }) => {
@@ -240,10 +291,6 @@ const attachListeners = (set, get) => {
         } else {
             clearProgressPolling();
         }
-    });
-
-    TrackPlayer.addEventListener(Event.PlaybackProgressUpdated, ({ position, duration }) => {
-        applyProgressSnapshot(set, get, position, duration);
     });
 
     TrackPlayer.addEventListener(Event.PlaybackQueueEnded, async () => {
@@ -260,15 +307,7 @@ const attachListeners = (set, get) => {
             return;
         }
 
-        const { adModalVisible } = get();
-        if (adModalVisible) {
-            if (!adFinishTriggered) {
-                adFinishTriggered = true;
-                void get().dismissAdAndPlayPending();
-            }
-            return;
-        }
-        void get().playNext();
+        await triggerAutoAdvance('playback-queue-ended');
     });
 };
 
@@ -281,7 +320,9 @@ const ensurePlayerReady = async (set, get) => {
         });
         await TrackPlayer.setRepeatMode(RepeatMode.Off);
         await TrackPlayer.updateOptions({
-            progressUpdateEventInterval: 1,
+            // Keep 0 to disable native "playback-progress-updated" emitter.
+            // We use JS polling for progress updates to avoid iOS crash in RNTP emitter bridge.
+            progressUpdateEventInterval: 0,
             capabilities: [
                 Capability.Play,
                 Capability.Pause,
@@ -315,8 +356,9 @@ export const usePlayerStore = create((set, get) => ({
     queue: [],
     currentIndex: 0,
     currentTrack: null,
+    miniPlayerHiddenKey: null,
     isShuffleEnabled: false,
-    repeatMode: 'off', // off | all | one
+    repeatMode: 'off', // off | one
     queueBeforeShuffle: null,
     isPlaying: false,
     soundObj: null,
@@ -397,8 +439,14 @@ export const usePlayerStore = create((set, get) => ({
 
             if (!skipAd && !isOfflineTrack) {
                 const needShowAd = await shouldShowAdBeforeStream();
+                debugLog('ad:check-before-stream', { needShowAd });
                 if (needShowAd) {
                     const ad = await getRandomAd();
+                    debugLog('ad:random-response', {
+                        hasAd: !!ad,
+                        adId: ad?.id || null,
+                        hasAudio: !!ad?.audioUrl,
+                    });
 
                     if (!ad?.audioUrl) {
                         set({
@@ -410,6 +458,10 @@ export const usePlayerStore = create((set, get) => ({
                             isAdPlaying: false,
                         });
                     } else {
+                        if (ad.imageUrl) {
+                            await prefetchAdImage(ad.imageUrl);
+                        }
+
                         const adTrack = {
                             id: `ad-${Date.now()}`,
                             url: String(ad.audioUrl),
@@ -431,6 +483,8 @@ export const usePlayerStore = create((set, get) => ({
                             // ignore
                         }
                         await TrackPlayer.play();
+                        await markAdShown();
+                        debugLog('ad:started', { adId: ad?.id || null });
                         startProgressPolling(set, get);
 
                         set({
@@ -474,6 +528,14 @@ export const usePlayerStore = create((set, get) => ({
 
             historyMarkedForCurrentTrack = false;
             lastPodcastSaveTs = 0;
+
+            // New backend plays metric: count one play when track playback starts.
+            if (!track?.isPodcast && !track?.skipHistory) {
+                const playTrackId = getTrackId(track);
+                if (playTrackId) {
+                    void addTrackPlay(playTrackId);
+                }
+            }
 
             await TrackPlayer.add([playerTrack]);
             await TrackPlayer.updateNowPlayingMetadata({
@@ -660,12 +722,6 @@ export const usePlayerStore = create((set, get) => ({
             return;
         }
 
-        if (repeatMode === 'all') {
-            set({ currentIndex: 0 });
-            await get().playTrack(queue[0], { skipAd: true });
-            return;
-        }
-
         set({ isPlaying: false });
     },
 
@@ -680,10 +736,11 @@ export const usePlayerStore = create((set, get) => ({
             return;
         }
 
-        if (repeatMode === 'all' && queue.length > 1) {
-            const newIndex = queue.length - 1;
-            set({ currentIndex: newIndex });
-            await get().playTrack(queue[newIndex], { skipAd: true });
+        if (repeatMode === 'one') {
+            const current = queue[currentIndex] || queue[0];
+            if (current) {
+                await get().playTrack(current, { skipAd: true });
+            }
         }
     },
 
@@ -781,12 +838,58 @@ export const usePlayerStore = create((set, get) => ({
 
     toggleRepeatMode: () => {
         const { repeatMode } = get();
-        const next =
-            repeatMode === 'off'
-                ? 'all'
-                : repeatMode === 'all'
-                    ? 'one'
-                    : 'off';
+        const next = repeatMode === 'off' ? 'one' : 'off';
         set({ repeatMode: next });
+    },
+
+    setMiniPlayerHiddenKey: (key) => {
+        set({ miniPlayerHiddenKey: key || null });
+    },
+
+    stopPlayback: async () => {
+        try {
+            await ensurePlayerReady(set, get);
+        } catch (_) {
+            // ignore
+        }
+
+        try {
+            await TrackPlayer.pause();
+        } catch (_) {
+            // ignore
+        }
+        try {
+            await TrackPlayer.stop();
+        } catch (_) {
+            // ignore
+        }
+        try {
+            await TrackPlayer.reset();
+        } catch (_) {
+            // ignore
+        }
+
+        clearProgressPolling();
+        adFinishTriggered = false;
+        historyMarkedForCurrentTrack = false;
+        lastPodcastSaveTs = 0;
+
+        set({
+            queue: [],
+            currentIndex: 0,
+            currentTrack: null,
+            isShuffleEnabled: false,
+            queueBeforeShuffle: null,
+            isPlaying: false,
+            position: 0,
+            duration: 0,
+            adModalVisible: false,
+            pendingAdTrack: null,
+            adData: null,
+            adPositionMs: 0,
+            adDurationMs: 0,
+            isAdPlaying: false,
+            miniPlayerHiddenKey: null,
+        });
     },
 }));
