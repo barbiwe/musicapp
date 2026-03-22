@@ -179,9 +179,24 @@ export default function DiscoverScreen({ navigation }) {
     const loadReqIdRef = useRef(0);
     const hasLoadedOnceRef = useRef(false);
     const syncingPremiumBannerRef = useRef(false);
+    const syncingRecentRef = useRef(false);
+
+    const mapRecentHistory = useCallback((recentRes) => {
+        const safeRecent = Array.isArray(recentRes) ? recentRes : [];
+        return safeRecent.map((item) => {
+            if (item?.track) {
+                return {
+                    ...item.track,
+                    artist: { name: item.track.artistName || 'Unknown' },
+                };
+            }
+            return item;
+        });
+    }, []);
 
     const syncPremiumBanner = useCallback(async (options = {}) => {
         const forceRefreshToken = !!options?.forceRefreshToken;
+        const forceBannerRefresh = !!options?.forceBannerRefresh;
         if (syncingPremiumBannerRef.current) return;
         syncingPremiumBannerRef.current = true;
         try {
@@ -194,7 +209,7 @@ export default function DiscoverScreen({ navigation }) {
                 setDiscoverBanner(null);
                 return;
             }
-            const bannersRes = await getBanners();
+            const bannersRes = await getBanners({ force: forceBannerRefresh });
             const firstBanner = (Array.isArray(bannersRes) ? bannersRes : [])
                 .find((banner) => !!getBannerImageUrl(banner)) || null;
             setDiscoverBanner(firstBanner);
@@ -211,13 +226,26 @@ export default function DiscoverScreen({ navigation }) {
             if (!invalidateAt) return false;
             await AsyncStorage.removeItem(PREMIUM_BANNER_INVALIDATE_KEY);
             // Payment just happened -> refresh token first, then refresh only banner state.
-            await syncPremiumBanner({ forceRefreshToken: true });
+            await syncPremiumBanner({ forceRefreshToken: true, forceBannerRefresh: true });
             return true;
         } catch (_) {
             // ignore invalidation sync errors
             return false;
         }
     }, [syncPremiumBanner]);
+
+    const syncRecentPlayed = useCallback(async ({ force = true } = {}) => {
+        if (syncingRecentRef.current) return;
+        syncingRecentRef.current = true;
+        try {
+            const recentRes = await getRecentlyPlayed(!!force);
+            setRecentTracks(mapRecentHistory(recentRes));
+        } catch (_) {
+            // keep current UI state on soft sync errors
+        } finally {
+            syncingRecentRef.current = false;
+        }
+    }, [mapRecentHistory]);
 
     useEffect(() => {
         if (!isFocused) return;
@@ -230,10 +258,12 @@ export default function DiscoverScreen({ navigation }) {
             const invalidated = await syncPremiumBannerIfInvalidated();
             if (!invalidated) {
                 // Lightweight focus sync: keep banner/premium state in sync without reloading Discover data.
-                await syncPremiumBanner();
+                await syncPremiumBanner({ forceBannerRefresh: true });
             }
+            // Lightweight focus sync for "Recently played" without full Discover reload.
+            await syncRecentPlayed({ force: true });
         })();
-    }, [isFocused, syncPremiumBannerIfInvalidated, syncPremiumBanner]);
+    }, [isFocused, syncPremiumBannerIfInvalidated, syncPremiumBanner, syncRecentPlayed]);
 
     const load = async () => {
         const reqId = ++loadReqIdRef.current;
@@ -266,15 +296,7 @@ export default function DiscoverScreen({ navigation }) {
             setIcons(iconsRes || {});
             setPopularTracks(safeTracks.map((track) => ({ ...track, playsCount: 0 })));
 
-            const formattedHistory = safeRecent.map(item => {
-                if (item.track) {
-                    return {
-                        ...item.track,
-                        artist: { name: item.track.artistName || 'Unknown' }
-                    };
-                }
-                return item;
-            });
+            const formattedHistory = mapRecentHistory(safeRecent);
             setRecentTracks(formattedHistory);
 
             const map = new Map();

@@ -23,6 +23,7 @@ let downloadsSessionCache = null;
 export default function DownloadsScreen({ navigation }) {
     const { setTrack } = usePlayerStore();
     const hasLoadedOnceRef = useRef(Boolean(downloadsSessionCache));
+    const refreshInFlightRef = useRef(false);
     const [icons, setIcons] = useState(() => downloadsSessionCache?.icons || {});
     const [items, setItems] = useState(() => downloadsSessionCache?.items || []);
     const [coverMap, setCoverMap] = useState(() => downloadsSessionCache?.coverMap || {});
@@ -36,7 +37,7 @@ export default function DownloadsScreen({ navigation }) {
         return () => { mounted = false; };
     }, [icons]);
 
-    const loadDownloads = useCallback(async ({ force = false } = {}) => {
+    const loadDownloads = useCallback(async ({ force = false, silent = false } = {}) => {
         if (!force && downloadsSessionCache) {
             setItems(downloadsSessionCache.items || []);
             setCoverMap(downloadsSessionCache.coverMap || {});
@@ -47,22 +48,34 @@ export default function DownloadsScreen({ navigation }) {
 
         if (!force && hasLoadedOnceRef.current) return;
 
-        const saved = await getOfflineDownloads();
-        const normalized = Array.isArray(saved) ? saved : [];
-        setItems(normalized);
-        downloadsSessionCache = {
-            items: normalized,
-            coverMap: downloadsSessionCache?.coverMap || {},
-            icons: icons || downloadsSessionCache?.icons || {},
-        };
-        hasLoadedOnceRef.current = true;
+        if (refreshInFlightRef.current) return;
+        refreshInFlightRef.current = true;
+        try {
+            const saved = await getOfflineDownloads();
+            const normalized = Array.isArray(saved) ? saved : [];
+            setItems(normalized);
+            downloadsSessionCache = {
+                items: normalized,
+                coverMap: downloadsSessionCache?.coverMap || {},
+                icons: icons || downloadsSessionCache?.icons || {},
+            };
+            hasLoadedOnceRef.current = true;
+        } catch (_) {
+            if (!silent) {
+                hasLoadedOnceRef.current = false;
+            }
+        } finally {
+            refreshInFlightRef.current = false;
+        }
     }, [icons]);
 
     useFocusEffect(
         useCallback(() => {
             if (!hasLoadedOnceRef.current) {
-                loadDownloads({ force: false });
+                loadDownloads({ force: false, silent: false });
+                return;
             }
+            loadDownloads({ force: true, silent: true });
         }, [loadDownloads])
     );
 

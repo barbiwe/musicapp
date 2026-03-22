@@ -47,12 +47,15 @@ export default function LibraryPodcast({ navigation }) {
 
     useEffect(() => {
         if (!isFocused) return;
-        if (hasLoadedOnceRef.current) return;
-        hasLoadedOnceRef.current = true;
-        loadPodcasts({ force: false });
+        if (!hasLoadedOnceRef.current) {
+            hasLoadedOnceRef.current = true;
+            loadPodcasts({ force: false });
+            return;
+        }
+        loadPodcasts({ force: true, silent: true });
     }, [isFocused]);
 
-    const loadPodcasts = async ({ force = false } = {}) => {
+    const loadPodcasts = async ({ force = false, silent = false } = {}) => {
         if (!force && libraryPodcastSessionCache) {
             setPodcasts(libraryPodcastSessionCache.podcasts || []);
             setLoading(false);
@@ -60,10 +63,10 @@ export default function LibraryPodcast({ navigation }) {
             return;
         }
 
-        setLoading(true);
+        if (!silent) setLoading(true);
 
         try {
-            const allRaw = await getAllPodcasts();
+            const allRaw = await getAllPodcasts({ force });
             const all = (Array.isArray(allRaw) ? allRaw : [])
                 .map(normalizePodcast)
                 .filter(Boolean)
@@ -71,7 +74,7 @@ export default function LibraryPodcast({ navigation }) {
 
             if (!all.length) {
                 setPodcasts([]);
-                setLoading(false);
+                if (!silent) setLoading(false);
                 return;
             }
 
@@ -88,11 +91,13 @@ export default function LibraryPodcast({ navigation }) {
             setPodcasts(likedPodcasts);
             libraryPodcastSessionCache = { podcasts: likedPodcasts };
         } catch (_) {
-            hasLoadedOnceRef.current = false;
-            setPodcasts([]);
-            libraryPodcastSessionCache = { podcasts: [] };
+            if (!silent) {
+                hasLoadedOnceRef.current = false;
+                setPodcasts([]);
+                libraryPodcastSessionCache = { podcasts: [] };
+            }
         } finally {
-            setLoading(false);
+            if (!silent) setLoading(false);
         }
     };
 

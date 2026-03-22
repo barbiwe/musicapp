@@ -485,7 +485,20 @@ const refreshBannersInBackground = () => {
     })();
 };
 
-export const getBanners = async () => {
+export const getBanners = async (options = {}) => {
+    const force = options?.force === true;
+    if (force) {
+        if (bannersRequest) return bannersRequest;
+        bannersRequest = (async () => {
+            try {
+                return await fetchBannersFromApi();
+            } finally {
+                bannersRequest = null;
+            }
+        })();
+        return bannersRequest;
+    }
+
     if (bannersCache) return bannersCache;
     if (bannersRequest) return bannersRequest;
 
@@ -839,7 +852,28 @@ export const createPlaylist = async ({ name, description = '' }) => {
     }
 };
 
-export const getMyPlaylists = async () => {
+export const getMyPlaylists = async (options = {}) => {
+    const force = options?.force === true;
+    if (force) {
+        if (myPlaylistsRequest) return myPlaylistsRequest;
+
+        myPlaylistsRequest = (async () => {
+            try {
+                const res = await api.get('/api/Playlists/my');
+                const data = Array.isArray(res?.data) ? res.data : [];
+                myPlaylistsCache = data;
+                await writeArrayCache('my_playlists', data);
+                return data;
+            } catch (_) {
+                return myPlaylistsCache || [];
+            }
+        })().finally(() => {
+            myPlaylistsRequest = null;
+        });
+
+        return myPlaylistsRequest;
+    }
+
     if (myPlaylistsCache) return myPlaylistsCache;
     if (myPlaylistsRequest) return myPlaylistsRequest;
 
@@ -1152,7 +1186,29 @@ export const unlikeTrack = async (trackId) => {
     }
 };
 
-export const getLikedTracks = async () => {
+export const getLikedTracks = async (options = {}) => {
+    const force = options?.force === true;
+    if (force) {
+        if (likedTracksRequest) return likedTracksRequest;
+
+        likedTracksRequest = (async () => {
+            try {
+                const res = await api.get('/api/Auth/liked-tracks');
+                const data = Array.isArray(res?.data) ? res.data : [];
+                likedTracksCache = data;
+                await writeArrayCache('liked_tracks', data);
+                return data;
+            } catch (e) {
+                console.error("Get liked error:", e);
+                return likedTracksCache || [];
+            }
+        })().finally(() => {
+            likedTracksRequest = null;
+        });
+
+        return likedTracksRequest;
+    }
+
     if (likedTracksCache) return likedTracksCache;
     if (likedTracksRequest) return likedTracksRequest;
 
@@ -1206,7 +1262,29 @@ export const unlikeAlbum = async (albumId) => {
     }
 };
 
-export const getLikedAlbums = async () => {
+export const getLikedAlbums = async (options = {}) => {
+    const force = options?.force === true;
+    if (force) {
+        if (likedAlbumsRequest) return likedAlbumsRequest;
+
+        likedAlbumsRequest = (async () => {
+            try {
+                const res = await api.get('/api/Auth/liked-albums');
+                const data = Array.isArray(res?.data) ? res.data : [];
+                likedAlbumsCache = data;
+                await writeArrayCache('liked_albums', data);
+                return data;
+            } catch (e) {
+                console.error('Get liked albums error:', e);
+                return likedAlbumsCache || [];
+            }
+        })().finally(() => {
+            likedAlbumsRequest = null;
+        });
+
+        return likedAlbumsRequest;
+    }
+
     if (likedAlbumsCache) return likedAlbumsCache;
     if (likedAlbumsRequest) return likedAlbumsRequest;
 
@@ -1545,7 +1623,20 @@ const refreshAlbumsInBackground = () => {
     })();
 };
 
-export const getAlbums = async () => {
+export const getAlbums = async (options = {}) => {
+    const force = options?.force === true;
+    if (force) {
+        if (albumsRequest) return albumsRequest;
+        albumsRequest = (async () => {
+            try {
+                return await fetchAlbumsFromApi();
+            } finally {
+                albumsRequest = null;
+            }
+        })();
+        return albumsRequest;
+    }
+
     if (albumsCache) return albumsCache;
     if (albumsRequest) return albumsRequest;
 
@@ -1563,7 +1654,28 @@ export const getAlbums = async () => {
 
     return albumsRequest;
 };
-export const getMyAlbums = async () => {
+export const getMyAlbums = async (options = {}) => {
+    const force = options?.force === true;
+    if (force) {
+        if (myAlbumsRequest) return myAlbumsRequest;
+
+        myAlbumsRequest = (async () => {
+            try {
+                const res = await api.get('/api/Album/my');
+                const data = Array.isArray(res?.data) ? res.data : [];
+                myAlbumsCache = data;
+                await writeArrayCache('my_albums', data);
+                return data;
+            } catch {
+                return myAlbumsCache || [];
+            }
+        })().finally(() => {
+            myAlbumsRequest = null;
+        });
+
+        return myAlbumsRequest;
+    }
+
     if (myAlbumsCache) return myAlbumsCache;
     if (myAlbumsRequest) return myAlbumsRequest;
 
@@ -1709,7 +1821,20 @@ const refreshTracksInBackground = () => {
     })();
 };
 
-export const getTracks = async () => {
+export const getTracks = async (options = {}) => {
+    const force = options?.force === true;
+    if (force) {
+        if (tracksRequest) return tracksRequest;
+        tracksRequest = (async () => {
+            try {
+                return await fetchTracksFromApi();
+            } finally {
+                tracksRequest = null;
+            }
+        })();
+        return tracksRequest;
+    }
+
     if (tracksCache) return tracksCache;
     if (tracksRequest) return tracksRequest;
 
@@ -2255,7 +2380,28 @@ export const getMyPodcasts = async () => {
     return myPodcastsRequest;
 };
 
-export const getAllPodcasts = async () => {
+export const getAllPodcasts = async (options = {}) => {
+    const force = options?.force === true;
+    if (force) {
+        if (allPodcastsRequest) return allPodcastsRequest;
+
+        allPodcastsRequest = (async () => {
+            try {
+                const res = await api.get('/api/Podcasts/all');
+                const data = Array.isArray(res?.data) ? res.data : [];
+                allPodcastsCache = data;
+                await writeArrayCache('all_podcasts', data);
+                return data;
+            } catch (_) {
+                return allPodcastsCache || [];
+            }
+        })().finally(() => {
+            allPodcastsRequest = null;
+        });
+
+        return allPodcastsRequest;
+    }
+
     if (allPodcastsCache) return allPodcastsCache;
     if (allPodcastsRequest) return allPodcastsRequest;
 
@@ -2627,7 +2773,20 @@ const refreshAllArtistsInBackground = () => {
     })();
 };
 
-export const getAllArtists = async () => {
+export const getAllArtists = async (options = {}) => {
+    const force = options?.force === true;
+    if (force) {
+        if (artistsRequest) return artistsRequest;
+        artistsRequest = (async () => {
+            try {
+                return await fetchAllArtistsFromApi();
+            } finally {
+                artistsRequest = null;
+            }
+        })();
+        return artistsRequest;
+    }
+
     if (artistsCache) return artistsCache;
     if (artistsRequest) return artistsRequest;
 
@@ -2682,7 +2841,28 @@ export const unsubscribeFromArtist = async (artistId) => {
     }
 };
 
-export const getSubscriptions = async () => {
+export const getSubscriptions = async (options = {}) => {
+    const force = options?.force === true;
+    if (force) {
+        if (subscriptionsRequest) return subscriptionsRequest;
+
+        subscriptionsRequest = (async () => {
+            try {
+                const res = await api.get('/api/Auth/subscriptions');
+                const data = Array.isArray(res?.data) ? res.data : [];
+                subscriptionsCache = data;
+                await writeArrayCache('subscriptions', data);
+                return data;
+            } catch (_) {
+                return subscriptionsCache || [];
+            }
+        })().finally(() => {
+            subscriptionsRequest = null;
+        });
+
+        return subscriptionsRequest;
+    }
+
     if (subscriptionsCache) return subscriptionsCache;
     if (subscriptionsRequest) return subscriptionsRequest;
 

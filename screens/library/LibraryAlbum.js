@@ -59,7 +59,7 @@ export default function LibraryAlbum({ navigation }) {
         return [];
     };
 
-    const loadAlbums = useCallback(async ({ force = false } = {}) => {
+    const loadAlbums = useCallback(async ({ force = false, silent = false } = {}) => {
         if (!force && libraryAlbumSessionCache) {
             setAlbums(libraryAlbumSessionCache.albums || []);
             setLoading(false);
@@ -67,12 +67,12 @@ export default function LibraryAlbum({ navigation }) {
             return;
         }
 
-        setLoading(true);
+        if (!silent) setLoading(true);
         try {
             const [myAlbumsRaw, likedAlbumIdsRaw, allAlbumsRaw] = await Promise.all([
-                getMyAlbums(),
-                getLikedAlbums(),
-                getAlbums(),
+                getMyAlbums({ force }),
+                getLikedAlbums({ force }),
+                getAlbums({ force }),
             ]);
 
             const myAlbums = toArray(myAlbumsRaw);
@@ -126,19 +126,24 @@ export default function LibraryAlbum({ navigation }) {
             setAlbums(mapped);
             libraryAlbumSessionCache = { albums: mapped };
         } catch (_) {
-            hasLoadedOnceRef.current = false;
-            setAlbums([]);
-            libraryAlbumSessionCache = { albums: [] };
+            if (!silent) {
+                hasLoadedOnceRef.current = false;
+                setAlbums([]);
+                libraryAlbumSessionCache = { albums: [] };
+            }
         } finally {
-            setLoading(false);
+            if (!silent) setLoading(false);
         }
     }, []);
 
     useEffect(() => {
         if (!isFocused) return;
-        if (hasLoadedOnceRef.current) return;
-        hasLoadedOnceRef.current = true;
-        loadAlbums({ force: false });
+        if (!hasLoadedOnceRef.current) {
+            hasLoadedOnceRef.current = true;
+            loadAlbums({ force: false });
+            return;
+        }
+        loadAlbums({ force: true, silent: true });
     }, [isFocused, loadAlbums]);
 
     const content = useMemo(() => {

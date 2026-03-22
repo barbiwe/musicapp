@@ -63,12 +63,15 @@ export default function LibraryArtist({ navigation }) {
 
     useEffect(() => {
         if (!isFocused) return;
-        if (hasLoadedOnceRef.current) return;
-        hasLoadedOnceRef.current = true;
-        loadSubscriptions({ force: false });
+        if (!hasLoadedOnceRef.current) {
+            hasLoadedOnceRef.current = true;
+            loadSubscriptions({ force: false });
+            return;
+        }
+        loadSubscriptions({ force: true, silent: true });
     }, [isFocused]);
 
-    const loadSubscriptions = async ({ force = false } = {}) => {
+    const loadSubscriptions = async ({ force = false, silent = false } = {}) => {
         if (!force && libraryArtistSessionCache) {
             setArtists(libraryArtistSessionCache.artists || []);
             setBrokenImages({});
@@ -77,9 +80,9 @@ export default function LibraryArtist({ navigation }) {
             return;
         }
 
-        setLoading(true);
+        if (!silent) setLoading(true);
         try {
-            const raw = await getSubscriptions();
+            const raw = await getSubscriptions({ force });
             const normalized = (Array.isArray(raw) ? raw : [])
                 .map((item, index) => resolveArtistFromSubscription(item, index))
                 .filter((artist) => !!artist.id);
@@ -95,11 +98,13 @@ export default function LibraryArtist({ navigation }) {
             setArtists(unique);
             libraryArtistSessionCache = { artists: unique };
         } catch (_) {
-            hasLoadedOnceRef.current = false;
-            setArtists([]);
-            libraryArtistSessionCache = { artists: [] };
+            if (!silent) {
+                hasLoadedOnceRef.current = false;
+                setArtists([]);
+                libraryArtistSessionCache = { artists: [] };
+            }
         } finally {
-            setLoading(false);
+            if (!silent) setLoading(false);
         }
     };
 

@@ -11,6 +11,7 @@ import {
     KeyboardAvoidingView,
     ScrollView,
     Alert,
+    Keyboard,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
@@ -260,33 +261,32 @@ export default function RequestDetailsScreen({ navigation }) {
                 behavior={Platform.OS === 'ios' ? 'padding' : undefined}
             >
                 <View style={styles.container}>
-                    <TouchableOpacity
-                        style={styles.backButton}
-                        onPress={() => navigation.goBack()}
-                        activeOpacity={0.8}
-                        hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                    >
-                        <RemoteTintIcon
-                            icons={icons}
-                            iconName={resolveIconName('arrow-left.svg')}
-                            width={scale(24)}
-                            height={scale(24)}
-                            color="#F5D8CB"
-                            fallback=""
-                        />
-                    </TouchableOpacity>
+                        <TouchableOpacity
+                            style={styles.backButton}
+                            onPress={() => navigation.goBack()}
+                            activeOpacity={0.8}
+                            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                        >
+                            <RemoteTintIcon
+                                icons={icons}
+                                iconName={resolveIconName('arrow-left.svg')}
+                                width={scale(24)}
+                                height={scale(24)}
+                                color="#F5D8CB"
+                                fallback=""
+                            />
+                        </TouchableOpacity>
 
-                    {isGenreOpen || isCountryOpen ? (
-                        <Pressable
-                            style={styles.dropdownDismissLayer}
-                            onPress={() => {
-                                setIsGenreOpen(false);
-                                setIsCountryOpen(false);
-                            }}
-                        />
-                    ) : null}
-
-                    <View style={styles.section}>
+                        <ScrollView
+                            style={styles.formScroll}
+                            contentContainerStyle={styles.formScrollContent}
+                            showsVerticalScrollIndicator={false}
+                            bounces={false}
+                            keyboardShouldPersistTaps="always"
+                            keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+                            scrollEnabled={!isGenreOpen && !isCountryOpen}
+                        >
+                            <View style={styles.section}>
                         <Text style={styles.label}>Nickname</Text>
                         <View style={styles.inputWrapper}>
                             <BlurView intensity={72} tint="dark" style={StyleSheet.absoluteFill} />
@@ -304,6 +304,8 @@ export default function RequestDetailsScreen({ navigation }) {
                                 placeholderTextColor="rgba(245,216,203,0.65)"
                                 style={styles.input}
                                 autoCapitalize="none"
+                                returnKeyType="done"
+                                onSubmitEditing={Keyboard.dismiss}
                             />
                         </View>
                     </View>
@@ -311,9 +313,6 @@ export default function RequestDetailsScreen({ navigation }) {
                     <View style={[styles.section, isGenreOpen && styles.sectionOpen]}>
                         <Text style={styles.label}>Genre</Text>
                         <View style={styles.dropdownWrap}>
-                            {isGenreOpen ? (
-                                <Pressable pointerEvents="none" style={styles.dropdownBackdrop} />
-                            ) : null}
                             <TouchableOpacity
                                 style={styles.dropdownSelector}
                                 activeOpacity={0.85}
@@ -361,6 +360,7 @@ export default function RequestDetailsScreen({ navigation }) {
                                             style={styles.dropdownList}
                                             contentContainerStyle={styles.dropdownListContent}
                                             showsVerticalScrollIndicator
+                                            nestedScrollEnabled
                                         >
                                             {genres.map((item) => (
                                                 <TouchableOpacity
@@ -368,6 +368,7 @@ export default function RequestDetailsScreen({ navigation }) {
                                                     style={styles.dropdownItem}
                                                     activeOpacity={0.8}
                                                     onPress={() => {
+                                                        Keyboard.dismiss();
                                                         setGenre(item.label);
                                                         setSelectedGenreId(item.id);
                                                         setIsGenreOpen(false);
@@ -393,9 +394,6 @@ export default function RequestDetailsScreen({ navigation }) {
                     <View style={[styles.section, isCountryOpen && styles.sectionOpen]}>
                         <Text style={styles.label}>Country</Text>
                         <View style={styles.dropdownWrap}>
-                            {isCountryOpen ? (
-                                <Pressable pointerEvents="none" style={styles.dropdownBackdrop} />
-                            ) : null}
                             <TouchableOpacity
                                 style={styles.dropdownSelector}
                                 activeOpacity={0.85}
@@ -443,6 +441,7 @@ export default function RequestDetailsScreen({ navigation }) {
                                                 style={styles.dropdownList}
                                                 contentContainerStyle={styles.dropdownListContent}
                                                 showsVerticalScrollIndicator
+                                                nestedScrollEnabled
                                             >
                                                 {countries.map((item) => (
                                                     <TouchableOpacity
@@ -450,6 +449,7 @@ export default function RequestDetailsScreen({ navigation }) {
                                                         style={styles.dropdownItem}
                                                         activeOpacity={0.8}
                                                         onPress={() => {
+                                                            Keyboard.dismiss();
                                                             setCountry(item.label);
                                                             setSelectedCountryId(item.id);
                                                             setIsCountryOpen(false);
@@ -491,6 +491,9 @@ export default function RequestDetailsScreen({ navigation }) {
                                 style={styles.descriptionInput}
                                 multiline
                                 textAlignVertical="top"
+                                returnKeyType="done"
+                                blurOnSubmit
+                                onSubmitEditing={Keyboard.dismiss}
                             />
                             <Text style={styles.counter}>{description.length}/{MAX_DESCRIPTION}</Text>
                         </View>
@@ -504,6 +507,7 @@ export default function RequestDetailsScreen({ navigation }) {
                     >
                         <Text style={styles.confirmText}>{isSubmitting ? 'Sending...' : 'Confirm'}</Text>
                     </TouchableOpacity>
+                        </ScrollView>
                 </View>
             </KeyboardAvoidingView>
         </LinearGradient>
@@ -522,6 +526,12 @@ const styles = StyleSheet.create({
         paddingHorizontal: scale(16),
         paddingTop: Platform.OS === 'ios' ? scale(60) : scale(40),
         paddingBottom: scale(20),
+    },
+    formScroll: {
+        flex: 1,
+    },
+    formScrollContent: {
+        paddingBottom: scale(24),
     },
     backButton: {
         width: scale(40),
@@ -569,27 +579,11 @@ const styles = StyleSheet.create({
         fontFamily: 'Poppins-Regular',
         fontSize: scale(13),
     },
-    dropdownDismissLayer: {
-        position: 'absolute',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        zIndex: 19,
-    },
     dropdownWrap: {
         position: 'relative',
         zIndex: 20,
         width: '100%',
         overflow: 'visible',
-    },
-    dropdownBackdrop: {
-        position: 'absolute',
-        top: 0,
-        left: -scale(220),
-        right: -scale(220),
-        bottom: -scale(1300),
-        zIndex: 22,
     },
     dropdownSelector: {
         height: scale(48),
@@ -602,6 +596,7 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
         paddingHorizontal: scale(18),
         zIndex: 22,
+        elevation: 22,
     },
     dropdownShell: {
         position: 'absolute',
@@ -615,6 +610,7 @@ const styles = StyleSheet.create({
         borderBottomRightRadius: scale(26),
         overflow: 'hidden',
         zIndex: 21,
+        elevation: 21,
         paddingTop: scale(30),
         paddingBottom: scale(14),
         maxHeight: scale(220),

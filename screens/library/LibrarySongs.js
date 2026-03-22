@@ -66,7 +66,7 @@ export default function LibrarySongs({ navigation, setTrack }) {
     const [tracks, setTracks] = useState(() => librarySongsSessionCache?.tracks || []);
     const [brokenCovers, setBrokenCovers] = useState({});
 
-    const loadData = async ({ force = false } = {}) => {
+    const loadData = async ({ force = false, silent = false } = {}) => {
         if (!force && librarySongsSessionCache) {
             setTracks(librarySongsSessionCache.tracks || []);
             setBrokenCovers({});
@@ -75,12 +75,12 @@ export default function LibrarySongs({ navigation, setTrack }) {
             return;
         }
 
-        setLoading(true);
+        if (!silent) setLoading(true);
 
         try {
             const [likedRaw, allTracksRaw] = await Promise.all([
-                getLikedTracks(),
-                getTracks(),
+                getLikedTracks({ force }),
+                getTracks({ force }),
             ]);
 
             const likedIdList = extractLikedIds(likedRaw);
@@ -112,19 +112,24 @@ export default function LibrarySongs({ navigation, setTrack }) {
             setBrokenCovers({});
             librarySongsSessionCache = { tracks: merged };
         } catch (_) {
-            hasLoadedOnceRef.current = false;
-            setTracks([]);
-            librarySongsSessionCache = { tracks: [] };
+            if (!silent) {
+                hasLoadedOnceRef.current = false;
+                setTracks([]);
+                librarySongsSessionCache = { tracks: [] };
+            }
         } finally {
-            setLoading(false);
+            if (!silent) setLoading(false);
         }
     };
 
     useEffect(() => {
         if (!isFocused) return;
-        if (hasLoadedOnceRef.current) return;
-        hasLoadedOnceRef.current = true;
-        loadData({ force: false });
+        if (!hasLoadedOnceRef.current) {
+            hasLoadedOnceRef.current = true;
+            loadData({ force: false });
+            return;
+        }
+        loadData({ force: true, silent: true });
     }, [isFocused]);
 
     const sortedTracks = useMemo(() => {

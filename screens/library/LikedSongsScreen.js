@@ -117,7 +117,7 @@ export default function LikedSongsScreen({ navigation }) {
         return found || name;
     };
 
-    const loadData = async ({ force = false } = {}) => {
+    const loadData = async ({ force = false, silent = false } = {}) => {
         if (!force && likedSongsSessionCache) {
             setIcons(likedSongsSessionCache.icons || {});
             setTracks(likedSongsSessionCache.tracks || []);
@@ -126,17 +126,17 @@ export default function LikedSongsScreen({ navigation }) {
             setSelectedGenre(likedSongsSessionCache.selectedGenre || 'All');
             setSelectedSort(likedSongsSessionCache.selectedSort || 'recent');
             setBrokenCovers({});
-            setLoading(false);
+            if (!silent) setLoading(false);
             hasLoadedOnceRef.current = true;
             return;
         }
 
-        setLoading(true);
+        if (!silent) setLoading(true);
         try {
             const [iconsMap, likedRaw, allTracksRaw, genresRaw] = await Promise.all([
                 getIcons(),
-                getLikedTracks(),
-                getTracks(),
+                getLikedTracks({ force }),
+                getTracks({ force }),
                 getGenres(),
             ]);
 
@@ -180,28 +180,33 @@ export default function LikedSongsScreen({ navigation }) {
                 selectedSort: selectedSort || 'recent',
             };
         } catch (_) {
-            hasLoadedOnceRef.current = false;
-            setTracks([]);
-            setLikedIds([]);
-            setGenres([]);
-            likedSongsSessionCache = {
-                icons: {},
-                tracks: [],
-                likedIds: [],
-                genres: [],
-                selectedGenre: 'All',
-                selectedSort: selectedSort || 'recent',
-            };
+            if (!silent) {
+                hasLoadedOnceRef.current = false;
+                setTracks([]);
+                setLikedIds([]);
+                setGenres([]);
+                likedSongsSessionCache = {
+                    icons: {},
+                    tracks: [],
+                    likedIds: [],
+                    genres: [],
+                    selectedGenre: 'All',
+                    selectedSort: selectedSort || 'recent',
+                };
+            }
         } finally {
-            setLoading(false);
+            if (!silent) setLoading(false);
         }
     };
 
     useEffect(() => {
         if (!isFocused) return;
-        if (hasLoadedOnceRef.current) return;
-        hasLoadedOnceRef.current = true;
-        loadData({ force: false });
+        if (!hasLoadedOnceRef.current) {
+            hasLoadedOnceRef.current = true;
+            loadData({ force: false });
+            return;
+        }
+        loadData({ force: true, silent: true });
     }, [isFocused]);
 
     useEffect(() => {

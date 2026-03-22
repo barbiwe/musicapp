@@ -29,6 +29,8 @@ import {
     resolveArtistName,
     scale
 } from '../api/api';
+import { usePlayerStore } from '../store/usePlayerStore';
+import MiniPlayer from '../components/MiniPlayer';
 const { width, height } = Dimensions.get('window');
 const GUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -176,6 +178,7 @@ const artistProfileSessionCache = new Map();
 
 export default function ArtistProfileScreen({ navigation, route }) {
     const { artist } = route.params || {};
+    const { setTrack } = usePlayerStore();
     const artistId = resolveArtistId(artist);
     const profileCacheKey = `${String(artistId || '')}:${normalizeName(artist?.name)}`;
 
@@ -429,6 +432,15 @@ export default function ArtistProfileScreen({ navigation, route }) {
         });
     }, [tracks, popularTracks]);
 
+    const onOpenTrack = async (track) => {
+        if (!track) return;
+        try {
+            await setTrack(track);
+        } catch (_) {
+            // ignore
+        }
+    };
+
     if (loading) {
         return (
             <View style={[styles.container, styles.center]}>
@@ -616,7 +628,7 @@ export default function ArtistProfileScreen({ navigation, route }) {
                                         <TouchableOpacity
                                             key={resolveTrackId(track) || `popular-${index}`}
                                             style={styles.popularCard}
-                                            onPress={() => navigation.navigate('Player', { track })}
+                                            onPress={() => onOpenTrack(track)}
                                         >
                                             {cover ? (
                                                 <Image source={{ uri: cover }} style={styles.popularImage} resizeMode="cover" />
@@ -644,7 +656,7 @@ export default function ArtistProfileScreen({ navigation, route }) {
                                     <View key={resolveTrackId(t) || `song-${i}`}>
                                         <TouchableOpacity
                                             style={styles.songRow}
-                                            onPress={() => navigation.navigate('Player', { track: t })}
+                                            onPress={() => onOpenTrack(t)}
                                         >
                                             <View style={styles.vinylContainer}>
                                                 {cover ? (
@@ -681,6 +693,8 @@ export default function ArtistProfileScreen({ navigation, route }) {
 
                 </LinearGradient>
             </ScrollView>
+
+            <MiniPlayer bottomOffset={scale(24)} />
         </View>
     );
 }

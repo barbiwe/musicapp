@@ -79,46 +79,23 @@ export default function ProfileScreen({ navigation }) {
         useCallback(() => {
             if (!hasLoadedOnceRef.current) {
                 hasLoadedOnceRef.current = true;
-                loadProfileData();
+                loadProfileData({ force: false, silent: false });
                 return;
             }
-            syncLocalProfileData();
+            loadProfileData({ force: true, silent: true });
         }, [icons])
     );
 
-    const syncLocalProfileData = async () => {
-        try {
-            const [storedName, storedId] = await Promise.all([
-                AsyncStorage.getItem('username'),
-                AsyncStorage.getItem('userId'),
-            ]);
-
-            const safeUsername = storedName || 'User';
-            const safeAvatarUri = storedId ? `${getUserAvatarUrl(storedId)}?t=${Date.now()}` : null;
-
-            setUsername(safeUsername);
-            setAvatarUri(safeAvatarUri);
-
-            profileSessionCache = {
-                username: safeUsername,
-                avatarUri: safeAvatarUri,
-                icons: icons || getCachedIcons() || {},
-            };
-        } catch (_) {
-            // ignore local sync errors
-        }
-    };
-
-    const loadProfileData = async () => {
-        if (profileSessionCache) {
+    const loadProfileData = async ({ force = false, silent = false } = {}) => {
+        if (!force && profileSessionCache) {
             setUsername(profileSessionCache.username || 'User');
             setAvatarUri(profileSessionCache.avatarUri || null);
             setIcons(profileSessionCache.icons || getCachedIcons() || {});
-            setLoading(false);
+            if (!silent) setLoading(false);
             return;
         }
 
-        setLoading(true);
+        if (!silent) setLoading(true);
         try {
             // Завантажуємо іконки з бекенду
             const iconsData = await getIcons();
@@ -141,10 +118,10 @@ export default function ProfileScreen({ navigation }) {
                 icons: safeIcons,
             };
         } catch (e) {
-            hasLoadedOnceRef.current = false;
+            if (!silent) hasLoadedOnceRef.current = false;
             console.error("Profile Load Error:", e);
         } finally {
-            setLoading(false);
+            if (!silent) setLoading(false);
         }
     };
 
@@ -178,7 +155,7 @@ export default function ProfileScreen({ navigation }) {
             } else {
                 profileSessionCache = null;
                 hasLoadedOnceRef.current = false;
-                loadProfileData();
+                loadProfileData({ force: false, silent: false });
             }
         }
     };

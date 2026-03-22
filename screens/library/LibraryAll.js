@@ -142,7 +142,7 @@ export default function LibraryAll({ navigation }) {
     const [failedPrimaryCovers, setFailedPrimaryCovers] = useState({});
     const [brokenCovers, setBrokenCovers] = useState({});
 
-    const loadData = async ({ force = false } = {}) => {
+    const loadData = async ({ force = false, silent = false } = {}) => {
         if (!force && libraryAllSessionCache) {
             setIcons(libraryAllSessionCache.icons || {});
             setCards(libraryAllSessionCache.cards || []);
@@ -154,7 +154,7 @@ export default function LibraryAll({ navigation }) {
             return;
         }
 
-        setLoading(true);
+        if (!silent) setLoading(true);
 
         try {
             const [
@@ -171,14 +171,14 @@ export default function LibraryAll({ navigation }) {
             ] = await Promise.all([
                 getIcons(),
                 AsyncStorage.getItem('userToken'),
-                getLikedTracks(),
-                getMyPlaylists(),
-                getMyAlbums(),
-                getLikedAlbums(),
-                getAlbums(),
-                getAllPodcasts(),
-                getSubscriptions(),
-                getAllArtists(),
+                getLikedTracks({ force }),
+                getMyPlaylists({ force }),
+                getMyAlbums({ force }),
+                getLikedAlbums({ force }),
+                getAlbums({ force }),
+                getAllPodcasts({ force }),
+                getSubscriptions({ force }),
+                getAllArtists({ force }),
             ]);
 
             const likedTrackIds = extractLikedTrackIds(likedTracksRaw);
@@ -286,7 +286,7 @@ export default function LibraryAll({ navigation }) {
                 if (artistName) allArtistsByName.set(artistName.toLowerCase(), artist);
             });
 
-            const sourceArtists = subscriptions.length > 0 ? subscriptions : allArtists;
+            const sourceArtists = subscriptions;
             const normalizedArtists = sourceArtists
                 .map((item, index) => normalizeArtistFromSource(item, index))
                 .filter(Boolean);
@@ -345,32 +345,37 @@ export default function LibraryAll({ navigation }) {
                 cards: nextCards,
             };
         } catch (_) {
-            hasLoadedOnceRef.current = false;
-            const fallbackCards = [
-                {
-                    id: 'liked',
-                    type: 'liked',
-                    title: 'Liked songs',
-                    subtitle: '0 songs',
-                    imagePrimary: null,
-                },
-            ];
-            setCards(fallbackCards);
-            libraryAllSessionCache = {
-                icons: icons || {},
-                userToken: userToken || null,
-                cards: fallbackCards,
-            };
+            if (!silent) {
+                hasLoadedOnceRef.current = false;
+                const fallbackCards = [
+                    {
+                        id: 'liked',
+                        type: 'liked',
+                        title: 'Liked songs',
+                        subtitle: '0 songs',
+                        imagePrimary: null,
+                    },
+                ];
+                setCards(fallbackCards);
+                libraryAllSessionCache = {
+                    icons: icons || {},
+                    userToken: userToken || null,
+                    cards: fallbackCards,
+                };
+            }
         } finally {
-            setLoading(false);
+            if (!silent) setLoading(false);
         }
     };
 
     useEffect(() => {
         if (!isFocused) return;
-        if (hasLoadedOnceRef.current) return;
-        hasLoadedOnceRef.current = true;
-        loadData({ force: false });
+        if (!hasLoadedOnceRef.current) {
+            hasLoadedOnceRef.current = true;
+            loadData({ force: false });
+            return;
+        }
+        loadData({ force: true, silent: true });
     }, [isFocused]);
 
     const renderIcon = (iconName, style, tintColor = null) => {

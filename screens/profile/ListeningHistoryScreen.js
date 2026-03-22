@@ -67,6 +67,7 @@ const normalizeHistoryList = (raw) =>
 export default function ListeningHistoryScreen({ navigation }) {
     const { setTrack } = usePlayerStore();
     const hasLoadedOnceRef = useRef(Boolean(listeningHistorySessionCache));
+    const refreshInFlightRef = useRef(false);
     const [icons, setIcons] = useState(() => listeningHistorySessionCache?.icons || getCachedIcons() || {});
     const [history, setHistory] = useState(() =>
         Array.isArray(listeningHistorySessionCache?.history)
@@ -85,7 +86,7 @@ export default function ListeningHistoryScreen({ navigation }) {
         return () => { mounted = false; };
     }, [icons]);
 
-    const loadHistory = useCallback(async ({ force = false } = {}) => {
+    const loadHistory = useCallback(async ({ force = false, silent = false } = {}) => {
         if (!force && listeningHistorySessionCache) {
             setHistory(Array.isArray(listeningHistorySessionCache.history) ? listeningHistorySessionCache.history : []);
             setCoverMap(listeningHistorySessionCache.coverMap || {});
@@ -103,40 +104,50 @@ export default function ListeningHistoryScreen({ navigation }) {
             return;
         }
 
-        // 1) Спочатку показуємо кеш (щоб екран не ставав порожнім при тимчасовому фейлі API)
-        const cachedRaw = await getRecentlyPlayed(false);
-        const cached = normalizeHistoryList(cachedRaw);
-        if (cached.length > 0) {
-            setHistory(cached);
-        }
+        if (refreshInFlightRef.current) return;
+        refreshInFlightRef.current = true;
+        try {
+            // 1) Спочатку показуємо кеш (щоб екран не ставав порожнім при тимчасовому фейлі API)
+            const cachedRaw = await getRecentlyPlayed(false);
+            const cached = normalizeHistoryList(cachedRaw);
+            if (cached.length > 0) {
+                setHistory(cached);
+            }
 
-        // 2) Далі пробуємо свіже з бекенду
-        const freshRaw = await getRecentlyPlayed(true);
-        const fresh = normalizeHistoryList(freshRaw);
+            // 2) Далі пробуємо свіже з бекенду
+            const freshRaw = await getRecentlyPlayed(true);
+            const fresh = normalizeHistoryList(freshRaw);
 
-        // Якщо свіже порожнє, а кеш уже є — не перетираємо UI порожнім станом
-        if (fresh.length > 0 || cached.length === 0) {
-            setHistory(fresh);
-            listeningHistorySessionCache = {
-                history: fresh,
-                coverMap: listeningHistorySessionCache?.coverMap || {},
-                icons: icons || listeningHistorySessionCache?.icons || {},
-            };
-        } else if (cached.length > 0) {
-            listeningHistorySessionCache = {
-                history: cached,
-                coverMap: listeningHistorySessionCache?.coverMap || {},
-                icons: icons || listeningHistorySessionCache?.icons || {},
-            };
+            // Якщо свіже порожнє, а кеш уже є — не перетираємо UI порожнім станом
+            if (fresh.length > 0 || cached.length === 0) {
+                setHistory(fresh);
+                listeningHistorySessionCache = {
+                    history: fresh,
+                    coverMap: listeningHistorySessionCache?.coverMap || {},
+                    icons: icons || listeningHistorySessionCache?.icons || {},
+                };
+            } else if (cached.length > 0) {
+                listeningHistorySessionCache = {
+                    history: cached,
+                    coverMap: listeningHistorySessionCache?.coverMap || {},
+                    icons: icons || listeningHistorySessionCache?.icons || {},
+                };
+            }
+            hasLoadedOnceRef.current = true;
+        } catch (e) {
+            if (!silent) hasLoadedOnceRef.current = false;
+        } finally {
+            refreshInFlightRef.current = false;
         }
-        hasLoadedOnceRef.current = true;
     }, [icons]);
 
     useFocusEffect(
         useCallback(() => {
             if (!hasLoadedOnceRef.current) {
-                loadHistory({ force: false });
+                loadHistory({ force: false, silent: false });
+                return;
             }
+            loadHistory({ force: true, silent: true });
         }, [loadHistory])
     );
 

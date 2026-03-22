@@ -10,11 +10,19 @@ import {
     Image,
     Dimensions,
     Platform,
+    Alert,
 } from 'react-native';
 import { SvgXml } from 'react-native-svg';
 import { LinearGradient } from 'expo-linear-gradient';
 
-import { getAllArtists, getIcons, getUserAvatarUrl, scale } from '../../api/api';
+import {
+    getAllArtists,
+    getIcons,
+    getSubscriptions,
+    getUserAvatarUrl,
+    scale,
+    subscribeToArtist,
+} from '../../api/api';
 
 const { width, height } = Dimensions.get('window');
 
@@ -60,9 +68,23 @@ const ColoredSvg = ({ uri, width, height, color }) => {
     return <SvgXml xml={xml} width={width} height={height} />;
 };
 
+const hasReachableImage = (uri) =>
+    new Promise((resolve) => {
+        if (!uri) {
+            resolve(false);
+            return;
+        }
+        Image.getSize(
+            uri,
+            () => resolve(true),
+            () => resolve(false),
+        );
+    });
+
 export default function ChooseArtistScreen({ navigation }) {
     const [icons, setIcons] = useState(() => chooseArtistSessionCache?.icons || {});
     const [artistsData, setArtistsData] = useState(() => chooseArtistSessionCache?.artistsData || []);
+    const [isSubmitting, setIsSubmitting] = useState(false);
 
     // Стейт для зберігання ID вибраних артистів
     const [selectedArtists, setSelectedArtists] = useState([]);
@@ -84,7 +106,7 @@ export default function ChooseArtistScreen({ navigation }) {
     const ARTISTS_ROWS = chunkArray(ARTISTS_DATA, 3);
 
     useEffect(() => {
-        if (chooseArtistSessionCache) return;
+        if (chooseArtistSessionCache?.artistsData?.length > 0) return;
         loadIcons();
     }, []);
 
@@ -120,10 +142,7 @@ export default function ChooseArtistScreen({ navigation }) {
                 return {
                     id: `artist-${id}`,
                     title: name,
-                    image:
-                        item?.avatarUrl ||
-                        item?.artistAvatarUrl ||
-                        getUserAvatarUrl(id),
+                    image: getUserAvatarUrl(id),
                     order: index,
                 };
             };
@@ -141,10 +160,19 @@ export default function ChooseArtistScreen({ navigation }) {
                 uniq.push(artist);
             });
 
-            setArtistsData(uniq.slice(0, 11));
+            const visible = [];
+            for (const artist of uniq) {
+                // eslint-disable-next-line no-await-in-loop
+                const ok = await hasReachableImage(artist.image);
+                if (!ok) continue;
+                visible.push(artist);
+                if (visible.length >= 11) break;
+            }
+
+            setArtistsData(visible);
             chooseArtistSessionCache = {
                 icons: loadedIcons || {},
-                artistsData: uniq.slice(0, 11),
+                artistsData: visible,
             };
         } catch (e) {
             console.log("Error loading icons:", e);
@@ -179,10 +207,58 @@ export default function ChooseArtistScreen({ navigation }) {
     };
 
     const toggleSelection = (id) => {
+        if (isSubmitting) return;
         if (selectedArtists.includes(id)) {
             setSelectedArtists(selectedArtists.filter(item => item !== id));
         } else {
             setSelectedArtists([...selectedArtists, id]);
+        }
+    };
+
+    const handleConfirm = async () => {
+        if (isSubmitting || selectedArtists.length === 0) return;
+
+        setIsSubmitting(true);
+        try {
+            const artistIds = Array.from(
+                new Set(
+                    selectedArtists
+                        .map((value) => String(value || '').replace(/^artist-/, '').trim())
+                        .filter(Boolean)
+                )
+            );
+
+            if (artistIds.length === 0) {
+                navigation.goBack();
+                return;
+            }
+
+            const responses = await Promise.all(artistIds.map((id) => subscribeToArtist(id)));
+
+            const successCount = responses.filter((item) => item?.success).length;
+            const alreadyHandledCount = responses.filter((item) => {
+                if (item?.success) return false;
+                const text = String(item?.error || '').toLowerCase();
+                return (
+                    item?.status === 400 ||
+                    item?.status === 409 ||
+                    text.includes('already') ||
+                    text.includes('exists') ||
+                    text.includes('subscribed')
+                );
+            }).length;
+
+            if (successCount + alreadyHandledCount > 0) {
+                await getSubscriptions({ force: true });
+                navigation.goBack();
+                return;
+            }
+
+            Alert.alert('Error', 'Failed to subscribe to selected artists');
+        } catch (_) {
+            Alert.alert('Error', 'Failed to subscribe to selected artists');
+        } finally {
+            setIsSubmitting(false);
         }
     };
 
@@ -241,7 +317,7 @@ export default function ChooseArtistScreen({ navigation }) {
 
     };
 
-    const isConfirmDisabled = selectedArtists.length === 0;
+    const isConfirmDisabled = selectedArtists.length === 0 || isSubmitting;
 
     return (
         <View style={styles.container}>
@@ -291,9 +367,9 @@ export default function ChooseArtistScreen({ navigation }) {
                             style={[styles.confirmButton, isConfirmDisabled && { opacity: 0.5 }]}
                             activeOpacity={0.9}
                             disabled={isConfirmDisabled}
-                            onPress={() => console.log('Confirmed:', selectedArtists)}
+                            onPress={handleConfirm}
                         >
-                            <Text style={styles.confirmButtonText}>Confirm</Text>
+                            <Text style={styles.confirmButtonText}>{isSubmitting ? 'Saving...' : 'Confirm'}</Text>
                         </TouchableOpacity>
                     </View>
 

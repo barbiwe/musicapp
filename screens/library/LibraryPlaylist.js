@@ -84,12 +84,15 @@ export default function LibraryPlaylist({ navigation }) {
 
     useEffect(() => {
         if (!isFocused) return;
-        if (hasLoadedOnceRef.current) return;
-        hasLoadedOnceRef.current = true;
-        loadPlaylists({ force: false });
+        if (!hasLoadedOnceRef.current) {
+            hasLoadedOnceRef.current = true;
+            loadPlaylists({ force: false });
+            return;
+        }
+        loadPlaylists({ force: true, silent: true });
     }, [isFocused]);
 
-    const loadPlaylists = async ({ force = false } = {}) => {
+    const loadPlaylists = async ({ force = false, silent = false } = {}) => {
         if (!force && libraryPlaylistSessionCache) {
             setPlaylists(libraryPlaylistSessionCache.playlists || []);
             setUserToken(libraryPlaylistSessionCache.userToken || null);
@@ -100,10 +103,10 @@ export default function LibraryPlaylist({ navigation }) {
             return;
         }
 
-        setLoading(true);
+        if (!silent) setLoading(true);
         try {
             const [raw, token] = await Promise.all([
-                getMyPlaylists(),
+                getMyPlaylists({ force }),
                 AsyncStorage.getItem('userToken'),
             ]);
             const list = (Array.isArray(raw) ? raw : [])
@@ -133,14 +136,16 @@ export default function LibraryPlaylist({ navigation }) {
                 userToken: token || null,
             };
         } catch (_) {
-            hasLoadedOnceRef.current = false;
-            setPlaylists([]);
-            libraryPlaylistSessionCache = {
-                playlists: [],
-                userToken: null,
-            };
+            if (!silent) {
+                hasLoadedOnceRef.current = false;
+                setPlaylists([]);
+                libraryPlaylistSessionCache = {
+                    playlists: [],
+                    userToken: null,
+                };
+            }
         } finally {
-            setLoading(false);
+            if (!silent) setLoading(false);
         }
     };
 

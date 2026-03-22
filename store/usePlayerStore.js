@@ -74,6 +74,7 @@ let suppressQueueEndedUntil = 0;
 let adFinishTriggered = false;
 let progressPollInterval = null;
 let lastAutoAdvanceAt = 0;
+let progressNearEndAdvanceLockUntil = 0;
 const adImagePrefetchCache = new Set();
 const DEBUG_LOCKSCREEN = true;
 const debugLog = (...args) => {
@@ -196,6 +197,22 @@ const applyProgressSnapshot = (set, get, positionSec, durationSec) => {
         if (shouldPersist) {
             lastPodcastSaveTs = now;
             void upsertPodcastProgress(currentTrack, positionMs, effectiveDurationMs);
+        }
+    }
+
+    // Android fallback:
+    // Some devices don't reliably emit `PlaybackQueueEnded` / `PlaybackState.Ended`.
+    // If progress is already at track end while still "playing", advance manually.
+    const isNearEnd = effectiveDurationMs > 0 && positionMs >= Math.max(0, effectiveDurationMs - 320);
+    if (isNearEnd && get().isPlaying && !get().adModalVisible) {
+        const now = Date.now();
+        if (now >= progressNearEndAdvanceLockUntil) {
+            progressNearEndAdvanceLockUntil = now + 1200;
+            debugLog('auto-advance:progress-near-end', {
+                positionMs,
+                durationMs: effectiveDurationMs,
+            });
+            void get().playNext();
         }
     }
 };
@@ -422,6 +439,7 @@ export const usePlayerStore = create((set, get) => ({
         const { skipAd = false } = options;
         try {
             await ensurePlayerReady(set, get);
+            progressNearEndAdvanceLockUntil = 0;
 
             suppressQueueEndedUntil = Date.now() + 1200;
             try {
@@ -871,6 +889,7 @@ export const usePlayerStore = create((set, get) => ({
 
         clearProgressPolling();
         adFinishTriggered = false;
+        progressNearEndAdvanceLockUntil = 0;
         historyMarkedForCurrentTrack = false;
         lastPodcastSaveTs = 0;
 

@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system';
+import * as ImagePicker from 'expo-image-picker';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { useIsFocused } from '@react-navigation/native';
@@ -31,6 +32,7 @@ import {
     resolveArtistName,
     saveOfflineDownload,
     scale,
+    uploadPlaylistCover,
     unlikeTrack,
 } from '../../api/api';
 import RemoteTintIcon from '../../components/RemoteTintIcon';
@@ -202,6 +204,7 @@ export default function PlaylistDetailScreen({ navigation, route }) {
     const [copyingToPlaylistId, setCopyingToPlaylistId] = useState('');
     const [downloadingAll, setDownloadingAll] = useState(false);
     const [likingAll, setLikingAll] = useState(false);
+    const [uploadingCover, setUploadingCover] = useState(false);
 
     const resolveIconName = (name) => {
         if (!name) return '';
@@ -467,6 +470,42 @@ export default function PlaylistDetailScreen({ navigation, route }) {
         }
     };
 
+    const onPickAndUploadCover = async () => {
+        if (!playlist?.id || uploadingCover) return;
+
+        try {
+            const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+            if (permission?.status !== 'granted') {
+                Alert.alert('Permission needed', 'Allow gallery access to change playlist cover.');
+                return;
+            }
+
+            const result = await ImagePicker.launchImageLibraryAsync({
+                mediaTypes: ImagePicker.MediaTypeOptions.Images,
+                allowsEditing: true,
+                aspect: [1, 1],
+                quality: 0.85,
+            });
+
+            if (result?.canceled || !result?.assets?.length) return;
+
+            setUploadingCover(true);
+            const upload = await uploadPlaylistCover(playlist.id, result.assets[0]);
+
+            if (upload?.error) {
+                Alert.alert('Cover', typeof upload.error === 'string' ? upload.error : 'Failed to update cover');
+                return;
+            }
+
+            setMainCoverBroken(false);
+            setCoverVersion(Date.now());
+        } catch (_) {
+            Alert.alert('Cover', 'Failed to update cover');
+        } finally {
+            setUploadingCover(false);
+        }
+    };
+
     const onOpenMore = () => {
         setMoreVisible(true);
     };
@@ -574,28 +613,42 @@ export default function PlaylistDetailScreen({ navigation, route }) {
                 ) : (
                     <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
                         <View style={styles.coverWrap}>
-                            {playlistCoverUri && !mainCoverBroken ? (
-                                <Image
-                                    source={
-                                        userToken
-                                            ? {
-                                                uri: playlistCoverUri,
-                                                headers: { Authorization: `Bearer ${userToken}` },
-                                            }
-                                            : { uri: playlistCoverUri }
-                                    }
-                                    style={styles.mainCover}
-                                    resizeMode="cover"
-                                    onError={() => setMainCoverBroken(true)}
-                                />
-                            ) : (
-                                <View style={[styles.mainCover, styles.mainCoverFallback]}>
-                                    <Text style={styles.mainCoverFallbackText}>
-                                        {(playlist?.name || 'P').charAt(0).toUpperCase()}
-                                    </Text>
-                                </View>
-                            )}
+                            <TouchableOpacity
+                                activeOpacity={0.9}
+                                onPress={onPickAndUploadCover}
+                                style={styles.mainCoverTouch}
+                                disabled={uploadingCover}
+                            >
+                                {playlistCoverUri && !mainCoverBroken ? (
+                                    <Image
+                                        source={
+                                            userToken
+                                                ? {
+                                                    uri: playlistCoverUri,
+                                                    headers: { Authorization: `Bearer ${userToken}` },
+                                                }
+                                                : { uri: playlistCoverUri }
+                                        }
+                                        style={styles.mainCover}
+                                        resizeMode="cover"
+                                        onError={() => setMainCoverBroken(true)}
+                                    />
+                                ) : (
+                                    <View style={[styles.mainCover, styles.mainCoverFallback]}>
+                                        <Text style={styles.mainCoverFallbackText}>
+                                            {(playlist?.name || 'P').charAt(0).toUpperCase()}
+                                        </Text>
+                                    </View>
+                                )}
+
+                                {uploadingCover ? (
+                                    <View style={styles.coverUploadingOverlay}>
+                                        <ActivityIndicator size="small" color="#F5D8CB" />
+                                    </View>
+                                ) : null}
+                            </TouchableOpacity>
                         </View>
+                        <Text style={styles.coverHint}>Tap cover to change</Text>
 
                         <Text style={styles.playlistName} numberOfLines={2}>
                             {playlist?.name || 'Playlist'}
@@ -787,15 +840,17 @@ const styles = StyleSheet.create({
     },
     coverWrap: {
         alignItems: 'center',
-        marginBottom: 0,
+        marginBottom: scale(6),
         marginTop: scale(10),
+    },
+    mainCoverTouch: {
+        borderRadius: scale(24),
     },
     mainCover: {
         width: scale(198),
         height: scale(198),
         borderRadius: scale(24),
         backgroundColor: '#2d1312',
-        marginBottom: scale(20),
     },
     mainCoverFallback: {
         alignItems: 'center',
@@ -806,6 +861,25 @@ const styles = StyleSheet.create({
         color: '#F5D8CB',
         fontFamily: 'Unbounded-SemiBold',
         fontSize: scale(64),
+    },
+    coverUploadingOverlay: {
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        top: 0,
+        bottom: 0,
+        borderRadius: scale(24),
+        backgroundColor: 'rgba(0, 0, 0, 0.35)',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    coverHint: {
+        marginTop: 0,
+        marginBottom: scale(10),
+        color: 'rgba(245,216,203,0.75)',
+        fontFamily: 'Poppins-Regular',
+        fontSize: scale(11),
+        textAlign: 'center',
     },
     playlistName: {
         color: '#fff',
