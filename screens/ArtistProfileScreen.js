@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
     View,
     Text,
@@ -24,6 +24,7 @@ import {
     unsubscribeFromArtist,
     getArtistSubscriptionStatus,
     getArtistFollowersCount,
+    getTrackPlays,
     getSubscriptions,
     resolveArtistName,
     scale
@@ -163,6 +164,14 @@ const collectArtistIdCandidates = (artist, artistTracks, explicitArtistId) => {
     return [...new Set(ids.filter(Boolean).map((id) => String(id)))];
 };
 
+const resolveTrackId = (track) =>
+    track?.id ||
+    track?.Id ||
+    track?._id ||
+    track?.trackId ||
+    track?.TrackId ||
+    null;
+
 const artistProfileSessionCache = new Map();
 
 export default function ArtistProfileScreen({ navigation, route }) {
@@ -172,6 +181,7 @@ export default function ArtistProfileScreen({ navigation, route }) {
 
     const [loading, setLoading] = useState(true);
     const [tracks, setTracks] = useState([]);
+    const [trackPlaysMap, setTrackPlaysMap] = useState({});
     const [albums, setAlbums] = useState([]); // 👇 Стейт для альбомів
     const [icons, setIcons] = useState({});
     const [isFollowing, setIsFollowing] = useState(false);
@@ -184,6 +194,7 @@ export default function ArtistProfileScreen({ navigation, route }) {
         const cached = artistProfileSessionCache.get(profileCacheKey);
         if (cached) {
             setTracks(cached.tracks || []);
+            setTrackPlaysMap(cached.trackPlaysMap || {});
             setAlbums(cached.albums || []);
             setIcons(cached.icons || {});
             setSubscriptionArtistId(cached.subscriptionArtistId || (artistId ? String(artistId) : null));
@@ -222,6 +233,21 @@ export default function ArtistProfileScreen({ navigation, route }) {
                 normalizeName(resolveArtistName(t, '')) === artistNameKey
             );
             setTracks(artistTracks);
+
+            const playPairs = await Promise.all(
+                artistTracks.map(async (track) => {
+                    const id = resolveTrackId(track);
+                    if (!id) return [null, 0];
+                    const plays = await getTrackPlays(id);
+                    return [String(id), Number(plays) || 0];
+                })
+            );
+            const nextTrackPlaysMap = playPairs.reduce((acc, [id, plays]) => {
+                if (!id) return acc;
+                acc[id] = plays;
+                return acc;
+            }, {});
+            setTrackPlaysMap(nextTrackPlaysMap);
 
             // 2. Фільтруємо АЛЬБОМИ артиста (за ownerId або artist name)
             const artistAlbums = Array.isArray(albumsRes) ? albumsRes.filter(a =>
@@ -285,6 +311,7 @@ export default function ArtistProfileScreen({ navigation, route }) {
             setFollowersCount(Number(nextFollowers) || 0);
             artistProfileSessionCache.set(cacheKey, {
                 tracks: artistTracks,
+                trackPlaysMap: nextTrackPlaysMap,
                 albums: artistAlbums,
                 icons: iconsRes || {},
                 subscriptionArtistId: detectedArtistId || null,
@@ -371,6 +398,36 @@ export default function ArtistProfileScreen({ navigation, route }) {
     const avatarUrl = avatarSourceUserId ? getUserAvatarUrl(avatarSourceUserId) : null;
     const artistCountry = artist?.country || artist?.location || artist?.artistCountry || 'USA';
     const artistRole = artist?.role || artist?.type || 'Rapper';
+
+    const popularTracks = useMemo(() => {
+        const withPlays = tracks.map((track, index) => {
+            const id = resolveTrackId(track);
+            return {
+                track,
+                index,
+                id: id ? String(id) : `idx-${index}`,
+                plays: id ? Number(trackPlaysMap[String(id)]) || 0 : 0,
+            };
+        });
+
+        return withPlays
+            .sort((a, b) => (b.plays - a.plays) || (a.index - b.index))
+            .slice(0, 3)
+            .map((item) => item.track);
+    }, [tracks, trackPlaysMap]);
+
+    const allSongsTracks = useMemo(() => {
+        const popularIds = new Set(
+            popularTracks
+                .map((track) => resolveTrackId(track))
+                .filter(Boolean)
+                .map((id) => String(id))
+        );
+        return tracks.filter((track) => {
+            const id = resolveTrackId(track);
+            return !id || !popularIds.has(String(id));
+        });
+    }, [tracks, popularTracks]);
 
     if (loading) {
         return (
@@ -549,18 +606,46 @@ export default function ArtistProfileScreen({ navigation, route }) {
                     )}
 
                     {/* --- POPULAR SONGS --- */}
+                    {popularTracks.length > 0 && (
+                        <View style={styles.section}>
+                            <Text style={styles.sectionTitle}>Popular Songs</Text>
+                            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.popularScrollContent}>
+                                {popularTracks.map((track, index) => {
+                                    const cover = getTrackCoverUrl(track);
+                                    return (
+                                        <TouchableOpacity
+                                            key={resolveTrackId(track) || `popular-${index}`}
+                                            style={styles.popularCard}
+                                            onPress={() => navigation.navigate('Player', { track })}
+                                        >
+                                            {cover ? (
+                                                <Image source={{ uri: cover }} style={styles.popularImage} resizeMode="cover" />
+                                            ) : (
+                                                <View style={styles.popularImagePlaceholder} />
+                                            )}
+                                            <Text style={styles.popularTitle} numberOfLines={1}>{track?.title || 'Unknown'}</Text>
+                                            <Text style={styles.popularArtist} numberOfLines={1}>
+                                                {resolveArtistName(track, artist?.name || 'Unknown')}
+                                            </Text>
+                                        </TouchableOpacity>
+                                    );
+                                })}
+                            </ScrollView>
+                        </View>
+                    )}
+
+                    {/* --- ALL SONGS --- */}
                     <View style={styles.section}>
-                        <Text style={styles.sectionTitle}>Popular Songs</Text>
+                        <Text style={styles.sectionTitle}>All Songs</Text>
                         <View style={{ paddingHorizontal: scale(16) }}>
-                            {tracks.map((t, i) => {
+                            {allSongsTracks.map((t, i) => {
                                 const cover = getTrackCoverUrl(t);
                                 return (
-                                    <View key={i}>
+                                    <View key={resolveTrackId(t) || `song-${i}`}>
                                         <TouchableOpacity
                                             style={styles.songRow}
-                                            onPress={() => navigation.navigate('Player', { track: t, })}
+                                            onPress={() => navigation.navigate('Player', { track: t })}
                                         >
-                                            {/* ВІНІЛ */}
                                             <View style={styles.vinylContainer}>
                                                 {cover ? (
                                                     <Image
@@ -577,20 +662,17 @@ export default function ArtistProfileScreen({ navigation, route }) {
                                                 </View>
                                             </View>
 
-                                            {/* ІНФО */}
                                             <View style={styles.songInfo}>
                                                 <Text style={styles.songTitle} numberOfLines={1}>{t.title}</Text>
-                                                <Text style={styles.songArtist} numberOfLines={1}>{t.artist?.name || artist?.name}</Text>
+                                                <Text style={styles.songArtist} numberOfLines={1}>{resolveArtistName(t, artist?.name || 'Unknown')}</Text>
                                             </View>
 
-                                            {/* ЛАЙК */}
                                             <TouchableOpacity>
                                                 {renderIcon('hurt.svg', { width: 24, height: 24 }, '#fff')}
                                             </TouchableOpacity>
                                         </TouchableOpacity>
 
-                                        {/* Розділова лінія */}
-                                        {i < tracks.length - 1 && <View style={styles.separator} />}
+                                        {i < allSongsTracks.length - 1 && <View style={styles.separator} />}
                                     </View>
                                 );
                             })}
@@ -648,13 +730,13 @@ const styles = StyleSheet.create({
         marginBottom: scale(6),
     },
     metaTextMock: {
-        color: '#FF4D4F',
+        color: '#F5D8CB',
         fontSize: scale(18),
         fontFamily: 'Unbounded-SemiBold',
         textTransform: 'uppercase',
     },
     metaDotMock: {
-        color: '#FF4D4F',
+        color: '#F5D8CB',
         marginHorizontal: scale(10),
         fontSize: scale(18),
         fontFamily: 'Unbounded-SemiBold',
@@ -694,7 +776,7 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     statNumber: {
-        color: '#FF4D4F',
+        color: '#F5D8CB',
         fontSize: scale(20),
         fontFamily: 'Unbounded-Regular',
     },
@@ -702,7 +784,7 @@ const styles = StyleSheet.create({
         color: '#F5D8CB',
     },
     statLabel: {
-        color: '#FF4D4F',
+        color: '#F5D8CB',
         fontSize: scale(14),
         fontFamily: 'Poppins-Regular',
     },
@@ -710,7 +792,7 @@ const styles = StyleSheet.create({
         color: '#F5D8CB',
     },
     bioText: {
-        color: '#FF4D4F',
+        color: '#F5D8CB',
         fontSize: scale(14),
         fontFamily: 'Poppins-Regular',
         lineHeight: scale(20),
@@ -721,6 +803,37 @@ const styles = StyleSheet.create({
     section: {
         marginTop: scale(10),
         marginBottom: scale(20),
+    },
+    popularScrollContent: {
+        paddingHorizontal: scale(16),
+    },
+    popularCard: {
+        width: scale(120),
+        marginRight: scale(16),
+    },
+    popularImage: {
+        width: scale(120),
+        height: scale(120),
+        borderRadius: scale(20),
+        marginBottom: scale(8),
+    },
+    popularImagePlaceholder: {
+        width: scale(120),
+        height: scale(120),
+        borderRadius: scale(20),
+        marginBottom: scale(8),
+        backgroundColor: 'rgba(255,255,255,0.12)',
+    },
+    popularTitle: {
+        color: '#FFFFFF',
+        fontSize: scale(14),
+        fontFamily: 'Poppins-Medium',
+    },
+    popularArtist: {
+        color: '#B9B9B9',
+        fontSize: scale(12),
+        fontFamily: 'Poppins-Regular',
+        marginTop: scale(2),
     },
     sectionTitle: {
         fontSize: scale(24),

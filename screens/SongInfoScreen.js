@@ -458,7 +458,7 @@ const styles = StyleSheet.create({
         columnGap: scale(8),
     },
     mockTag: {
-        color: '#FF4D4F',
+        color: '#F5D8CB',
         fontSize: scale(12),
         fontFamily: 'Poppins-SemiBold',
         textTransform: 'uppercase',
@@ -470,7 +470,7 @@ const styles = StyleSheet.create({
         marginBottom: scale(4),
     },
     detailTextMock: {
-        color: '#FF4D4F',
+        color: '#F5D8CB',
     },
     separator: {
         height: 1,
