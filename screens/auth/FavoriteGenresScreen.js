@@ -40,8 +40,6 @@ const normalizeGenres = (rawGenres) => {
         .filter(Boolean);
 };
 
-const GUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
 const extractErrorText = (errorValue) => {
     if (!errorValue) return '';
     if (typeof errorValue === 'string') return errorValue;
@@ -106,7 +104,8 @@ export default function FavoriteGenresScreen({ navigation }) {
         try {
             const genreIds = selectedGenresData
                 .map((g) => String(g.id || ''))
-                .filter((id) => GUID_REGEX.test(id));
+                .map((id) => id.trim())
+                .filter(Boolean);
             const genreNames = selectedGenresData.map((g) => g.label);
 
             const saveResult = await saveFavoriteGenres(genreIds);
@@ -171,7 +170,12 @@ export default function FavoriteGenresScreen({ navigation }) {
                         return (
                             <TouchableOpacity
                                 key={genre.id}
-                                style={[styles.genreChip, isSelected && styles.genreChipSelected]}
+                                style={[
+                                    styles.genreChipTouch,
+                                    styles.genreChip,
+                                    isSelected && styles.genreChipSelected,
+                                    isSelected ? styles.genreChipFallbackSelected : styles.genreChipFallback,
+                                ]}
                                 onPress={() => toggleGenre(genre.id)}
                                 activeOpacity={0.85}
                             >
@@ -247,9 +251,11 @@ const styles = StyleSheet.create({
         paddingHorizontal: scale(1),
         paddingBottom: scale(12),
     },
-    genreChip: {
+    genreChipTouch: {
         marginHorizontal: scale(7),
         marginBottom: scale(14),
+    },
+    genreChip: {
         borderWidth: 1,
         borderColor: 'rgba(245, 216, 203, 0.55)',
         borderRadius: scale(18.5),
@@ -257,11 +263,16 @@ const styles = StyleSheet.create({
         minHeight: scale(37),
         justifyContent: 'center',
         alignItems: 'center',
-        backgroundColor: 'rgba(35, 9, 9, 0.42)',
+        backgroundColor: 'transparent',
     },
     genreChipSelected: {
-        backgroundColor: 'rgba(245, 216, 203, 0.22)',
         borderColor: 'rgba(245, 216, 203, 0.85)',
+    },
+    genreChipFallback: {
+        backgroundColor: 'rgba(48, 12, 10, 0.2)',
+    },
+    genreChipFallbackSelected: {
+        backgroundColor: 'rgba(245, 216, 203, 0.22)',
     },
     genreChipText: {
         color: '#F5D8CB',

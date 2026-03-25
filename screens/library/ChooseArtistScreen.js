@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
     View,
     Text,
@@ -11,9 +11,12 @@ import {
     Dimensions,
     Platform,
     Alert,
+    ActivityIndicator,
 } from 'react-native';
 import { SvgXml } from 'react-native-svg';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useIsFocused } from '@react-navigation/native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import {
     getAllArtists,
@@ -68,31 +71,25 @@ const ColoredSvg = ({ uri, width, height, color }) => {
     return <SvgXml xml={xml} width={width} height={height} />;
 };
 
-const hasReachableImage = (uri) =>
-    new Promise((resolve) => {
-        if (!uri) {
-            resolve(false);
-            return;
-        }
-        Image.getSize(
-            uri,
-            () => resolve(true),
-            () => resolve(false),
-        );
-    });
-
 export default function ChooseArtistScreen({ navigation }) {
+    const isFocused = useIsFocused();
+    const hasLoadedOnceRef = useRef(Boolean(chooseArtistSessionCache?.artistsData?.length));
     const [icons, setIcons] = useState(() => chooseArtistSessionCache?.icons || {});
     const [artistsData, setArtistsData] = useState(() => chooseArtistSessionCache?.artistsData || []);
+    const [brokenImages, setBrokenImages] = useState({});
+    const [loading, setLoading] = useState(!chooseArtistSessionCache?.artistsData?.length);
     const [isSubmitting, setIsSubmitting] = useState(false);
 
     // Стейт для зберігання ID вибраних артистів
     const [selectedArtists, setSelectedArtists] = useState([]);
 
-    const ARTISTS_DATA = [
-        ...artistsData.slice(0, 11),
-        { id: 'rec', title: 'Recommended for u', isRecommended: true },
-    ];
+    const ARTISTS_DATA = useMemo(
+        () => [
+            ...artistsData.slice(0, 11),
+            { id: 'rec', title: 'Recommended for u', isRecommended: true },
+        ],
+        [artistsData]
+    );
 
     // Функція для розбиття масиву на рядки по 3 елементи
     const chunkArray = (arr, size) => {
@@ -106,17 +103,48 @@ export default function ChooseArtistScreen({ navigation }) {
     const ARTISTS_ROWS = chunkArray(ARTISTS_DATA, 3);
 
     useEffect(() => {
-        if (chooseArtistSessionCache?.artistsData?.length > 0) return;
-        loadIcons();
-    }, []);
+        if (!isFocused) return;
+        if (!hasLoadedOnceRef.current) {
+            hasLoadedOnceRef.current = true;
+            loadArtistsData({ force: false, silent: false });
+            return;
+        }
+        loadArtistsData({ force: true, silent: true });
+    }, [isFocused]);
 
-    const loadIcons = async () => {
+    const loadArtistsData = async ({ force = false, silent = false } = {}) => {
+        if (!silent) setLoading(true);
         try {
-            const [loadedIcons, allArtistsRaw] = await Promise.all([
+            const userId = await AsyncStorage.getItem('userId');
+            if (!force && chooseArtistSessionCache && chooseArtistSessionCache.userId === userId) {
+                setIcons(chooseArtistSessionCache.icons || {});
+                setArtistsData(chooseArtistSessionCache.artistsData || []);
+                setBrokenImages({});
+                if (!silent) setLoading(false);
+                return;
+            }
+
+            const [loadedIcons, allArtistsRaw, subscriptionsRaw] = await Promise.all([
                 getIcons(),
-                getAllArtists(),
+                getAllArtists({ force }),
+                getSubscriptions({ force }),
             ]);
             setIcons(loadedIcons || {});
+
+            const subscribedArtistIds = new Set(
+                (Array.isArray(subscriptionsRaw) ? subscriptionsRaw : [])
+                    .map((item) =>
+                        String(
+                            item?.artistId ||
+                            item?.ArtistId ||
+                            item?.id ||
+                            item?._id ||
+                            item?.artist?.id ||
+                            ''
+                        ).trim()
+                    )
+                    .filter(Boolean)
+            );
 
             const normalizeArtist = (item, index) => {
                 const id = String(
@@ -139,10 +167,26 @@ export default function ChooseArtistScreen({ navigation }) {
 
                 if (!id || !name) return null;
 
+                const ownerId = String(
+                    item?.ownerId ||
+                    item?.userId ||
+                    item?.artist?.ownerId ||
+                    item?.artist?.userId ||
+                    ''
+                ).trim();
+
+                const image =
+                    item?.avatarUrl ||
+                    item?.artistAvatarUrl ||
+                    item?.imageUrl ||
+                    item?.coverUrl ||
+                    getUserAvatarUrl(ownerId || id);
+
                 return {
                     id: `artist-${id}`,
+                    artistId: id,
                     title: name,
-                    image: getUserAvatarUrl(id),
+                    image,
                     order: index,
                 };
             };
@@ -150,7 +194,8 @@ export default function ChooseArtistScreen({ navigation }) {
             const allArtists = Array.isArray(allArtistsRaw) ? allArtistsRaw : [];
             const normalized = allArtists
                 .map((item, index) => normalizeArtist(item, index))
-                .filter(Boolean);
+                .filter(Boolean)
+                .filter((artist) => !subscribedArtistIds.has(artist.artistId));
 
             const uniq = [];
             const used = new Set();
@@ -160,22 +205,24 @@ export default function ChooseArtistScreen({ navigation }) {
                 uniq.push(artist);
             });
 
-            const visible = [];
-            for (const artist of uniq) {
-                // eslint-disable-next-line no-await-in-loop
-                const ok = await hasReachableImage(artist.image);
-                if (!ok) continue;
-                visible.push(artist);
-                if (visible.length >= 11) break;
-            }
+            const visible = uniq.slice(0, 11);
 
             setArtistsData(visible);
+            setBrokenImages({});
             chooseArtistSessionCache = {
+                userId,
                 icons: loadedIcons || {},
                 artistsData: visible,
             };
         } catch (e) {
-            console.log("Error loading icons:", e);
+            if (!silent) {
+                hasLoadedOnceRef.current = false;
+            }
+            if (!chooseArtistSessionCache) {
+                setArtistsData([]);
+            }
+        } finally {
+            if (!silent) setLoading(false);
         }
     };
 
@@ -250,6 +297,8 @@ export default function ChooseArtistScreen({ navigation }) {
 
             if (successCount + alreadyHandledCount > 0) {
                 await getSubscriptions({ force: true });
+                chooseArtistSessionCache = null;
+                hasLoadedOnceRef.current = false;
                 navigation.goBack();
                 return;
             }
@@ -290,11 +339,23 @@ export default function ChooseArtistScreen({ navigation }) {
                 activeOpacity={0.8}
                 onPress={() => toggleSelection(item.id)}
             >
-                <View style={[styles.imageWrapper, isSelected && { zIndex: 10 }]}>
+                    <View style={[styles.imageWrapper, isSelected && { zIndex: 10 }]}>
 
-                    {/* 👇 Огорнули картинку і градієнт в новий контейнер, щоб вони ідеально обрізались по колу */}
-                    <View style={styles.circleContainer}>
-                        <Image source={{ uri: item.image }} style={styles.imageCircle} />
+                        {/* 👇 Огорнули картинку і градієнт в новий контейнер, щоб вони ідеально обрізались по колу */}
+                        <View style={styles.circleContainer}>
+                            {item.image && !brokenImages[item.id] ? (
+                                <Image
+                                    source={{ uri: item.image }}
+                                    style={styles.imageCircle}
+                                    onError={() => setBrokenImages((prev) => ({ ...prev, [item.id]: true }))}
+                                />
+                            ) : (
+                                <View style={[styles.imageCircle, styles.imageFallback]}>
+                                    <Text style={styles.imageFallbackText}>
+                                        {(item.title || '?').charAt(0).toUpperCase()}
+                                    </Text>
+                                </View>
+                            )}
 
                         {isSelected && (
                             <LinearGradient
@@ -352,14 +413,20 @@ export default function ChooseArtistScreen({ navigation }) {
                         bounces={false}
                         contentContainerStyle={{ paddingTop: scale(6), paddingBottom: scale(120) }}
                     >
-                        <View style={styles.gridContainer}>
-                            {ARTISTS_ROWS.map((row, rowIndex) => (
-                                <View key={rowIndex} style={styles.rowContainer}>
-                                    {row.map((item) => renderCard(item))}
+                    <View style={styles.gridContainer}>
+                            {loading ? (
+                                <View style={styles.loaderWrap}>
+                                    <ActivityIndicator size="small" color="#F5D8CB" />
                                 </View>
-                            ))}
-                        </View>
-                    </ScrollView>
+                            ) : (
+                                ARTISTS_ROWS.map((row, rowIndex) => (
+                                    <View key={rowIndex} style={styles.rowContainer}>
+                                        {row.map((item) => renderCard(item))}
+                                    </View>
+                                ))
+                            )}
+                    </View>
+                </ScrollView>
 
                     {/* CONFIRM BUTTON */}
                     <View style={styles.bottomButtonContainer}>
@@ -414,6 +481,12 @@ const styles = StyleSheet.create({
     gridContainer: {
         paddingHorizontal: scale(20),
     },
+    loaderWrap: {
+        width: '100%',
+        minHeight: scale(140),
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
     rowContainer: {
         flexDirection: 'row',
         justifyContent: 'flex-start',
@@ -444,6 +517,16 @@ const styles = StyleSheet.create({
         height: ITEM_WIDTH,
         borderRadius: CIRCLE_RADIUS,
         backgroundColor: '#333',
+    },
+    imageFallback: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'rgba(30, 10, 8, 0.85)',
+    },
+    imageFallbackText: {
+        color: '#F5D8CB',
+        fontSize: scale(24),
+        fontFamily: 'Unbounded-SemiBold',
     },
     title: {
         color: '#F5D8CB',

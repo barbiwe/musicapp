@@ -459,6 +459,32 @@ export default function AlbumDetailScreen({ route, navigation }) {
         });
     };
 
+    const handleAddAlbumToPlaylist = () => {
+        closeModal();
+        const trackIds = (Array.isArray(albumTracks) ? albumTracks : [])
+            .map((track) =>
+                String(
+                    track?.id ||
+                    track?._id ||
+                    track?.trackId ||
+                    track?.TrackId ||
+                    track?.track?.id ||
+                    ''
+                ).trim()
+            )
+            .filter(Boolean);
+
+        if (!trackIds.length) {
+            Alert.alert('Playlist', 'No tracks in album');
+            return;
+        }
+
+        navigation.navigate('AddToPlaylist', {
+            title: 'Add to playlist',
+            trackIds,
+        });
+    };
+
     const openShareModal = () => {
         setShareVisible(true);
     };
@@ -732,17 +758,11 @@ export default function AlbumDetailScreen({ route, navigation }) {
                                             <Text style={styles.modalTitle}>More</Text>
 
                                             <ScrollView style={styles.modalScroll} showsVerticalScrollIndicator={false}>
-                                                <TouchableOpacity
-                                                    style={[styles.menuItemCapsule, styles.menuItemCapsuleStub]}
-                                                    onPress={() => {
-                                                        closeModal();
-                                                        Alert.alert('Playlist', 'Function coming soon');
-                                                    }}
-                                                >
-                                                    <View style={[styles.menuItemIconCircle, styles.menuItemIconCircleStub]}>
-                                                        {renderIcon('add to another playlist.svg', '', { width: scale(24), height: scale(24) }, '#FF4D4F')}
+                                                <TouchableOpacity style={styles.menuItemCapsule} onPress={handleAddAlbumToPlaylist}>
+                                                    <View style={styles.menuItemIconCircle}>
+                                                        {renderIcon('add to another playlist.svg', '', { width: scale(24), height: scale(24) }, '#F5D8CB')}
                                                     </View>
-                                                    <Text style={[styles.menuItemText, styles.menuItemTextStub]}>Add to another playlist</Text>
+                                                    <Text style={styles.menuItemText}>Add to another playlist</Text>
                                                 </TouchableOpacity>
 
                                                 <TouchableOpacity

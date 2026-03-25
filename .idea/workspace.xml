@@ -4,7 +4,22 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="4dc7471c-7e11-428f-9b6d-dd157181614d" name="Changes" comment="..." />
+    <list default="true" id="4dc7471c-7e11-428f-9b6d-dd157181614d" name="Changes" comment="...">
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/App.js" beforeDir="false" afterPath="$PROJECT_DIR$/App.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/api/api.js" beforeDir="false" afterPath="$PROJECT_DIR$/api/api.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/screens/AlbumDetailScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/AlbumDetailScreen.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/screens/AlbumListScreen.js" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/screens/CreateAlbumScreen.js" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/screens/MusicScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/MusicScreen.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/screens/PlayerScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/PlayerScreen.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/screens/auth/CreateNewPasswordScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/auth/CreateNewPasswordScreen.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/screens/auth/FavoriteGenresScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/auth/FavoriteGenresScreen.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/screens/library/ChooseArtistScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/library/ChooseArtistScreen.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/screens/library/PlaylistDetailScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/library/PlaylistDetailScreen.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/screens/profile/EditProfileScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/profile/EditProfileScreen.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/screens/profile/ProfileScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/profile/ProfileScreen.js" afterDir="false" />
+    </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -94,7 +109,7 @@
       <workItem from="1773760871902" duration="11245000" />
       <workItem from="1773782618521" duration="27478000" />
       <workItem from="1774027160202" duration="940000" />
-      <workItem from="1774029764387" duration="19720000" />
+      <workItem from="1774029764387" duration="27412000" />
     </task>
     <servers />
   </component>

@@ -32,7 +32,6 @@ import {
     getPodcastGenres,
     refreshUserToken,
     scale,
-    submitPodcast,
     uploadTrack,
 } from '../api/api';
 import RemoteTintIcon from '../components/RemoteTintIcon';
@@ -49,11 +48,6 @@ const createAlbumTrackDraft = () => ({
     title: '',
     file: null,
 });
-const isPendingStatus = (status) => {
-    if (status === null || status === undefined) return false;
-    const raw = String(status).trim().toLowerCase();
-    return raw === 'pending' || raw === '1';
-};
 const isArtistRoleValue = (value) => {
     if (value === null || value === undefined) return false;
     if (Array.isArray(value)) return value.some(isArtistRoleValue);
@@ -120,10 +114,10 @@ export default function MusicScreen({ navigation, route }) {
     const [isPodcastGenreModalVisible, setPodcastGenreModalVisible] = useState(false);
     const [isPodcastGenreOpen, setIsPodcastGenreOpen] = useState(false);
     const [podcastCover, setPodcastCover] = useState(null);
-    const [podcastAudio, setPodcastAudio] = useState(null); // main audio = episode 1
     const [episodeDraftTitle, setEpisodeDraftTitle] = useState('');
     const [episodeDraftDescription, setEpisodeDraftDescription] = useState('');
     const [episodeDraftAudio, setEpisodeDraftAudio] = useState(null);
+    const [podcastEpisodes, setPodcastEpisodes] = useState([]);
     const [podcastLoading, setPodcastLoading] = useState(false);
 
     const closeAnyModal = () => {
@@ -340,20 +334,6 @@ export default function MusicScreen({ navigation, route }) {
         }
     };
 
-    const pickPodcastAudio = async () => {
-        try {
-            const result = await DocumentPicker.getDocumentAsync({
-                type: 'audio/*',
-                copyToCacheDirectory: true,
-            });
-            if (!result.canceled && result.assets?.length) {
-                setPodcastAudio(result.assets[0]);
-            }
-        } catch (_) {
-            Alert.alert('Error', 'Failed to pick podcast audio.');
-        }
-    };
-
     const pickPodcastEpisodeAudio = async () => {
         try {
             const result = await DocumentPicker.getDocumentAsync({
@@ -366,6 +346,37 @@ export default function MusicScreen({ navigation, route }) {
         } catch (_) {
             Alert.alert('Error', 'Failed to pick episode audio.');
         }
+    };
+
+    const buildEpisodeFromDraft = (indexHint = 0) => {
+        if (!episodeDraftAudio?.uri) return null;
+        const episodeNumber = Math.max(1, Number(indexHint) || 1);
+        const safeTitle = String(episodeDraftTitle || '').trim() || `Episode ${episodeNumber}`;
+        const safeDescription = String(episodeDraftDescription || '').trim();
+
+        return {
+            id: `podcast-ep-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            audio: episodeDraftAudio,
+            title: safeTitle,
+            description: safeDescription,
+        };
+    };
+
+    const handleAddPodcastEpisode = () => {
+        const episode = buildEpisodeFromDraft(podcastEpisodes.length + 1);
+        if (!episode) {
+            Alert.alert('Error', 'Select episode audio before adding.');
+            return;
+        }
+
+        setPodcastEpisodes((prev) => [...prev, episode]);
+        setEpisodeDraftTitle('');
+        setEpisodeDraftDescription('');
+        setEpisodeDraftAudio(null);
+    };
+
+    const removePodcastEpisode = (episodeId) => {
+        setPodcastEpisodes((prev) => prev.filter((item) => item.id !== episodeId));
     };
 
     const handleUploadTrack = async () => {
@@ -431,37 +442,27 @@ export default function MusicScreen({ navigation, route }) {
             Alert.alert('Error', 'Select podcast cover.');
             return;
         }
-        if (!podcastAudio?.uri) {
-            Alert.alert('Error', 'Select podcast audio.');
-            return;
-        }
         if (!selectedPodcastGenreIds.length) {
             Alert.alert('Error', 'Select at least one podcast genre.');
             return;
         }
-        if (!episodeDraftAudio?.uri) {
-            Alert.alert('Error', 'Select episode audio.');
+        const episodesForSubmit = [...podcastEpisodes];
+        const draftEpisode = buildEpisodeFromDraft(episodesForSubmit.length + 1);
+        if (draftEpisode) {
+            episodesForSubmit.push(draftEpisode);
+        }
+        if (!episodesForSubmit.length) {
+            Alert.alert('Error', 'Add at least one episode.');
             return;
         }
 
         setPodcastLoading(true);
 
-        const firstEpisodeTitle = String(episodeDraftTitle || '').trim() || 'Episode 1';
-        const firstEpisodeDescription = String(episodeDraftDescription || '').trim();
-
         const result = await createPodcast({
             title: podcastTitle.trim(),
             cover: podcastCover,
-            audio: podcastAudio,
             genreIds: selectedPodcastGenreIds,
-            episodes: [
-                {
-                    id: `podcast-ep-${Date.now()}`,
-                    audio: episodeDraftAudio,
-                    title: firstEpisodeTitle,
-                    description: firstEpisodeDescription,
-                },
-            ],
+            episodes: episodesForSubmit,
             submit: true,
         });
 
@@ -472,28 +473,6 @@ export default function MusicScreen({ navigation, route }) {
             return;
         }
 
-        const createdPodcast = result?.data || {};
-        const createdId = getEntityId(createdPodcast);
-        const createdStatus = createdPodcast?.status;
-
-        if (createdId && !isPendingStatus(createdStatus)) {
-            const submitResult = await submitPodcast(createdId);
-            if (submitResult?.error) {
-                const msg = String(submitResult.error || '');
-                const likelyAlreadyPending =
-                    msg.toLowerCase().includes('pending') ||
-                    msg.toLowerCase().includes('already') ||
-                    msg.toLowerCase().includes('not draft');
-
-                if (!likelyAlreadyPending) {
-                    Alert.alert('Submit failed', typeof submitResult.error === 'string'
-                        ? submitResult.error
-                        : 'Podcast created, but submit failed');
-                    return;
-                }
-            }
-        }
-
         Alert.alert(
             'Success',
             'Podcast created and submitted'
@@ -501,8 +480,8 @@ export default function MusicScreen({ navigation, route }) {
 
         setPodcastTitle('');
         setPodcastCover(null);
-        setPodcastAudio(null);
         setSelectedPodcastGenreIds([]);
+        setPodcastEpisodes([]);
         setEpisodeDraftTitle('');
         setEpisodeDraftDescription('');
         setEpisodeDraftAudio(null);
@@ -848,35 +827,6 @@ export default function MusicScreen({ navigation, route }) {
                             placeholderTextColor="rgba(245,216,203,0.55)"
                         />
 
-                        <Text style={styles.fieldLabel}>Audio File</Text>
-                        <TouchableOpacity
-                            style={styles.selectorField}
-                            onPress={pickPodcastAudio}
-                            activeOpacity={0.85}
-                        >
-                            <View style={styles.selectorLeft}>
-                                <RemoteTintIcon
-                                    icons={icons}
-                                    iconName={resolveIconName('download.svg')}
-                                    width={scale(18)}
-                                    height={scale(18)}
-                                    color="#F5D8CB"
-                                    fallback="↓"
-                                />
-                                <Text style={styles.selectorText}>
-                                    {podcastAudio?.name || podcastAudio?.fileName || 'Select file'}
-                                </Text>
-                            </View>
-                            <RemoteTintIcon
-                                icons={icons}
-                                iconName={resolveIconName('arrow-right.svg')}
-                                width={scale(18)}
-                                height={scale(18)}
-                                color="rgba(245,216,203,0.6)"
-                                fallback="›"
-                            />
-                        </TouchableOpacity>
-
                         <Text style={styles.fieldLabel}>Genre</Text>
                         <View style={[styles.dropdownSection, isPodcastGenreOpen && styles.dropdownSectionOpen]}>
                             {isPodcastGenreOpen ? (
@@ -940,6 +890,9 @@ export default function MusicScreen({ navigation, route }) {
 
                         <View style={styles.episodeDetailsHeader}>
                             <Text style={styles.episodeDetailsTitle}>Episode details</Text>
+                            <Text style={styles.episodeDetailsCount}>
+                                {podcastEpisodes.length} added
+                            </Text>
                         </View>
 
                         <Text style={styles.fieldLabel}>Title</Text>
@@ -994,6 +947,38 @@ export default function MusicScreen({ navigation, route }) {
                             numberOfLines={5}
                             textAlignVertical="top"
                         />
+
+                        <TouchableOpacity
+                            style={styles.addTrackBtn}
+                            activeOpacity={0.85}
+                            onPress={handleAddPodcastEpisode}
+                        >
+                            <Text style={styles.addTrackText}>+ Add new episode</Text>
+                        </TouchableOpacity>
+
+                        {podcastEpisodes.length ? (
+                            <View style={styles.episodesList}>
+                                {podcastEpisodes.map((episode) => (
+                                    <View key={episode.id} style={styles.episodeCard}>
+                                        <View style={styles.episodeMeta}>
+                                            <Text numberOfLines={1} style={styles.episodeTitle}>
+                                                {episode.title}
+                                            </Text>
+                                            <Text numberOfLines={1} style={styles.episodeFile}>
+                                                {episode.audio?.name || episode.audio?.fileName || 'Episode audio'}
+                                            </Text>
+                                        </View>
+                                        <TouchableOpacity
+                                            style={styles.removeEpisodeBtn}
+                                            onPress={() => removePodcastEpisode(episode.id)}
+                                            activeOpacity={0.85}
+                                        >
+                                            <Text style={styles.removeEpisodeText}>Remove</Text>
+                                        </TouchableOpacity>
+                                    </View>
+                                ))}
+                            </View>
+                        ) : null}
 
                         <View style={styles.warningCard}>
                             <Text style={styles.warningText}>
@@ -1359,7 +1344,7 @@ const styles = StyleSheet.create({
         flexGrow: 1,
     },
     scrollContent: {
-        paddingBottom: scale(30),
+        paddingBottom: scale(170),
     },
     permissionLoader: {
         flex: 1,
@@ -1643,11 +1628,19 @@ const styles = StyleSheet.create({
         paddingTop: scale(10),
         borderTopWidth: 1,
         borderTopColor: 'rgba(255,255,255,0.15)',
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
     },
     episodeDetailsTitle: {
         color: '#AC654F',
         fontFamily: 'Poppins-SemiBold',
         fontSize: scale(32 / 2),
+    },
+    episodeDetailsCount: {
+        color: 'rgba(245,216,203,0.6)',
+        fontFamily: 'Poppins-Regular',
+        fontSize: scale(14),
     },
     albumTracksHeader: {
         marginTop: scale(14),

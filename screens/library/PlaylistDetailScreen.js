@@ -20,9 +20,7 @@ import { BlurView } from 'expo-blur';
 import { useIsFocused } from '@react-navigation/native';
 
 import {
-    addTrackToPlaylist,
     getIcons,
-    getMyPlaylists,
     getPlaylistCoverUrl,
     getPlaylistDetails,
     getStreamUrl,
@@ -199,9 +197,6 @@ export default function PlaylistDetailScreen({ navigation, route }) {
     const [mainCoverBroken, setMainCoverBroken] = useState(false);
     const [shareVisible, setShareVisible] = useState(false);
     const [moreVisible, setMoreVisible] = useState(false);
-    const [copyModalVisible, setCopyModalVisible] = useState(false);
-    const [myPlaylists, setMyPlaylists] = useState([]);
-    const [copyingToPlaylistId, setCopyingToPlaylistId] = useState('');
     const [downloadingAll, setDownloadingAll] = useState(false);
     const [likingAll, setLikingAll] = useState(false);
     const [uploadingCover, setUploadingCover] = useState(false);
@@ -533,53 +528,22 @@ export default function PlaylistDetailScreen({ navigation, route }) {
         Alert.alert('Queue', `Added ${unique.length} ${unique.length === 1 ? 'track' : 'tracks'} to queue`);
     };
 
-    const loadMyPlaylists = async () => {
-        try {
-            const raw = await getMyPlaylists();
-            const list = Array.isArray(raw) ? raw : [];
-            const normalized = list
-                .map((item) => ({
-                    id: getPlaylistId(item),
-                    name: getPlaylistName(item, 'Playlist'),
-                }))
-                .filter((item) => item.id && item.id !== playlist.id);
-            setMyPlaylists(normalized);
-        } catch (_) {
-            setMyPlaylists([]);
-        }
-    };
-
-    const onOpenCopyModal = async () => {
+    const onOpenCopyModal = () => {
         onCloseMore();
-        await loadMyPlaylists();
-        setCopyModalVisible(true);
-    };
+        const trackIds = (Array.isArray(tracks) ? tracks : [])
+            .map((track) => getTrackId(track))
+            .filter(Boolean);
 
-    const onCopyAllTracksToPlaylist = async (targetPlaylistId) => {
-        if (!targetPlaylistId || !tracks.length || copyingToPlaylistId) return;
-        setCopyingToPlaylistId(targetPlaylistId);
-
-        let added = 0;
-        let failed = 0;
-        for (const track of tracks) {
-            const trackId = getTrackId(track);
-            if (!trackId) {
-                failed += 1;
-                continue;
-            }
-            try {
-                // eslint-disable-next-line no-await-in-loop
-                const res = await addTrackToPlaylist(targetPlaylistId, trackId);
-                if (res?.error) failed += 1;
-                else added += 1;
-            } catch (_) {
-                failed += 1;
-            }
+        if (!trackIds.length) {
+            Alert.alert('Playlist', 'No tracks to add');
+            return;
         }
 
-        setCopyingToPlaylistId('');
-        setCopyModalVisible(false);
-        Alert.alert('Playlist', `Added: ${added}\nSkipped: ${failed}`);
+        navigation.navigate('AddToPlaylist', {
+            title: 'Add to playlist',
+            trackIds,
+            excludePlaylistId: playlist?.id,
+        });
     };
 
     const shareUrl = playlistCoverUri;
@@ -759,36 +723,6 @@ export default function PlaylistDetailScreen({ navigation, route }) {
                                 </View>
                             </BlurView>
                         </LinearGradient>
-                    </Pressable>
-                </Pressable>
-            </Modal>
-
-            <Modal visible={copyModalVisible} transparent animationType="fade" onRequestClose={() => setCopyModalVisible(false)}>
-                <Pressable style={styles.modalOverlay} onPress={() => setCopyModalVisible(false)}>
-                    <Pressable style={styles.copyCard} onPress={() => {}}>
-                        <Text style={styles.copyTitle}>Choose playlist</Text>
-                        <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: scale(280) }}>
-                            {myPlaylists.length === 0 ? (
-                                <Text style={styles.copyEmpty}>No playlists available</Text>
-                            ) : (
-                                myPlaylists.map((item) => (
-                                    <TouchableOpacity
-                                        key={item.id}
-                                        style={styles.copyRow}
-                                        activeOpacity={0.85}
-                                        disabled={Boolean(copyingToPlaylistId)}
-                                        onPress={() => onCopyAllTracksToPlaylist(item.id)}
-                                    >
-                                        <Text style={styles.copyRowText} numberOfLines={1}>{item.name}</Text>
-                                        {copyingToPlaylistId === item.id ? (
-                                            <ActivityIndicator size="small" color="#300C0A" />
-                                        ) : (
-                                            <Text style={styles.copyAdd}>Add</Text>
-                                        )}
-                                    </TouchableOpacity>
-                                ))
-                            )}
-                        </ScrollView>
                     </Pressable>
                 </Pressable>
             </Modal>

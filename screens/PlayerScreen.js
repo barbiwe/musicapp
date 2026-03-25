@@ -759,7 +759,29 @@ export default function PlayerScreen({ navigation, route }) {
 
     const handleAddToPlaylist = () => {
         closeModal();
-        showNotification('Playlist function coming soon');
+        if (adModalVisible) {
+            showNotification('Unavailable while ad is playing');
+            return;
+        }
+
+        const trackId = String(
+            currentTrack?.id ||
+            currentTrack?._id ||
+            currentTrack?.trackId ||
+            currentTrack?.TrackId ||
+            currentTrack?.track?.id ||
+            ''
+        ).trim();
+
+        if (!trackId) {
+            showNotification('Track not found');
+            return;
+        }
+
+        navigation.navigate('AddToPlaylist', {
+            title: 'Add to playlist',
+            trackIds: [trackId],
+        });
     };
 
     const formatTime = (millis) => {

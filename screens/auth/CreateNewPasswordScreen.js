@@ -59,9 +59,7 @@ export default function CreateNewPasswordScreen({ navigation, route }) {
             return;
         }
 
-        Alert.alert('Success', 'Password changed successfully', [
-            { text: 'OK', onPress: () => navigation.replace('Login') },
-        ]);
+        navigation.replace('Login');
     };
 
     return (

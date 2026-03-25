@@ -18,7 +18,10 @@ import * as ImagePicker from 'expo-image-picker';
 import { LinearGradient } from 'expo-linear-gradient';
 
 import {
+    addFavoriteGenre,
+    removeFavoriteGenre,
     changeAvatar,
+    getFavoriteGenres,
     getGenres,
     getIcons,
     getPodcastGenres,
@@ -67,14 +70,17 @@ const normalizeGenre = (item, index = 0) => {
     return { id, name };
 };
 
-const parseStoredArray = async (key) => {
+const parseStoredArrayWithMeta = async (key) => {
     try {
         const raw = await AsyncStorage.getItem(key);
-        if (!raw) return [];
+        if (raw === null || raw === undefined) return { exists: false, data: [] };
         const parsed = JSON.parse(raw);
-        return Array.isArray(parsed) ? parsed.map((v) => String(v || '').trim()).filter(Boolean) : [];
+        return {
+            exists: true,
+            data: Array.isArray(parsed) ? parsed.map((v) => String(v || '').trim()).filter(Boolean) : [],
+        };
     } catch (_) {
-        return [];
+        return { exists: false, data: [] };
     }
 };
 
@@ -86,6 +92,52 @@ const toUnique = (arr) => {
         seen.add(key);
         return true;
     });
+};
+
+const extractFavoriteMusicGenreNames = (rawFavorites, allMusicGenres) => {
+    if (!Array.isArray(rawFavorites) || rawFavorites.length === 0) return [];
+
+    const nameById = new Map(
+        (Array.isArray(allMusicGenres) ? allMusicGenres : [])
+            .map((genre) => [String(genre?.id || '').trim().toLowerCase(), String(genre?.name || '').trim()])
+            .filter(([id, name]) => !!id && !!name)
+    );
+
+    const names = rawFavorites
+        .map((item) => {
+            if (typeof item === 'string' || typeof item === 'number') {
+                const value = String(item).trim();
+                if (!value) return '';
+                return nameById.get(value.toLowerCase()) || value;
+            }
+
+            if (!item || typeof item !== 'object') return '';
+
+            const directName = String(
+                item?.name ??
+                item?.Name ??
+                item?.title ??
+                item?.Title ??
+                item?.label ??
+                item?.Label ??
+                ''
+            ).trim();
+            if (directName) return directName;
+
+            const id = String(
+                item?.id ??
+                item?.Id ??
+                item?.genreId ??
+                item?.GenreId ??
+                item?.value ??
+                ''
+            ).trim().toLowerCase();
+            if (!id) return '';
+            return nameById.get(id) || '';
+        })
+        .filter(Boolean);
+
+    return toUnique(names);
 };
 
 export default function EditProfileScreen({ navigation }) {
@@ -105,10 +157,11 @@ export default function EditProfileScreen({ navigation }) {
         const load = async () => {
             setLoading(true);
             try {
-                const [iconsMap, tracksGenresRaw, podcastsGenresRaw, storedName, storedUserId] = await Promise.all([
+                const [iconsMap, tracksGenresRaw, podcastsGenresRaw, backendFavoriteGenresRaw, storedName, storedUserId] = await Promise.all([
                     getIcons(),
                     getGenres(),
                     getPodcastGenres(),
+                    getFavoriteGenres(),
                     AsyncStorage.getItem(STORAGE_KEYS.username),
                     AsyncStorage.getItem(STORAGE_KEYS.userId),
                 ]);
@@ -120,12 +173,26 @@ export default function EditProfileScreen({ navigation }) {
                     .map((item, index) => normalizeGenre(item, index))
                     .filter(Boolean);
 
-                const savedMusic = await parseStoredArray(STORAGE_KEYS.musicGenres);
-                const savedPodcast = await parseStoredArray(STORAGE_KEYS.podcastGenres);
-                const favoriteFromOnboarding = await parseStoredArray(STORAGE_KEYS.favoriteGenreNames);
+                const savedMusic = await parseStoredArrayWithMeta(STORAGE_KEYS.musicGenres);
+                const savedPodcast = await parseStoredArrayWithMeta(STORAGE_KEYS.podcastGenres);
+                const favoriteFromOnboarding = await parseStoredArrayWithMeta(STORAGE_KEYS.favoriteGenreNames);
+                const backendFavoriteMusic = extractFavoriteMusicGenreNames(
+                    backendFavoriteGenresRaw,
+                    normalizedTrackGenres
+                );
 
-                const initialMusic = toUnique(savedMusic.length ? savedMusic : favoriteFromOnboarding);
-                const initialPodcast = toUnique(savedPodcast);
+                let initialMusic = [];
+                if (Array.isArray(backendFavoriteGenresRaw)) {
+                    // Backend is the source of truth when endpoint exists.
+                    initialMusic = toUnique(backendFavoriteMusic);
+                } else if (savedMusic.exists) {
+                    // Respect explicit empty local selection too.
+                    initialMusic = toUnique(savedMusic.data);
+                } else if (favoriteFromOnboarding.exists) {
+                    initialMusic = toUnique(favoriteFromOnboarding.data);
+                }
+
+                const initialPodcast = toUnique(savedPodcast.data);
 
                 setIcons(iconsMap || {});
                 setAllMusicGenres(normalizedTrackGenres);
@@ -185,6 +252,17 @@ export default function EditProfileScreen({ navigation }) {
         return allPodcastGenres.filter((g) => !selected.has(g.name.toLowerCase()));
     }, [allPodcastGenres, podcastGenres]);
 
+    const musicGenreIdByName = useMemo(() => {
+        const map = new Map();
+        (Array.isArray(allMusicGenres) ? allMusicGenres : []).forEach((genre) => {
+            const key = String(genre?.name || '').trim().toLowerCase();
+            const id = String(genre?.id || '').trim();
+            if (!key || !id) return;
+            map.set(key, id);
+        });
+        return map;
+    }, [allMusicGenres]);
+
     const saveUsername = async (value) => {
         const safe = String(value || '').trim();
         const finalName = safe || 'User';
@@ -234,6 +312,10 @@ export default function EditProfileScreen({ navigation }) {
         if (!name) return;
         if (pickerType === 'music') {
             setMusicGenres((prev) => toUnique([...prev, name]));
+            const genreId = musicGenreIdByName.get(String(name).toLowerCase());
+            if (genreId) {
+                void addFavoriteGenre(genreId);
+            }
         } else {
             setPodcastGenres((prev) => toUnique([...prev, name]));
         }
@@ -244,6 +326,10 @@ export default function EditProfileScreen({ navigation }) {
         if (!name) return;
         if (type === 'music') {
             setMusicGenres((prev) => prev.filter((g) => g.toLowerCase() !== name.toLowerCase()));
+            const genreId = musicGenreIdByName.get(String(name).toLowerCase());
+            if (genreId) {
+                void removeFavoriteGenre(genreId);
+            }
         } else {
             setPodcastGenres((prev) => prev.filter((g) => g.toLowerCase() !== name.toLowerCase()));
         }

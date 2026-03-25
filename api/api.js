@@ -272,7 +272,7 @@ api.interceptors.response.use(
         if (status === 401) {
             console.log("🔒 TOKEN EXPIRED. Logging out...");
             // Чистимо правильні ключі
-            await AsyncStorage.multiRemove(['userToken', 'userId', 'username', 'userRole']);
+            await AsyncStorage.multiRemove(['userToken', 'userId', 'username', 'userRole', 'userHasPremium']);
         }
         return Promise.reject(error);
     }
@@ -346,6 +346,49 @@ const parseRoleFromToken = (token) => {
     }
 };
 
+const parseBooleanLike = (value) => {
+    if (value === null || value === undefined) return null;
+    if (Array.isArray(value)) {
+        for (const item of value) {
+            const parsed = parseBooleanLike(item);
+            if (parsed !== null) return parsed;
+        }
+        return null;
+    }
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'number') {
+        if (value === 1) return true;
+        if (value === 0) return false;
+        return null;
+    }
+
+    const raw = String(value).trim().toLowerCase();
+    if (!raw) return null;
+    if (['true', '1', 'yes', 'y', 'on'].includes(raw)) return true;
+    if (['false', '0', 'no', 'n', 'off'].includes(raw)) return false;
+    return null;
+};
+
+const parsePremiumFromToken = (token) => {
+    if (!token) return null;
+    try {
+        const decoded = jwtDecode(token);
+        const candidates = [
+            decoded?.premium,
+            decoded?.Premium,
+            decoded?.['http://schemas.microsoft.com/ws/2008/06/identity/claims/premium'],
+            decoded?.['http://schemas.xmlsoap.org/ws/2005/05/identity/claims/premium'],
+        ];
+        for (const candidate of candidates) {
+            const parsed = parseBooleanLike(candidate);
+            if (parsed !== null) return parsed;
+        }
+        return null;
+    } catch (_) {
+        return null;
+    }
+};
+
 const isRolePremiumValue = (value) => {
     if (value === null || value === undefined) return false;
     if (Array.isArray(value)) return value.some(isRolePremiumValue);
@@ -362,6 +405,11 @@ const saveAuthMeta = async (authData, fallbackUsername = null) => {
     if (authData.token) {
         await AsyncStorage.setItem('userToken', authData.token);
         await saveUserIdFromToken(authData.token);
+
+        const premiumFromToken = parsePremiumFromToken(authData.token);
+        if (premiumFromToken !== null) {
+            await AsyncStorage.setItem('userHasPremium', premiumFromToken ? 'true' : 'false');
+        }
 
         const roleFromToken = parseRoleFromToken(authData.token);
         if (roleFromToken !== null && roleFromToken !== undefined) {
@@ -384,16 +432,38 @@ const saveAuthMeta = async (authData, fallbackUsername = null) => {
     if (responseRole !== null && responseRole !== undefined) {
         await AsyncStorage.setItem('userRole', String(responseRole));
     }
+
+    const responseHasPremium = parseBooleanLike(
+        authData.hasPremium ??
+        authData.HasPremium ??
+        authData.isPremium ??
+        authData.IsPremium
+    );
+
+    if (responseHasPremium !== null) {
+        await AsyncStorage.setItem('userHasPremium', responseHasPremium ? 'true' : 'false');
+    } else if (isRolePremiumValue(responseRole)) {
+        // Backward compatibility with old role-based premium responses.
+        await AsyncStorage.setItem('userHasPremium', 'true');
+    }
 };
 
 export const isPremiumUser = async () => {
     try {
+        const storedPremium = parseBooleanLike(await AsyncStorage.getItem('userHasPremium'));
+        // New backend contract: explicit hasPremium should win over legacy role checks.
+        if (storedPremium !== null) return storedPremium;
+
         const storedRole = await AsyncStorage.getItem('userRole');
         if (isRolePremiumValue(storedRole)) return true;
 
         const token = await AsyncStorage.getItem('userToken');
+        const premiumFromToken = parsePremiumFromToken(token);
+        if (premiumFromToken === true) return true;
+        if (premiumFromToken === false) return false;
+
         const role = parseRoleFromToken(token);
-        if (!role) return false;
+        if (!role) return storedPremium === true;
         return isRolePremiumValue(role);
     } catch (_) {
         return false;
@@ -807,16 +877,105 @@ export const confirmPremiumCheckout = async (sessionId) => {
     }
 };
 
-export const saveFavoriteGenres = async (genreIds) => {
+export const addFavoriteGenre = async (genreId) => {
+    const id = String(genreId || '').trim();
+    if (!id) return { error: 'Invalid genreId' };
+
     try {
+        const res = await api.post(`/api/Radio/favorite-genres/${encodeURIComponent(id)}`);
+        return { success: true, data: res?.data || null };
+    } catch (e) {
+        return {
+            error: e?.response?.data || e?.message || 'Failed to add favorite genre',
+            status: e?.response?.status || null,
+        };
+    }
+};
+
+export const removeFavoriteGenre = async (genreId) => {
+    const id = String(genreId || '').trim();
+    if (!id) return { error: 'Invalid genreId' };
+
+    try {
+        const res = await api.delete(`/api/Radio/favorite-genres/${encodeURIComponent(id)}`);
+        return { success: true, data: res?.data || null };
+    } catch (e) {
+        return {
+            error: e?.response?.data || e?.message || 'Failed to remove favorite genre',
+            status: e?.response?.status || null,
+        };
+    }
+};
+
+export const getFavoriteGenres = async () => {
+    const candidates = [
+        '/api/Radio/favorite-genres',
+        '/api/radio/favorite-genres',
+        '/api/Radio/favorite-genres/my',
+        '/api/radio/favorite-genres/my',
+    ];
+
+    for (const path of candidates) {
+        try {
+            const res = await api.get(path);
+            const data = res?.data;
+            if (Array.isArray(data)) return data;
+            if (Array.isArray(data?.genres)) return data.genres;
+            if (Array.isArray(data?.genreIds)) return data.genreIds;
+            return [];
+        } catch (e) {
+            const status = e?.response?.status || null;
+            // Try next route variant for common "not found/not allowed on this route".
+            if (status === 404 || status === 405) {
+                continue;
+            }
+
+            // Auth/network/other errors: let UI fallback to local cached values.
+            return null;
+        }
+    }
+
+    return null;
+};
+
+export const saveFavoriteGenres = async (genreIds) => {
+    const ids = Array.from(
+        new Set(
+            (Array.isArray(genreIds) ? genreIds : [])
+                .map((id) => String(id || '').trim())
+                .filter(Boolean)
+        )
+    );
+
+    if (ids.length === 0) return { success: true };
+
+    try {
+        // Legacy endpoint support.
         await api.post('/api/radio/favorite-genres', {
-            genreIds: Array.isArray(genreIds) ? genreIds : [],
+            genreIds: ids,
         });
         return { success: true };
     } catch (e) {
+        // New backend contract: single genre add/remove endpoints.
+        const fallbackResults = await Promise.all(ids.map((id) => addFavoriteGenre(id)));
+        const failed = fallbackResults.find((result) => {
+            if (!result?.error) return false;
+            const status = result?.status;
+            const text = String(result.error || '').toLowerCase();
+            const alreadyHandled =
+                status === 400 ||
+                status === 409 ||
+                text.includes('already') ||
+                text.includes('exists') ||
+                text.includes('selected');
+            return !alreadyHandled;
+        });
+
+        if (!failed) return { success: true };
+
         return {
-            error: e?.response?.data || e?.message || 'Save favorite genres failed',
-            status: e?.response?.status || null,
+            error: failed.error || e?.response?.data || e?.message || 'Save favorite genres failed',
+            status: failed.status || e?.response?.status || null,
         };
     }
 };
@@ -1586,7 +1745,7 @@ export const changeAvatar = async (imageUri) => {
 };
 
 export const logoutUser = async () => {
-    await AsyncStorage.multiRemove(['userToken', 'username', 'userId', 'userRole']);
+    await AsyncStorage.multiRemove(['userToken', 'username', 'userId', 'userRole', 'userHasPremium']);
     clearUserScopedRuntimeCaches();
     await clearPersistedPrivateCaches();
 };
@@ -2236,7 +2395,6 @@ export const getPodcastGenres = async () => {
 export const createPodcast = async ({
     title,
     cover,
-    audio,
     genreIds = [],
     episodes = [],
     submit = true,
@@ -2252,9 +2410,6 @@ export const createPodcast = async ({
     if (!cover?.uri) {
         return { error: 'Cover file is required' };
     }
-    if (!audio?.uri) {
-        return { error: 'Audio file is required' };
-    }
     if (!safeGenreIds.length) {
         return { error: 'At least one genreId is required' };
     }
@@ -2262,7 +2417,7 @@ export const createPodcast = async ({
     const safeEpisodes = Array.isArray(episodes)
         ? episodes
             .map((episode, index) => {
-                const safeEpTitle = String(episode?.title || '').trim() || `Episode ${index + 2}`;
+                const safeEpTitle = String(episode?.title || '').trim() || `Episode ${index + 1}`;
                 const safeEpDescription = String(episode?.description || '').trim();
                 const epAudio = episode?.audio;
                 if (!epAudio?.uri) return null;
@@ -2275,11 +2430,14 @@ export const createPodcast = async ({
             .filter(Boolean)
         : [];
 
+    if (!safeEpisodes.length) {
+        return { error: 'At least one episode audio is required' };
+    }
+
     // Backend currently limits multipart body to 200MB.
     const backendLimitBytes = 200 * 1024 * 1024;
     const totalPayloadBytes =
         getAssetSizeBytes(cover) +
-        getAssetSizeBytes(audio) +
         safeEpisodes.reduce((sum, ep) => sum + getAssetSizeBytes(ep.audio), 0);
 
     if (totalPayloadBytes > backendLimitBytes) {
@@ -2297,11 +2455,6 @@ export const createPodcast = async ({
         name: cover.fileName || cover.name || cover.uri.split('/').pop() || 'podcast-cover.jpg',
         type: getFileTypeFromUri(cover.uri, 'image/jpeg'),
     });
-    formData.append('audio', {
-        uri: audio.uri,
-        name: audio.name || audio.fileName || audio.uri.split('/').pop() || 'podcast-audio.mp3',
-        type: getFileTypeFromUri(audio.uri, 'audio/mpeg'),
-    });
     safeGenreIds.forEach((id) => {
         formData.append('genreIds', id);
     });
@@ -2314,7 +2467,9 @@ export const createPodcast = async ({
         formData.append('episodeTitles', episode.title);
         formData.append('episodeDescriptions', episode.description || '');
     });
-    formData.append('submit', submit ? 'true' : 'false');
+    if (typeof submit === 'boolean') {
+        formData.append('submit', submit ? 'true' : 'false');
+    }
 
     try {
         const res = await api.post('/api/Podcasts/create', formData, {

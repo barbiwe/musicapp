@@ -70,10 +70,11 @@ const ColoredSvg = ({ uri, width, height, color }) => {
 
 export default function ProfileScreen({ navigation }) {
     const hasLoadedOnceRef = useRef(false);
+    const currentUserIdRef = useRef(null);
     const [loading, setLoading] = useState(true);
-    const [username, setUsername] = useState(() => profileSessionCache?.username || 'User');
-    const [avatarUri, setAvatarUri] = useState(() => profileSessionCache?.avatarUri || null);
-    const [icons, setIcons] = useState(() => profileSessionCache?.icons || getCachedIcons() || {});
+    const [username, setUsername] = useState('User');
+    const [avatarUri, setAvatarUri] = useState(null);
+    const [icons, setIcons] = useState(() => getCachedIcons() || {});
 
     useFocusEffect(
         useCallback(() => {
@@ -87,32 +88,47 @@ export default function ProfileScreen({ navigation }) {
     );
 
     const loadProfileData = async ({ force = false, silent = false } = {}) => {
-        if (!force && profileSessionCache) {
-            setUsername(profileSessionCache.username || 'User');
-            setAvatarUri(profileSessionCache.avatarUri || null);
-            setIcons(profileSessionCache.icons || getCachedIcons() || {});
-            if (!silent) setLoading(false);
-            return;
-        }
-
         if (!silent) setLoading(true);
         try {
+            const entries = await AsyncStorage.multiGet(['userId', 'username']);
+            const storedId = entries?.find(([key]) => key === 'userId')?.[1] || null;
+            const storedName = entries?.find(([key]) => key === 'username')?.[1] || null;
+            currentUserIdRef.current = storedId;
+
+            const canUseSessionCache =
+                !force &&
+                !!storedId &&
+                profileSessionCache &&
+                profileSessionCache.userId === storedId;
+
+            if (canUseSessionCache) {
+                setUsername(profileSessionCache.username || 'User');
+                setAvatarUri(profileSessionCache.avatarUri || null);
+                setIcons(profileSessionCache.icons || getCachedIcons() || {});
+                return;
+            }
+
+            if (profileSessionCache && profileSessionCache.userId !== storedId) {
+                profileSessionCache = null;
+            }
+
             // Завантажуємо іконки з бекенду
             const iconsData = await getIcons();
             const safeIcons = iconsData || {};
             setIcons(safeIcons);
 
-            const storedName = await AsyncStorage.getItem('username');
             const safeUsername = storedName || 'User';
             setUsername(safeUsername);
 
-            const storedId = await AsyncStorage.getItem('userId');
             let safeAvatarUri = null;
             if (storedId) {
                 safeAvatarUri = `${getUserAvatarUrl(storedId)}?t=${new Date().getTime()}`;
                 setAvatarUri(safeAvatarUri);
+            } else {
+                setAvatarUri(null);
             }
             profileSessionCache = {
+                userId: storedId,
                 username: safeUsername,
                 avatarUri: safeAvatarUri,
                 icons: safeIcons,
@@ -144,6 +160,7 @@ export default function ProfileScreen({ navigation }) {
             setAvatarUri(asset.uri); // Оптимістичне оновлення UI
             profileSessionCache = {
                 ...(profileSessionCache || {}),
+                userId: currentUserIdRef.current,
                 username,
                 icons,
                 avatarUri: asset.uri,
@@ -162,6 +179,8 @@ export default function ProfileScreen({ navigation }) {
 
     const handleLogout = async () => {
         await logoutUser();
+        profileSessionCache = null;
+        currentUserIdRef.current = null;
         navigation.reset({
             index: 0,
             routes: [{ name: 'AuthChoice' }],

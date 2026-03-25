@@ -8,9 +8,10 @@ import {
     ActivityIndicator,
     Dimensions,
     TextInput,
+    Alert,
     Image // 👈 Додано Image для рендеру іконок
 } from 'react-native';
-import { NavigationContainer } from '@react-navigation/native';
+import { NavigationContainer, DarkTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { BlurView } from 'expo-blur';
@@ -33,9 +34,7 @@ import CreateNewPasswordScreen from './screens/auth/CreateNewPasswordScreen';
 import SearchScreen from './screens/SearchScreen';
 import GenreDetailScreen from './screens/GenreDetailScreen';
 import MusicScreen from './screens/MusicScreen';
-import AlbumListScreen from './screens/AlbumListScreen';
 import AlbumDetailScreen from './screens/AlbumDetailScreen';
-import CreateAlbumScreen from './screens/CreateAlbumScreen';
 import ProfileScreen from './screens/profile/ProfileScreen';
 import PlayerScreen from './screens/PlayerScreen';
 import DiscoverScreen from './screens/DiscoverScreen.js';
@@ -45,6 +44,7 @@ import LibraryScreen from './screens/library/LibraryScreen';
 import LibrarySearchScreen from './screens/library/LibrarySearchScreen';
 import LikedSongsScreen from './screens/library/LikedSongsScreen';
 import CreatePlaylistScreen from './screens/library/CreatePlaylistScreen';
+import AddToPlaylistScreen from './screens/library/AddToPlaylistScreen';
 import PlaylistDetailScreen from './screens/library/PlaylistDetailScreen';
 import ContentAndDisplayScreen from './screens/profile/ContentAndDisplayScreen';
 import PrivacyAndCommunityScreen from './screens/profile/PrivacyAndCommunityScreen';
@@ -71,12 +71,30 @@ const SearchStack = createNativeStackNavigator();
 const LibraryStack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator(); // 👇 Створюємо Таби
 const tabSvgCache = {};
+const navigationTheme = {
+    ...DarkTheme,
+    colors: {
+        ...DarkTheme.colors,
+        primary: '#F5D8CB',
+        background: '#190707',
+        card: '#190707',
+        text: '#F5D8CB',
+        border: '#190707',
+        notification: '#AC654F',
+    },
+};
 
 // Global dark keyboard for all TextInput (especially iOS)
 if (!TextInput.defaultProps) {
     TextInput.defaultProps = {};
 }
 TextInput.defaultProps.keyboardAppearance = 'dark';
+
+// Diploma demo mode: disable intrusive system alerts/popups across app screens.
+if (!global.__VOX_DISABLE_ALERTS__) {
+    global.__VOX_DISABLE_ALERTS__ = true;
+    Alert.alert = () => {};
+}
 
 /* 🔹 LIQUID GLASS NAVIGATION (Оновлене меню) 🔹 */
 function GlassTabBar({ state, descriptors, navigation }) {
@@ -197,7 +215,12 @@ function GlassTabBar({ state, descriptors, navigation }) {
 
 function SearchStackScreen() {
     return (
-        <SearchStack.Navigator screenOptions={{ headerShown: false }}>
+        <SearchStack.Navigator
+            screenOptions={{
+                headerShown: false,
+                contentStyle: { backgroundColor: '#190707' },
+            }}
+        >
             <SearchStack.Screen name="SearchMain" component={SearchScreen} />
             <SearchStack.Screen name="GenreDetail" component={GenreDetailScreen} />
         </SearchStack.Navigator>
@@ -206,7 +229,12 @@ function SearchStackScreen() {
 
 function LibraryStackScreen() {
     return (
-        <LibraryStack.Navigator screenOptions={{ headerShown: false }}>
+        <LibraryStack.Navigator
+            screenOptions={{
+                headerShown: false,
+                contentStyle: { backgroundColor: '#190707' },
+            }}
+        >
             <LibraryStack.Screen name="LibraryMain" component={LibraryScreen} />
             <LibraryStack.Screen name="LibrarySearch" component={LibrarySearchScreen} />
             <LibraryStack.Screen name="LikedSongs" component={LikedSongsScreen} />
@@ -229,6 +257,7 @@ function MainTabs() {
                 screenOptions={{
                     headerShown: false,
                     tabBarStyle: { position: 'absolute' }, // Прозорість
+                    sceneStyle: { backgroundColor: '#190707' },
                 }}
             >
                 <Tab.Screen name="HomeTab" component={DiscoverScreen} />
@@ -329,13 +358,16 @@ export default function App() {
     }
 
     return (
-        <View style={{ flex: 1 }}>
-        <NavigationContainer>
+        <View style={{ flex: 1, backgroundColor: '#190707' }}>
+        <NavigationContainer theme={navigationTheme}>
             <StatusBar barStyle="light-content" />
 
             <Stack.Navigator
                 initialRouteName={initialRoute}
-                screenOptions={{ headerShown: false }}
+                screenOptions={{
+                    headerShown: false,
+                    contentStyle: { backgroundColor: '#190707' },
+                }}
             >
                 {/* ONBOARDING & AUTH */}
                 <Stack.Screen name="Onboarding" component={OnboardingScreen} />
@@ -353,8 +385,6 @@ export default function App() {
 
                 {/* ЕКРАНИ БЕЗ МЕНЮ (Поверх всього) */}
                 <Stack.Screen name="Upload" component={MusicScreen} />
-                <Stack.Screen name="CreateAlbum" component={CreateAlbumScreen} />
-                <Stack.Screen name="AlbumList" component={AlbumListScreen} />
                 <Stack.Screen name="AlbumDetail" component={AlbumDetailScreen} />
                 <Stack.Screen name="Profile" component={ProfileScreen} />
                 <Stack.Screen name="EditProfile" component={EditProfileScreen} />
@@ -381,6 +411,7 @@ export default function App() {
                 <Stack.Screen name="PodcastDetail" component={PodcastDetailScreen} />
                 <Stack.Screen name="ChooseArtist" component={ChooseArtistScreen} />
                 <Stack.Screen name="CreatePlaylist" component={CreatePlaylistScreen} />
+                <Stack.Screen name="AddToPlaylist" component={AddToPlaylistScreen} />
                 <Stack.Screen name="Request" component={RequestScreen} />
                 <Stack.Screen name="RequestTerms" component={RequestTermsScreen} />
                 <Stack.Screen name="RequestDetails" component={RequestDetailsScreen} />
