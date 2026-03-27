@@ -516,17 +516,6 @@ export default function LikedSongsScreen({ navigation }) {
                                             fallback=""
                                         />
                                     </TouchableOpacity>
-
-                                    <TouchableOpacity style={styles.actionButton} activeOpacity={0.8}>
-                                        <RemoteTintIcon
-                                            icons={icons}
-                                            iconName={resolveIconName('more.svg')}
-                                            width={scale(20)}
-                                            height={scale(20)}
-                                            color="#F5D8CB"
-                                            fallback=""
-                                        />
-                                    </TouchableOpacity>
                                 </TouchableOpacity>
                             );
                         })}

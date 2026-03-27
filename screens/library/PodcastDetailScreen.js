@@ -182,6 +182,18 @@ export default function PodcastDetailScreen({ route, navigation }) {
         updateCache({ progressByEpisodeId: nextProgress });
     }, [podcastId, updateCache]);
 
+    const syncLikedState = useCallback(async () => {
+        if (!podcastId) return;
+        try {
+            const liked = await isPodcastLiked(podcastId);
+            const normalized = Boolean(liked);
+            setIsLiked(normalized);
+            updateCache({ isLiked: normalized });
+        } catch (_) {
+            // ignore like status refresh errors
+        }
+    }, [podcastId, updateCache]);
+
     useEffect(() => {
         hasLoadedOnceRef.current = false;
         loadData({ force: false });
@@ -190,7 +202,8 @@ export default function PodcastDetailScreen({ route, navigation }) {
     useFocusEffect(
         useCallback(() => {
             loadProgressOnly();
-        }, [loadProgressOnly])
+            syncLikedState();
+        }, [loadProgressOnly, syncLikedState])
     );
 
     const hydrateFromCache = useCallback((cached) => {
@@ -214,6 +227,7 @@ export default function PodcastDetailScreen({ route, navigation }) {
             if (hydrateFromCache(cached)) {
                 hasLoadedOnceRef.current = true;
                 setLoading(false);
+                syncLikedState();
                 return;
             }
         }
@@ -496,6 +510,11 @@ export default function PodcastDetailScreen({ route, navigation }) {
         navigation.navigate('PodcastEpisodeDescription', {
             title: activeEpisode?.title || podcastTitle,
             description: activeEpisodeDescription || 'No episode description yet.',
+            podcastTitle,
+            authorName,
+            coverUrl,
+            podcastId,
+            shareUrl: activeEpisode?.localUri || getPodcastAudioUrl(podcast || routePodcast) || null,
         });
         closeMore();
     };
@@ -682,7 +701,7 @@ export default function PodcastDetailScreen({ route, navigation }) {
                                 hitSlop={{ top: scale(10), bottom: scale(10), left: scale(10), right: scale(10) }}
                                 onPress={() => {}}
                             >
-                                {renderIcon('night.svg', { width: scale(24), height: scale(24) }, '#F5D8CB')}
+                                {renderIcon('night.svg', { width: scale(20), height: scale(20) }, '#F5D8CB')}
                             </TouchableOpacity>
                         </View>
                     </View>

@@ -45,6 +45,7 @@ const { width, height } = Dimensions.get('window');
 const CARD_WIDTH = width * 0.9;
 const svgCache = {};
 const PREMIUM_BANNER_INVALIDATE_KEY = 'premium_banner_invalidate_v1';
+const FAVORITE_GENRES_INVALIDATE_KEY = 'favorite_genres_invalidate_v1';
 const getTrackId = (track) =>
     String(track?.id || track?._id || track?.trackId || track?.track?.id || '').trim();
 
@@ -270,6 +271,20 @@ export default function DiscoverScreen({ navigation }) {
         }
     }, [syncPremiumBanner]);
 
+    const syncRecommendationsIfInvalidated = useCallback(async () => {
+        try {
+            const invalidateAt = await AsyncStorage.getItem(FAVORITE_GENRES_INVALIDATE_KEY);
+            if (!invalidateAt) return false;
+            await AsyncStorage.removeItem(FAVORITE_GENRES_INVALIDATE_KEY);
+
+            const recsRes = await getRecommendations({ force: true });
+            setRecommendations(Array.isArray(recsRes) ? recsRes : []);
+            return true;
+        } catch (_) {
+            return false;
+        }
+    }, []);
+
     const syncRecentPlayed = useCallback(async ({ force = true } = {}) => {
         if (syncingRecentRef.current) return;
         syncingRecentRef.current = true;
@@ -295,15 +310,18 @@ export default function DiscoverScreen({ navigation }) {
             return;
         }
         void (async () => {
-            const invalidated = await syncPremiumBannerIfInvalidated();
-            if (!invalidated) {
+            const [premiumInvalidated] = await Promise.all([
+                syncPremiumBannerIfInvalidated(),
+                syncRecommendationsIfInvalidated(),
+            ]);
+            if (!premiumInvalidated) {
                 // Lightweight focus sync: keep banner/premium state in sync without reloading Discover data.
                 await syncPremiumBanner({ forceBannerRefresh: true });
             }
             // Lightweight focus sync for "Recently played" without full Discover reload.
             await syncRecentPlayed({ force: true });
         })();
-    }, [isFocused, tracks.length, recommendations.length, syncPremiumBannerIfInvalidated, syncPremiumBanner, syncRecentPlayed]);
+    }, [isFocused, tracks.length, recommendations.length, syncPremiumBannerIfInvalidated, syncRecommendationsIfInvalidated, syncPremiumBanner, syncRecentPlayed]);
 
     const load = async () => {
         const reqId = ++loadReqIdRef.current;
@@ -315,6 +333,17 @@ export default function DiscoverScreen({ navigation }) {
         if (!hasWarmData) setLoading(true);
 
         try {
+            let forceRecommendations = !hasWarmData;
+            try {
+                const favoriteGenresInvalidatedAt = await AsyncStorage.getItem(FAVORITE_GENRES_INVALIDATE_KEY);
+                if (favoriteGenresInvalidatedAt) {
+                    forceRecommendations = true;
+                    await AsyncStorage.removeItem(FAVORITE_GENRES_INVALIDATE_KEY);
+                }
+            } catch (_) {
+                // ignore invalidate marker read errors
+            }
+
             const currentUserId = await AsyncStorage.getItem('userId');
             if (currentUserId && reqId === loadReqIdRef.current) setMyId(currentUserId);
 
@@ -323,7 +352,7 @@ export default function DiscoverScreen({ navigation }) {
                 getAlbums({ force: !hasWarmData }),
                 Object.keys(icons || {}).length === 0 ? getIcons() : Promise.resolve(icons),
                 getRecentlyPlayed(!hasWarmData),
-                getRecommendations({ force: !hasWarmData }),
+                getRecommendations({ force: forceRecommendations }),
                 isPremiumUser(),
             ]);
 

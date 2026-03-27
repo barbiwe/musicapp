@@ -76,6 +76,9 @@ export default function ProScreen({ navigation }) {
     const [buying, setBuying] = useState(false);
     const [confirmingPayment, setConfirmingPayment] = useState(false);
     const [isPremium, setIsPremium] = useState(false);
+    const [scrollEnabled, setScrollEnabled] = useState(false);
+    const [viewportHeight, setViewportHeight] = useState(0);
+    const [contentHeight, setContentHeight] = useState(0);
     const hasLoadedOnceRef = useRef(false);
     const handledSessionIdsRef = useRef(new Set());
     const appStateRef = useRef(AppState.currentState);
@@ -270,6 +273,11 @@ export default function ProScreen({ navigation }) {
         };
     }, [confirmSessionIfNeeded]);
 
+    useEffect(() => {
+        if (!viewportHeight || !contentHeight) return;
+        setScrollEnabled(contentHeight > viewportHeight + 2);
+    }, [viewportHeight, contentHeight]);
+
     const handleBuyPremium = async () => {
         if (buying || confirmingPayment) return;
         if (isPremium) {
@@ -377,7 +385,18 @@ export default function ProScreen({ navigation }) {
                         <View style={{ width: scale(24) }} />
                     </View>
 
-                    <ScrollView showsVerticalScrollIndicator={false} bounces={false}>
+                    <ScrollView
+                        style={styles.scrollView}
+                        contentContainerStyle={styles.scrollContent}
+                        onLayout={(event) => setViewportHeight(event.nativeEvent.layout.height)}
+                        onContentSizeChange={(_, h) => setContentHeight(h)}
+                        scrollEnabled={scrollEnabled}
+                        showsVerticalScrollIndicator={false}
+                        bounces={scrollEnabled}
+                        alwaysBounceVertical={false}
+                        overScrollMode="never"
+                        contentInsetAdjustmentBehavior="never"
+                    >
 
                         {/* MAIN CARD */}
                         <View style={styles.card}>
@@ -439,7 +458,7 @@ export default function ProScreen({ navigation }) {
 
                         </View>
 
-                        <View style={{ height: scale(30) }} />
+                        <View style={styles.bottomSpacer} />
                     </ScrollView>
 
                 </SafeAreaView>
@@ -460,6 +479,12 @@ const styles = StyleSheet.create({
     safeArea: {
         flex: 1,
         paddingTop: Platform.OS === 'android' ? scale(30) : 0, // Зменшив відступ зверху
+    },
+    scrollView: {
+        flex: 1,
+    },
+    scrollContent: {
+        flexGrow: 1,
     },
 
     // --- HEADER ---
@@ -590,5 +615,8 @@ const styles = StyleSheet.create({
         color: '#F5D8CB',
         fontSize: scale(15),      // Зменшив
         fontFamily: 'Unbounded-Medium',
-    }
+    },
+    bottomSpacer: {
+        height: scale(30),
+    },
 });

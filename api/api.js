@@ -8,6 +8,7 @@ import { Dimensions, Image } from 'react-native';
 const FALLBACK_API_URL = 'http://54.144.57.220:8080';
 const API_URL = process.env.EXPO_PUBLIC_API_URL || FALLBACK_API_URL;
 const AD_STREAM_COUNT_KEY = 'ad_stream_count_v1';
+const FAVORITE_GENRES_INVALIDATE_KEY = 'favorite_genres_invalidate_v1';
 const iconsPrefetchCache = new Set();
 let iconsMapCache = null;
 let iconsMapRequest = null;
@@ -43,6 +44,7 @@ let myPodcastsCache = null;
 let myPodcastsRequest = null;
 let allPodcastsCache = null;
 let allPodcastsRequest = null;
+const podcastLikedStateCache = new Map();
 let podcastGenresCache = null;
 let podcastGenresRequest = null;
 let countriesCache = null;
@@ -202,6 +204,14 @@ const clearPersistedPrivateCaches = async () => {
 
 const removePersistedArrayCache = (name) => {
     AsyncStorage.removeItem(getCacheStorageKey(name)).catch(() => {});
+};
+
+const markFavoriteGenresInvalidated = async () => {
+    try {
+        await AsyncStorage.setItem(FAVORITE_GENRES_INVALIDATE_KEY, String(Date.now()));
+    } catch (_) {
+        // ignore marker write errors
+    }
 };
 
 export const api = axios.create({
@@ -830,6 +840,26 @@ export const refreshUserToken = async () => {
     }
 };
 
+export const changeUsername = async (username) => {
+    const safeUsername = String(username || '').trim();
+    if (!safeUsername) {
+        return { error: 'Username is required', status: 400 };
+    }
+
+    try {
+        const res = await api.post('/api/Auth/change-username', {
+            username: safeUsername,
+        });
+        await saveAuthMeta(res?.data, safeUsername);
+        return { success: true, data: res?.data };
+    } catch (e) {
+        return {
+            error: e?.response?.data || e?.message || 'Failed to change username',
+            status: e?.response?.status || null,
+        };
+    }
+};
+
 export const searchLibrary = async (query) => {
     const q = String(query || '').trim();
     if (!q) {
@@ -892,7 +922,8 @@ export const addFavoriteGenre = async (genreId) => {
     if (!id) return { error: 'Invalid genreId' };
 
     try {
-        const res = await api.post(`/api/Radio/favorite-genres/${encodeURIComponent(id)}`);
+        const res = await api.post(`/api/radio/favorite-genres/${encodeURIComponent(id)}`);
+        await markFavoriteGenresInvalidated();
         return { success: true, data: res?.data || null };
     } catch (e) {
         return {
@@ -907,7 +938,8 @@ export const removeFavoriteGenre = async (genreId) => {
     if (!id) return { error: 'Invalid genreId' };
 
     try {
-        const res = await api.delete(`/api/Radio/favorite-genres/${encodeURIComponent(id)}`);
+        const res = await api.delete(`/api/radio/favorite-genres/${encodeURIComponent(id)}`);
+        await markFavoriteGenresInvalidated();
         return { success: true, data: res?.data || null };
     } catch (e) {
         return {
@@ -919,8 +951,8 @@ export const removeFavoriteGenre = async (genreId) => {
 
 export const getFavoriteGenres = async () => {
     const candidates = [
-        '/api/Radio/favorite-genres',
         '/api/radio/favorite-genres',
+        '/api/Radio/favorite-genres',
         '/api/Radio/favorite-genres/my',
         '/api/radio/favorite-genres/my',
     ];
@@ -990,16 +1022,36 @@ export const saveFavoriteGenres = async (genreIds) => {
 
     if (ids.length === 0) return { success: true };
 
-    try {
-        // Legacy endpoint support.
-        await api.post('/api/radio/favorite-genres', {
-            genreIds: ids,
+    const extractFavoriteIdSet = (rawFavorites) => {
+        const set = new Set();
+        if (!Array.isArray(rawFavorites)) return set;
+
+        rawFavorites.forEach((item) => {
+            if (typeof item === 'string' || typeof item === 'number') {
+                const id = String(item || '').trim().toLowerCase();
+                if (id) set.add(id);
+                return;
+            }
+
+            if (!item || typeof item !== 'object') return;
+            const id = String(
+                item?.id ??
+                item?.Id ??
+                item?._id ??
+                item?.genreId ??
+                item?.GenreId ??
+                item?.value ??
+                ''
+            ).trim().toLowerCase();
+            if (id) set.add(id);
         });
-        return { success: true };
-    } catch (e) {
-        // New backend contract: single genre add/remove endpoints.
-        const fallbackResults = await Promise.all(ids.map((id) => addFavoriteGenre(id)));
-        const failed = fallbackResults.find((result) => {
+
+        return set;
+    };
+
+    const addMissingIds = async (targetIds) => {
+        const results = await Promise.all(targetIds.map((id) => addFavoriteGenre(id)));
+        const failed = results.find((result) => {
             if (!result?.error) return false;
             const status = result?.status;
             const text = String(result.error || '').toLowerCase();
@@ -1011,13 +1063,42 @@ export const saveFavoriteGenres = async (genreIds) => {
                 text.includes('selected');
             return !alreadyHandled;
         });
+        if (failed) {
+            return {
+                error: failed.error || 'Save favorite genres failed',
+                status: failed.status || null,
+            };
+        }
+        return { success: true };
+    };
 
-        if (!failed) return { success: true };
+    try {
+        // Primary contract: save full list in one request.
+        await api.post('/api/radio/favorite-genres', {
+            genreIds: ids,
+        });
 
-        return {
-            error: failed.error || e?.response?.data || e?.message || 'Save favorite genres failed',
-            status: failed.status || e?.response?.status || null,
-        };
+        // Verify persistence. If backend keeps old behavior or partial write, add missing genres one-by-one.
+        const backendAfterSave = await getFavoriteGenres();
+        const backendIdSet = extractFavoriteIdSet(backendAfterSave);
+        const missing = ids.filter((id) => !backendIdSet.has(String(id).trim().toLowerCase()));
+        if (missing.length === 0) {
+            await markFavoriteGenresInvalidated();
+            return { success: true };
+        }
+
+        return addMissingIds(missing);
+    } catch (e) {
+        // Fallback contract: add each genre individually.
+        const fallback = await addMissingIds(ids);
+        if (fallback?.error) {
+            return {
+                error: fallback.error || e?.response?.data || e?.message || 'Save favorite genres failed',
+                status: fallback.status || e?.response?.status || null,
+            };
+        }
+        await markFavoriteGenresInvalidated();
+        return { success: true };
     }
 };
 
@@ -1700,6 +1781,7 @@ export const clearSearchCache = () => {
     myPodcastsRequest = null;
     allPodcastsCache = null;
     allPodcastsRequest = null;
+    podcastLikedStateCache.clear();
     podcastGenresCache = null;
     podcastGenresRequest = null;
     countriesCache = null;
@@ -1737,6 +1819,7 @@ const clearUserScopedRuntimeCaches = () => {
     subscriptionsRequest = null;
     myPodcastsCache = null;
     myPodcastsRequest = null;
+    podcastLikedStateCache.clear();
     clearMapCache(playlistDetailsCache);
     clearMapCache(playlistDetailsRequest);
     clearMapCache(podcastDetailsCache);
@@ -3163,6 +3246,7 @@ export const likePodcast = async (podcastId) => {
     if (!id) return { error: 'Podcast id is required' };
     try {
         const res = await api.post(`/api/Podcasts/${id}/like`, {});
+        podcastLikedStateCache.set(id, true);
         podcastDetailsCache.delete(id);
         podcastDetailsRequest.delete(id);
         myPodcastsCache = null;
@@ -3182,6 +3266,7 @@ export const unlikePodcast = async (podcastId) => {
     if (!id) return { error: 'Podcast id is required' };
     try {
         const res = await api.post(`/api/Podcasts/${id}/unlike`, {});
+        podcastLikedStateCache.set(id, false);
         podcastDetailsCache.delete(id);
         podcastDetailsRequest.delete(id);
         myPodcastsCache = null;
@@ -3214,12 +3299,20 @@ export const isPodcastLiked = async (podcastId) => {
     const id = String(podcastId || '').trim();
     if (!id) return false;
 
+    if (podcastLikedStateCache.has(id)) {
+        return Boolean(podcastLikedStateCache.get(id));
+    }
+
     try {
         const res = await api.get(`/api/Podcasts/${id}/liked`);
         const raw = res?.data;
-        if (typeof raw === 'boolean') return raw;
-        return Boolean(raw?.liked);
+        const liked = typeof raw === 'boolean' ? raw : Boolean(raw?.liked);
+        podcastLikedStateCache.set(id, liked);
+        return liked;
     } catch (_) {
+        if (podcastLikedStateCache.has(id)) {
+            return Boolean(podcastLikedStateCache.get(id));
+        }
         return false;
     }
 };

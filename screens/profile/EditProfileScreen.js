@@ -19,6 +19,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import {
     addFavoriteGenre,
     removeFavoriteGenre,
+    changeUsername,
     changeAvatar,
     getFavoriteGenres,
     getGenres,
@@ -93,6 +94,22 @@ const toUnique = (arr) => {
     });
 };
 
+const normalizeNameKey = (value) => String(value || '').trim().toLowerCase();
+
+const normalizeToKnownMusicGenres = (names, allMusicGenres) => {
+    const byName = new Map(
+        (Array.isArray(allMusicGenres) ? allMusicGenres : [])
+            .map((genre) => [normalizeNameKey(genre?.name), String(genre?.name || '').trim()])
+            .filter(([key, name]) => !!key && !!name)
+    );
+
+    const normalized = (Array.isArray(names) ? names : [])
+        .map((name) => byName.get(normalizeNameKey(name)))
+        .filter(Boolean);
+
+    return toUnique(normalized);
+};
+
 const extractFavoriteMusicGenreNames = (rawFavorites, allMusicGenres) => {
     if (!Array.isArray(rawFavorites) || rawFavorites.length === 0) return [];
 
@@ -101,18 +118,31 @@ const extractFavoriteMusicGenreNames = (rawFavorites, allMusicGenres) => {
             .map((genre) => [String(genre?.id || '').trim().toLowerCase(), String(genre?.name || '').trim()])
             .filter(([id, name]) => !!id && !!name)
     );
+    const nameByName = new Map(
+        (Array.isArray(allMusicGenres) ? allMusicGenres : [])
+            .map((genre) => [normalizeNameKey(genre?.name), String(genre?.name || '').trim()])
+            .filter(([key, name]) => !!key && !!name)
+    );
+
+    const resolveKnownName = (value) => {
+        const raw = String(value || '').trim();
+        if (!raw) return '';
+        const byId = nameById.get(raw.toLowerCase());
+        if (byId) return byId;
+        const byName = nameByName.get(normalizeNameKey(raw));
+        if (byName) return byName;
+        return '';
+    };
 
     const names = rawFavorites
         .map((item) => {
             if (typeof item === 'string' || typeof item === 'number') {
-                const value = String(item).trim();
-                if (!value) return '';
-                return nameById.get(value.toLowerCase()) || value;
+                return resolveKnownName(item);
             }
 
             if (!item || typeof item !== 'object') return '';
 
-            const directName = String(
+            const directName = resolveKnownName(String(
                 item?.name ??
                 item?.Name ??
                 item?.title ??
@@ -120,7 +150,7 @@ const extractFavoriteMusicGenreNames = (rawFavorites, allMusicGenres) => {
                 item?.label ??
                 item?.Label ??
                 ''
-            ).trim();
+            ).trim());
             if (directName) return directName;
 
             const id = String(
@@ -132,7 +162,7 @@ const extractFavoriteMusicGenreNames = (rawFavorites, allMusicGenres) => {
                 ''
             ).trim().toLowerCase();
             if (!id) return '';
-            return nameById.get(id) || '';
+            return resolveKnownName(id);
         })
         .filter(Boolean);
 
@@ -142,6 +172,7 @@ const extractFavoriteMusicGenreNames = (rawFavorites, allMusicGenres) => {
 export default function EditProfileScreen({ navigation, route }) {
     const [loading, setLoading] = useState(true);
     const [savingAvatar, setSavingAvatar] = useState(false);
+    const [savingUsername, setSavingUsername] = useState(false);
     const [icons, setIcons] = useState({});
     const [username, setUsername] = useState('');
     const [savedUsername, setSavedUsername] = useState('');
@@ -174,7 +205,6 @@ export default function EditProfileScreen({ navigation, route }) {
 
                 const savedMusic = await parseStoredArrayWithMeta(STORAGE_KEYS.musicGenres);
                 const savedPodcast = await parseStoredArrayWithMeta(STORAGE_KEYS.podcastGenres);
-                const favoriteFromOnboarding = await parseStoredArrayWithMeta(STORAGE_KEYS.favoriteGenreNames);
                 const backendFavoriteMusic = extractFavoriteMusicGenreNames(
                     backendFavoriteGenresRaw,
                     normalizedTrackGenres
@@ -183,12 +213,10 @@ export default function EditProfileScreen({ navigation, route }) {
                 let initialMusic = [];
                 if (Array.isArray(backendFavoriteGenresRaw)) {
                     // Backend is the source of truth when endpoint exists.
-                    initialMusic = toUnique(backendFavoriteMusic);
+                    initialMusic = normalizeToKnownMusicGenres(backendFavoriteMusic, normalizedTrackGenres);
                 } else if (savedMusic.exists) {
                     // Respect explicit empty local selection too.
-                    initialMusic = toUnique(savedMusic.data);
-                } else if (favoriteFromOnboarding.exists) {
-                    initialMusic = toUnique(favoriteFromOnboarding.data);
+                    initialMusic = normalizeToKnownMusicGenres(savedMusic.data, normalizedTrackGenres);
                 }
 
                 const initialPodcast = toUnique(savedPodcast.data);
@@ -253,6 +281,16 @@ export default function EditProfileScreen({ navigation, route }) {
         });
         return map;
     }, [allMusicGenres]);
+    const musicGenreNameByLower = useMemo(() => {
+        const map = new Map();
+        (Array.isArray(allMusicGenres) ? allMusicGenres : []).forEach((genre) => {
+            const key = normalizeNameKey(genre?.name);
+            const name = String(genre?.name || '').trim();
+            if (!key || !name) return;
+            map.set(key, name);
+        });
+        return map;
+    }, [allMusicGenres]);
 
     useEffect(() => {
         const token = route?.params?.genrePickerResultToken;
@@ -268,11 +306,16 @@ export default function EditProfileScreen({ navigation, route }) {
         );
 
         if (type === 'music') {
+            const canonicalSelected = toUnique(
+                selectedNames
+                    .map((name) => musicGenreNameByLower.get(normalizeNameKey(name)))
+                    .filter(Boolean)
+            );
             const prevMusic = Array.isArray(musicGenres) ? musicGenres : [];
             const prevSet = new Set(prevMusic.map((name) => String(name).toLowerCase()));
-            const nextSet = new Set(selectedNames.map((name) => String(name).toLowerCase()));
+            const nextSet = new Set(canonicalSelected.map((name) => String(name).toLowerCase()));
 
-            selectedNames.forEach((name) => {
+            canonicalSelected.forEach((name) => {
                 const lowered = String(name).toLowerCase();
                 if (prevSet.has(lowered)) return;
                 const genreId = musicGenreIdByName.get(lowered);
@@ -286,20 +329,65 @@ export default function EditProfileScreen({ navigation, route }) {
                 if (genreId) void removeFavoriteGenre(genreId);
             });
 
-            setMusicGenres(selectedNames);
+            setMusicGenres(canonicalSelected);
             return;
         }
 
         setPodcastGenres(selectedNames);
-    }, [route?.params?.genrePickerResultToken, route?.params?.genrePickerResult, musicGenres, musicGenreIdByName]);
+    }, [route?.params?.genrePickerResultToken, route?.params?.genrePickerResult, musicGenres, musicGenreIdByName, musicGenreNameByLower]);
 
     const saveUsername = async (value) => {
+        if (savingUsername) return;
+
         const safe = String(value || '').trim();
-        const finalName = safe || 'User';
-        setUsername(finalName);
-        await AsyncStorage.setItem(STORAGE_KEYS.username, finalName);
-        setSavedUsername(finalName);
-        Keyboard.dismiss();
+        if (!safe) {
+            Alert.alert('Error', 'Username is required');
+            return;
+        }
+
+        if (safe === String(savedUsername || '').trim()) {
+            setUsername(safe);
+            Keyboard.dismiss();
+            return;
+        }
+
+        setSavingUsername(true);
+        try {
+            const result = await changeUsername(safe);
+            if (result?.error) {
+                const raw = result.error;
+                let message = 'Failed to update username';
+                if (typeof raw === 'string') {
+                    message = raw;
+                } else if (raw && typeof raw === 'object') {
+                    if (typeof raw?.message === 'string' && raw.message.trim()) {
+                        message = raw.message.trim();
+                    } else if (typeof raw?.title === 'string' && raw.title.trim()) {
+                        message = raw.title.trim();
+                    } else if (raw?.errors && typeof raw.errors === 'object') {
+                        const first = Object.values(raw.errors)
+                            .flat()
+                            .map((v) => String(v || '').trim())
+                            .find(Boolean);
+                        if (first) message = first;
+                    }
+                }
+                Alert.alert('Error', message);
+                return;
+            }
+
+            const finalName = String(
+                result?.data?.username ||
+                result?.data?.Username ||
+                safe
+            ).trim();
+            setUsername(finalName);
+            setSavedUsername(finalName);
+            await AsyncStorage.setItem(STORAGE_KEYS.username, finalName);
+            Keyboard.dismiss();
+        } finally {
+            setSavingUsername(false);
+        }
     };
 
     const normalizedUsername = String(username || '').trim();
@@ -341,13 +429,21 @@ export default function EditProfileScreen({ navigation, route }) {
 
     const openGenrePicker = (type) => {
         const safeType = type === 'podcast' ? 'podcast' : 'music';
-        const selectedGenres = safeType === 'music' ? musicGenres : podcastGenres;
-        const allGenres = toUnique([
-            ...(safeType === 'music' ? allMusicGenres : allPodcastGenres)
-            .map((genre) => String(genre?.name || '').trim())
-            .filter(Boolean),
-            ...selectedGenres,
-        ]);
+        const selectedGenres = safeType === 'music'
+            ? normalizeToKnownMusicGenres(musicGenres, allMusicGenres)
+            : podcastGenres;
+        const allGenres = safeType === 'music'
+            ? toUnique(
+                (allMusicGenres || [])
+                    .map((genre) => String(genre?.name || '').trim())
+                    .filter(Boolean)
+            )
+            : toUnique([
+                ...(allPodcastGenres || [])
+                    .map((genre) => String(genre?.name || '').trim())
+                    .filter(Boolean),
+                ...selectedGenres,
+            ]);
 
         navigation.navigate('ProfileGenrePicker', {
             type: safeType,
@@ -438,6 +534,7 @@ export default function EditProfileScreen({ navigation, route }) {
                         <TextInput
                             value={username}
                             onChangeText={setUsername}
+                            editable={!savingUsername}
                             keyboardAppearance="dark"
                             returnKeyType="done"
                             blurOnSubmit
@@ -452,9 +549,14 @@ export default function EditProfileScreen({ navigation, route }) {
                             <TouchableOpacity
                                 style={styles.doneInlineBtn}
                                 onPress={() => saveUsername(username)}
+                                disabled={savingUsername}
                                 activeOpacity={0.85}
                             >
-                                <Text style={styles.doneInlineBtnText}>Done</Text>
+                                {savingUsername ? (
+                                    <ActivityIndicator size="small" color="#2B0E0D" />
+                                ) : (
+                                    <Text style={styles.doneInlineBtnText}>Done</Text>
+                                )}
                             </TouchableOpacity>
                         )}
                     </View>

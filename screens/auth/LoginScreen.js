@@ -167,7 +167,8 @@ export default function LoginScreen({ navigation }) {
             if (uid) await AsyncStorage.setItem('userId', uid.toString());
         } catch(e) { console.log(e); }
 
-        navigation.replace('MainTabs');
+        const nextRoute = await resolvePostAuthDestination();
+        navigation.replace(nextRoute);
     };
 
     // 👇 Змінив аргументи: прибрав fallbackText, тепер їх 3

@@ -8,6 +8,7 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
+import { CommonActions } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { getIcons, scale } from '../../api/api';
 import RemoteTintIcon from '../../components/RemoteTintIcon';
@@ -113,13 +114,12 @@ export default function ProfileGenrePickerScreen({ route, navigation }) {
         };
 
         if (sourceKey) {
-            navigation.navigate({
-                key: sourceKey,
-                params: {
+            navigation.dispatch({
+                ...CommonActions.setParams({
                     genrePickerResult: payload,
                     genrePickerResultToken: Date.now(),
-                },
-                merge: true,
+                }),
+                source: sourceKey,
             });
         } else {
             navigation.setParams({

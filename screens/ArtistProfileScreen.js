@@ -234,6 +234,56 @@ const collectPodcastAuthorCandidates = (podcast) => (
         .filter(Boolean)
 );
 
+const isPodcastApprovedForProfile = (podcast, approvedPublicIds = null) => {
+    const podcastId = resolvePodcastId(podcast);
+    if (approvedPublicIds && podcastId && approvedPublicIds.has(String(podcastId))) {
+        return true;
+    }
+
+    const boolCandidates = [
+        podcast?.isApproved,
+        podcast?.IsApproved,
+        podcast?.approved,
+        podcast?.Approved,
+        podcast?.isPublished,
+        podcast?.IsPublished,
+        podcast?.published,
+        podcast?.Published,
+        podcast?.isVisible,
+        podcast?.IsVisible,
+    ];
+    for (const candidate of boolCandidates) {
+        if (typeof candidate === 'boolean') return candidate;
+        if (candidate === 1 || candidate === '1' || String(candidate || '').toLowerCase() === 'true') return true;
+        if (candidate === 0 || candidate === '0' || String(candidate || '').toLowerCase() === 'false') return false;
+    }
+
+    const statusCandidates = [
+        podcast?.status,
+        podcast?.Status,
+        podcast?.moderationStatus,
+        podcast?.ModerationStatus,
+        podcast?.publishStatus,
+        podcast?.PublishStatus,
+        podcast?.state,
+        podcast?.State,
+    ];
+    for (const value of statusCandidates) {
+        const status = String(value || '').trim().toLowerCase();
+        if (!status) continue;
+        if (['approved', 'accept', 'accepted', 'published', 'active', 'verified', 'done'].includes(status)) return true;
+        if (
+            ['pending', 'moderation', 'inmoderation', 'onmoderation', 'draft', 'submitted', 'rejected', 'declined', 'blocked', 'disabled'].includes(status)
+        ) {
+            return false;
+        }
+        return false;
+    }
+
+    // For artist profile we hide uncertain moderation state by default.
+    return false;
+};
+
 const resolveTrackLikesCount = (track) => {
     if (!track || typeof track !== 'object') return 0;
 
@@ -419,13 +469,22 @@ export default function ArtistProfileScreen({ navigation, route }) {
                     }
                 });
 
+            const approvedPublicPodcastIds = new Set(
+                (Array.isArray(podcastsRes) ? podcastsRes : [])
+                    .map((podcast) => resolvePodcastId(podcast))
+                    .filter(Boolean)
+                    .map((id) => String(id))
+            );
+
             const artistPodcasts = Array.from(mergedPodcastsMap.values()).filter((p) => {
                 const podcastOwnerCandidates = collectPodcastOwnerCandidates(p);
                 const podcastAuthorCandidates = collectPodcastAuthorCandidates(p);
 
                 const matchesOwner = podcastOwnerCandidates.some((candidate) => ownerIds.includes(String(candidate)));
                 const matchesAuthor = podcastAuthorCandidates.some((candidate) => candidate === artistNameKey);
-                return matchesOwner || matchesAuthor;
+                if (!(matchesOwner || matchesAuthor)) return false;
+
+                return isPodcastApprovedForProfile(p, approvedPublicPodcastIds);
             });
             setPodcasts(artistPodcasts);
 
@@ -883,9 +942,9 @@ export default function ArtistProfileScreen({ navigation, route }) {
                     )}
 
                     {/* --- PODCASTS AND SHOW --- */}
-                    <View style={styles.section}>
-                        <Text style={styles.sectionTitle}>Podcasts and Show</Text>
-                        {podcasts.length > 0 ? (
+                    {podcasts.length > 0 && (
+                        <View style={styles.section}>
+                            <Text style={styles.sectionTitle}>Podcasts and Show</Text>
                             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.popularScrollContent}>
                                 {podcasts.map((podcast, index) => {
                                     const podcastId = resolvePodcastId(podcast);
@@ -917,10 +976,8 @@ export default function ArtistProfileScreen({ navigation, route }) {
                                     );
                                 })}
                             </ScrollView>
-                        ) : (
-                            <Text style={styles.emptyPodcastsText}>No podcasts yet</Text>
-                        )}
-                    </View>
+                        </View>
+                    )}
 
                     {/* --- ALL SONGS --- */}
                     {allSongsTracks.length > 0 && (
@@ -1133,12 +1190,6 @@ const styles = StyleSheet.create({
         color: '#F5D8CB',
         marginLeft: scale(16),
         marginBottom: scale(15),
-    },
-    emptyPodcastsText: {
-        marginLeft: scale(16),
-        color: '#B9B9B9',
-        fontSize: scale(14),
-        fontFamily: 'Poppins-Regular',
     },
     albumCard: {
         marginRight: scale(15),

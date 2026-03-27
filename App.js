@@ -28,6 +28,7 @@ import {
     scale,
     warmAppStartupData,
     refreshUserToken,
+    resolvePostAuthDestination,
 } from './api/api';
 
 /* SCREENS */
@@ -389,7 +390,8 @@ export default function App() {
             try {
                 const token = await AsyncStorage.getItem('userToken');
                 if (token && isMounted) {
-                    setInitialRoute('MainTabs');
+                    const nextRoute = await resolvePostAuthDestination();
+                    setInitialRoute(nextRoute || 'MainTabs');
                 } else {
                     setInitialRoute('Onboarding');
                 }

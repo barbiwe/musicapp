@@ -498,61 +498,70 @@ export default function SearchScreen({ navigation }) {
                                     {searchResults.length === 0 ? (
                                         <Text style={styles.emptySearchText}>No matches</Text>
                                     ) : (
-                                        searchResults.map((item, index) => {
-                                            const rowId = item.id || item._id || `s-${index}`;
-                                            const coverUrl = item.imageUrl;
-                                            return (
-                                                <TouchableOpacity
-                                                    key={`${rowId}-${index}`}
-                                                    style={styles.searchResultRow}
-                                                    onPress={() => onOpenSearchResult(item)}
-                                                    activeOpacity={0.8}
-                                                >
-                                                    <View style={styles.searchResultArtworkWrap}>
-                                                        {item.type === 'track' ? (
-                                                            <>
-                                                                {renderIcon('vinyl.svg', scale(46), null)}
-                                                                {coverUrl ? (
-                                                                    <Image source={{ uri: coverUrl }} style={styles.searchResultCenterCover} />
-                                                                ) : (
-                                                                    <View style={[styles.searchResultCenterCover, styles.recentCoverFallback]} />
-                                                                )}
-                                                            </>
-                                                        ) : (
-                                                            <>
-                                                                {coverUrl ? (
-                                                                    <Image
-                                                                        source={{ uri: coverUrl }}
-                                                                        style={[
-                                                                            styles.searchEntityCover,
-                                                                            item.type === 'artist' && styles.searchArtistCover,
-                                                                        ]}
-                                                                    />
-                                                                ) : (
-                                                                    <View
-                                                                        style={[
-                                                                            styles.searchEntityCover,
-                                                                            item.type === 'artist' && styles.searchArtistCover,
-                                                                            styles.recentCoverFallback,
-                                                                        ]}
-                                                                    />
-                                                                )}
-                                                            </>
-                                                        )}
-                                                    </View>
-                                                    <View style={styles.searchResultTextWrap}>
-                                                        <Text style={styles.searchResultTitle} numberOfLines={1}>
-                                                            {item.title || 'Unknown'}
-                                                        </Text>
-                                                        {item.subtitle ? (
-                                                            <Text style={styles.searchResultArtist} numberOfLines={1}>
-                                                                {item.subtitle}
+                                        <ScrollView
+                                            style={styles.searchResultsList}
+                                            contentContainerStyle={styles.searchResultsListContent}
+                                            showsVerticalScrollIndicator={false}
+                                            bounces={false}
+                                            overScrollMode="never"
+                                            nestedScrollEnabled
+                                        >
+                                            {searchResults.map((item, index) => {
+                                                const rowId = item.id || item._id || `s-${index}`;
+                                                const coverUrl = item.imageUrl;
+                                                return (
+                                                    <TouchableOpacity
+                                                        key={`${rowId}-${index}`}
+                                                        style={styles.searchResultRow}
+                                                        onPress={() => onOpenSearchResult(item)}
+                                                        activeOpacity={0.8}
+                                                    >
+                                                        <View style={styles.searchResultArtworkWrap}>
+                                                            {item.type === 'track' ? (
+                                                                <>
+                                                                    {renderIcon('vinyl.svg', scale(46), null)}
+                                                                    {coverUrl ? (
+                                                                        <Image source={{ uri: coverUrl }} style={styles.searchResultCenterCover} />
+                                                                    ) : (
+                                                                        <View style={[styles.searchResultCenterCover, styles.recentCoverFallback]} />
+                                                                    )}
+                                                                </>
+                                                            ) : (
+                                                                <>
+                                                                    {coverUrl ? (
+                                                                        <Image
+                                                                            source={{ uri: coverUrl }}
+                                                                            style={[
+                                                                                styles.searchEntityCover,
+                                                                                item.type === 'artist' && styles.searchArtistCover,
+                                                                            ]}
+                                                                        />
+                                                                    ) : (
+                                                                        <View
+                                                                            style={[
+                                                                                styles.searchEntityCover,
+                                                                                item.type === 'artist' && styles.searchArtistCover,
+                                                                                styles.recentCoverFallback,
+                                                                            ]}
+                                                                        />
+                                                                    )}
+                                                                </>
+                                                            )}
+                                                        </View>
+                                                        <View style={styles.searchResultTextWrap}>
+                                                            <Text style={styles.searchResultTitle} numberOfLines={1}>
+                                                                {item.title || 'Unknown'}
                                                             </Text>
-                                                        ) : null}
-                                                    </View>
-                                                </TouchableOpacity>
-                                            );
-                                        })
+                                                            {item.subtitle ? (
+                                                                <Text style={styles.searchResultArtist} numberOfLines={1}>
+                                                                    {item.subtitle}
+                                                                </Text>
+                                                            ) : null}
+                                                        </View>
+                                                    </TouchableOpacity>
+                                                );
+                                            })}
+                                        </ScrollView>
                                     )}
                                 </View>
                             </View>
@@ -720,6 +729,7 @@ const styles = StyleSheet.create({
         top: scale(37),
         left: 0,
         right: 0,
+        maxHeight: 400,
         borderWidth: scale(1),
         borderTopWidth: 0,
         borderColor: 'rgba(245, 216, 203, 0.35)',
@@ -733,6 +743,12 @@ const styles = StyleSheet.create({
         paddingHorizontal: scale(12),
         paddingTop: scale(6),
         paddingBottom: scale(8),
+    },
+    searchResultsList: {
+        maxHeight: 400,
+    },
+    searchResultsListContent: {
+        paddingBottom: scale(2),
     },
     searchResultRow: {
         flexDirection: 'row',

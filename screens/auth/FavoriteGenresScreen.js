@@ -12,25 +12,19 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { LinearGradient } from 'expo-linear-gradient';
 
-import { getGenres, saveFavoriteGenres, scale } from '../../api/api';
+import { getFavoriteGenres, getGenres, saveFavoriteGenres, scale } from '../../api/api';
+
+const toLowerSafe = (value) => String(value || '').trim().toLowerCase();
 
 const normalizeGenres = (rawGenres) => {
     if (!Array.isArray(rawGenres)) return [];
 
     return rawGenres
-        .map((g, index) => {
-            if (typeof g === 'string') {
-                const label = g.trim();
-                if (!label) return null;
-                return {
-                    id: `fallback_${label.toLowerCase()}_${index}`,
-                    label,
-                };
-            }
-
-            const id = g?.id || g?._id || g?.genreId || g?.value || `${index}`;
-            const label = String(g?.name || g?.title || g?.label || '').trim();
-            if (!label) return null;
+        .map((g) => {
+            if (!g || typeof g !== 'object') return null;
+            const id = g?.id || g?.Id || g?._id || g?.genreId || g?.GenreId || g?.value;
+            const label = String(g?.name || g?.Name || g?.title || g?.Title || g?.label || g?.Label || '').trim();
+            if (!id || !label) return null;
 
             return {
                 id: String(id),
@@ -38,6 +32,34 @@ const normalizeGenres = (rawGenres) => {
             };
         })
         .filter(Boolean);
+};
+
+const buildFavoriteMatchers = (favorites) => {
+    const byId = new Set();
+    const byName = new Set();
+
+    if (!Array.isArray(favorites)) {
+        return { byId, byName };
+    }
+
+    favorites.forEach((item) => {
+        if (typeof item === 'string' || typeof item === 'number') {
+            const normalized = toLowerSafe(item);
+            if (normalized) {
+                byId.add(normalized);
+                byName.add(normalized);
+            }
+            return;
+        }
+
+        if (!item || typeof item !== 'object') return;
+        const id = toLowerSafe(item?.id || item?.Id || item?._id || item?.genreId || item?.GenreId || item?.value);
+        const name = toLowerSafe(item?.name || item?.Name || item?.title || item?.Title || item?.label || item?.Label);
+        if (id) byId.add(id);
+        if (name) byName.add(name);
+    });
+
+    return { byId, byName };
 };
 
 const extractErrorText = (errorValue) => {
@@ -62,12 +84,29 @@ export default function FavoriteGenresScreen({ navigation }) {
         let isMounted = true;
 
         const loadGenres = async () => {
-            const backendGenres = await getGenres();
-            const normalized = normalizeGenres(backendGenres);
+            try {
+                const [backendGenres, backendFavorites] = await Promise.all([getGenres(), getFavoriteGenres()]);
+                const normalized = normalizeGenres(backendGenres);
+                const { byId, byName } = buildFavoriteMatchers(backendFavorites);
 
-            if (isMounted) {
-                setGenres(normalized);
-                setIsLoadingGenres(false);
+                if (isMounted) {
+                    setGenres(normalized);
+                    const preselected = new Set(
+                        normalized
+                            .filter((genre) => byId.has(toLowerSafe(genre.id)) || byName.has(toLowerSafe(genre.label)))
+                            .map((genre) => genre.id)
+                    );
+                    setSelected(preselected);
+                }
+            } catch (_) {
+                if (isMounted) {
+                    setGenres([]);
+                    setSelected(new Set());
+                }
+            } finally {
+                if (isMounted) {
+                    setIsLoadingGenres(false);
+                }
             }
         };
 
@@ -108,6 +147,11 @@ export default function FavoriteGenresScreen({ navigation }) {
                 .filter(Boolean);
             const genreNames = selectedGenresData.map((g) => g.label);
 
+            if (!genreIds.length) {
+                Alert.alert('Error', 'Please select at least one genre');
+                return;
+            }
+
             const saveResult = await saveFavoriteGenres(genreIds);
             if (saveResult?.error) {
                 const errorText = extractErrorText(saveResult.error).toLowerCase();
@@ -119,8 +163,24 @@ export default function FavoriteGenresScreen({ navigation }) {
                 }
             }
 
-            await AsyncStorage.setItem('favoriteGenreIds', JSON.stringify(genreIds));
-            await AsyncStorage.setItem('favoriteGenreNames', JSON.stringify(genreNames));
+            const backendFavoritesAfterSave = await getFavoriteGenres();
+            const { byId, byName } = buildFavoriteMatchers(backendFavoritesAfterSave);
+
+            const syncedSelected = selectedGenresData.filter((genre) => {
+                const genreId = toLowerSafe(genre.id);
+                const genreName = toLowerSafe(genre.label);
+                return byId.has(genreId) || byName.has(genreName);
+            });
+
+            const persistedIds = (syncedSelected.length > 0 ? syncedSelected : selectedGenresData)
+                .map((g) => String(g.id || '').trim())
+                .filter(Boolean);
+            const persistedNames = (syncedSelected.length > 0 ? syncedSelected : selectedGenresData)
+                .map((g) => String(g.label || '').trim())
+                .filter(Boolean);
+
+            await AsyncStorage.setItem('favoriteGenreIds', JSON.stringify(persistedIds));
+            await AsyncStorage.setItem('favoriteGenreNames', JSON.stringify(persistedNames.length > 0 ? persistedNames : genreNames));
         } catch (_) {
             Alert.alert('Error', 'Failed to save favorite genres');
             return;
@@ -150,7 +210,9 @@ export default function FavoriteGenresScreen({ navigation }) {
                     <Text style={styles.backArrow}>‹</Text>
                 </TouchableOpacity>
 
-                <Text style={styles.title}>Pick your{"\n"}favorite genre</Text>
+                <Text style={styles.title}>
+                    Pick your{"\n"}favorite genre
+                </Text>
 
                 <ScrollView
                     style={styles.genresScroll}

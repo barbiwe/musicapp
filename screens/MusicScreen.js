@@ -11,6 +11,7 @@ import {
     StyleSheet,
     Alert,
     ActivityIndicator,
+    Keyboard,
     TouchableOpacity,
     TouchableWithoutFeedback,
     Modal,
@@ -138,11 +139,28 @@ export default function MusicScreen({ navigation, route }) {
     const [podcastCover, setPodcastCover] = useState(null);
     const [podcastEpisodes, setPodcastEpisodes] = useState([createPodcastEpisodeDraft()]);
     const [podcastLoading, setPodcastLoading] = useState(false);
+    const [publishNotice, setPublishNotice] = useState({
+        visible: false,
+        title: '',
+        message: '',
+    });
 
     const closeAnyModal = () => {
         setAlbumModalVisible(false);
         setTrackGenreModalVisible(false);
         setPodcastGenreModalVisible(false);
+    };
+
+    const showPublishNotice = (title, message) => {
+        setPublishNotice({
+            visible: true,
+            title: String(title || '').trim() || 'Success',
+            message: String(message || '').trim() || 'Your content has been sent to moderation.',
+        });
+    };
+
+    const closePublishNotice = () => {
+        setPublishNotice((prev) => ({ ...prev, visible: false }));
     };
 
     useEffect(() => {
@@ -425,12 +443,12 @@ export default function MusicScreen({ navigation, route }) {
 
         setTrackLoading(false);
 
-        if (result?.error) {
+        if (result?.error && !result?.success) {
             Alert.alert('Upload failed', typeof result.error === 'string' ? result.error : 'Failed to upload track');
             return;
         }
 
-        Alert.alert('Success', 'Track uploaded successfully');
+        showPublishNotice('Success', 'Your track has been sent to moderation.');
         setTrackTitle('');
         setTrackLyrics('');
         setTrackProducers('');
@@ -489,10 +507,7 @@ export default function MusicScreen({ navigation, route }) {
             return;
         }
 
-        Alert.alert(
-            'Success',
-            'Podcast created and submitted'
-        );
+        showPublishNotice('Success', 'Your podcast has been sent to moderation.');
 
         setPodcastTitle('');
         setPodcastCover(null);
@@ -578,7 +593,7 @@ export default function MusicScreen({ navigation, route }) {
             const createdAlbumId = getEntityId(createResult?.data);
             console.log('[ALBUM-PUBLISH][UI] created album id', createdAlbumId || null);
 
-            Alert.alert('Success', 'Album created successfully');
+            showPublishNotice('Success', 'Your album has been sent to moderation.');
 
             setAlbumTitle('');
             setAlbumCover(null);
@@ -629,6 +644,8 @@ export default function MusicScreen({ navigation, route }) {
     })();
 
     const handlePostPress = async () => {
+        Keyboard.dismiss();
+
         if (!hasUploadPermission) {
             Alert.alert('Permission required', 'You have no permission to upload tracks.');
             return;
@@ -1083,17 +1100,24 @@ export default function MusicScreen({ navigation, route }) {
                         </View>
 
                         <View style={styles.addEpisodeWrap}>
-                            <TouchableOpacity
-                                style={styles.addEpisodeBtn}
-                                activeOpacity={0.85}
-                                onPress={handleAddPodcastEpisode}
-                            >
-                                <View style={styles.addEpisodeInner}>
-                                    <Text style={styles.addEpisodePlus}>+</Text>
-                                    <Text style={styles.addEpisodeLabel}>Add new episode</Text>
-                                </View>
-                            </TouchableOpacity>
-                        </View>
+                        <TouchableOpacity
+                            style={styles.addEpisodeBtn}
+                            activeOpacity={0.85}
+                            onPress={handleAddPodcastEpisode}
+                        >
+                            <View style={styles.addEpisodeInner}>
+                                <RemoteTintIcon
+                                    icons={icons}
+                                    iconName={resolveIconName('libplus.svg')}
+                                    width={scale(18)}
+                                    height={scale(18)}
+                                    color="rgba(245,216,203,0.75)"
+                                    fallback="+"
+                                />
+                                <Text style={styles.addEpisodeLabel}>Add new episode</Text>
+                            </View>
+                        </TouchableOpacity>
+                    </View>
 
                         <View style={styles.warningCard}>
                             <Text style={styles.warningText}>
@@ -1260,7 +1284,17 @@ export default function MusicScreen({ navigation, route }) {
                             activeOpacity={0.85}
                             onPress={addAlbumTrack}
                         >
-                            <Text style={styles.addTrackText}>+ Add new track</Text>
+                            <View style={styles.addTrackInner}>
+                                <RemoteTintIcon
+                                    icons={icons}
+                                    iconName={resolveIconName('libplus.svg')}
+                                    width={scale(18)}
+                                    height={scale(18)}
+                                    color="rgba(245,216,203,0.75)"
+                                    fallback="+"
+                                />
+                                <Text style={styles.addTrackText}>Add new track</Text>
+                            </View>
                         </TouchableOpacity>
 
                         <View style={styles.warningCard}>
@@ -1414,6 +1448,27 @@ export default function MusicScreen({ navigation, route }) {
                                     activeOpacity={0.85}
                                 >
                                     <Text style={styles.modalCloseText}>Done</Text>
+                                </TouchableOpacity>
+                            </View>
+                        </TouchableWithoutFeedback>
+                    </View>
+                </TouchableWithoutFeedback>
+            </Modal>
+
+            <Modal visible={publishNotice.visible} transparent animationType="fade" onRequestClose={closePublishNotice}>
+                <TouchableWithoutFeedback onPress={closePublishNotice}>
+                    <View style={styles.publishNoticeOverlay}>
+                        <TouchableWithoutFeedback onPress={() => {}}>
+                            <View style={styles.publishNoticeCard}>
+                                <Text style={styles.publishNoticeTitle}>{publishNotice.title}</Text>
+                                <Text style={styles.publishNoticeText}>{publishNotice.message}</Text>
+
+                                <TouchableOpacity
+                                    style={styles.publishNoticeBtn}
+                                    activeOpacity={0.85}
+                                    onPress={closePublishNotice}
+                                >
+                                    <Text style={styles.publishNoticeBtnText}>OK</Text>
                                 </TouchableOpacity>
                             </View>
                         </TouchableWithoutFeedback>
@@ -1848,6 +1903,12 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         marginBottom: scale(2),
     },
+    addTrackInner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: scale(8),
+    },
     addTrackText: {
         color: 'rgba(245,216,203,0.75)',
         fontFamily: 'Poppins-Regular',
@@ -1911,12 +1972,6 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         gap: scale(8),
-    },
-    addEpisodePlus: {
-        color: 'rgba(245,216,203,0.75)',
-        fontFamily: 'Poppins-Regular',
-        fontSize: scale(30),
-        lineHeight: scale(30),
     },
     addEpisodeLabel: {
         color: 'rgba(245,216,203,0.75)',
@@ -2000,6 +2055,51 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
     },
     modalCloseText: {
+        color: '#300C0A',
+        fontFamily: 'Unbounded-Regular',
+        fontSize: scale(14),
+    },
+    publishNoticeOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.56)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingHorizontal: scale(16),
+        paddingBottom: 0,
+    },
+    publishNoticeCard: {
+        width: '100%',
+        borderRadius: scale(22),
+        borderWidth: 1,
+        borderColor: 'rgba(245,216,203,0.25)',
+        backgroundColor: 'rgba(48,12,10,0.95)',
+        paddingHorizontal: scale(18),
+        paddingTop: scale(16),
+        paddingBottom: scale(14),
+    },
+    publishNoticeTitle: {
+        color: '#F5D8CB',
+        textAlign: 'center',
+        fontFamily: 'Unbounded-Regular',
+        fontSize: scale(18),
+        marginBottom: scale(8),
+    },
+    publishNoticeText: {
+        color: 'rgba(245,216,203,0.88)',
+        textAlign: 'center',
+        fontFamily: 'Poppins-Regular',
+        fontSize: scale(14),
+        lineHeight: scale(21),
+    },
+    publishNoticeBtn: {
+        marginTop: scale(14),
+        minHeight: scale(44),
+        borderRadius: scale(22),
+        backgroundColor: '#F5D8CB',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    publishNoticeBtnText: {
         color: '#300C0A',
         fontFamily: 'Unbounded-Regular',
         fontSize: scale(14),
