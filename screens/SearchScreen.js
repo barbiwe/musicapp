@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { SvgXml } from 'react-native-svg';
 import { LinearGradient } from 'expo-linear-gradient';
+import { BlurView } from 'expo-blur';
 import { useFocusEffect } from '@react-navigation/native';
 import { usePlayerStore } from '../store/usePlayerStore';
 import {
@@ -476,6 +477,12 @@ export default function SearchScreen({ navigation }) {
 
                     <View style={styles.searchShell}>
                         <View style={[styles.searchBar, isSearchActive && styles.searchBarActive]}>
+                            <BlurView
+                                intensity={72}
+                                tint="dark"
+                                style={styles.searchBarBlur}
+                                pointerEvents="none"
+                            />
                             <View style={styles.searchIconWrap}>
                                 {renderIcon('search.svg', scale(22), 'rgba(245, 216, 203, 0.95)')}
                             </View>
@@ -494,6 +501,12 @@ export default function SearchScreen({ navigation }) {
 
                         {isSearchActive && (
                             <View style={styles.searchOverlay}>
+                                <BlurView
+                                    intensity={78}
+                                    tint="dark"
+                                    style={styles.searchOverlayBlur}
+                                    pointerEvents="none"
+                                />
                                 <View style={styles.searchResultsWrap}>
                                     {searchResults.length === 0 ? (
                                         <Text style={styles.emptySearchText}>No matches</Text>
@@ -693,21 +706,26 @@ const styles = StyleSheet.create({
         fontFamily: 'Unbounded-Regular',
     },
     searchBar: {
+        position: 'relative',
         height: scale(38),
         borderRadius: scale(21),
         borderWidth: scale(1),
         borderColor: 'rgba(245, 216, 203, 0.28)',
-        backgroundColor: 'rgba(84, 22, 20, 0.45)',
+        backgroundColor: 'rgba(84, 22, 20, 0.52)',
         flexDirection: 'row',
         alignItems: 'center',
         paddingHorizontal: scale(16),
+        overflow: 'hidden',
     },
     searchBarActive: {
         borderBottomLeftRadius: 0,
         borderBottomRightRadius: 0,
         borderBottomWidth: 0,
         borderColor: 'rgba(245, 216, 203, 0.35)',
-        backgroundColor: 'rgba(84, 22, 20, 0.75)',
+        backgroundColor: 'rgba(84, 22, 20, 0.62)',
+    },
+    searchBarBlur: {
+        ...StyleSheet.absoluteFillObject,
     },
     searchIconWrap: {
         marginRight: scale(6),
@@ -726,6 +744,7 @@ const styles = StyleSheet.create({
     },
     searchOverlay: {
         position: 'absolute',
+        overflow: 'hidden',
         top: scale(37),
         left: 0,
         right: 0,
@@ -733,11 +752,13 @@ const styles = StyleSheet.create({
         borderWidth: scale(1),
         borderTopWidth: 0,
         borderColor: 'rgba(245, 216, 203, 0.35)',
-        backgroundColor: 'rgba(84, 22, 20, 0.75)',
+        backgroundColor: 'rgba(84, 22, 20, 0.62)',
         borderBottomLeftRadius: scale(21),
         borderBottomRightRadius: scale(21),
-        overflow: 'hidden',
         zIndex: 40,
+    },
+    searchOverlayBlur: {
+        ...StyleSheet.absoluteFillObject,
     },
     searchResultsWrap: {
         paddingHorizontal: scale(12),
