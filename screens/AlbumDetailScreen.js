@@ -17,6 +17,7 @@ import {
     Easing
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as FileSystem from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
@@ -31,6 +32,7 @@ import {
     getAlbumTracks,
     getAlbums,
     getTracks,
+    getRadioQueue,
     likeTrack,
     unlikeTrack,
     getLikedTracks,
@@ -39,6 +41,8 @@ import {
     getLikedAlbums,
     getAlbumCoverUrl,
     uploadAlbumCover,
+    getStreamUrl,
+    saveOfflineDownload,
     getIcons,
     scale,
     resolveArtistName
@@ -49,6 +53,16 @@ const GUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-
 const albumDetailSessionCache = new Map();
 
 const svgCache = {};
+const getTrackId = (track) =>
+    String(
+        track?.id ||
+        track?._id ||
+        track?.trackId ||
+        track?.TrackId ||
+        track?.track?.id ||
+        ''
+    ).trim();
+
 // 👇 Цей компонент завантажує SVG, чистить, фарбує і КЕШУЄ результат
 const ColoredSvg = ({ uri, width, height, color }) => {
     const cacheKey = `${uri}_${color || 'original'}`;
@@ -130,6 +144,7 @@ export default function AlbumDetailScreen({ route, navigation }) {
     const [iconsMap, setIconsMap] = useState(() => cachedAlbumState?.iconsMap || {});
     const [likedTrackIds, setLikedTrackIds] = useState(() => cachedAlbumState?.likedTrackIds || []);
     const [likedAlbumIds, setLikedAlbumIds] = useState(() => cachedAlbumState?.likedAlbumIds || []);
+    const [downloadingAll, setDownloadingAll] = useState(false);
     const [modalVisible, setModalVisible] = useState(false);
     const [shareVisible, setShareVisible] = useState(false);
 
@@ -138,6 +153,8 @@ export default function AlbumDetailScreen({ route, navigation }) {
         currentTrack,
         isPlaying,
         setQueue,
+        addToQueue,
+        queue,
         togglePlay,
     } = usePlayerStore();
     const playingTrackId = currentTrack?.id || currentTrack?._id;
@@ -275,9 +292,30 @@ export default function AlbumDetailScreen({ route, navigation }) {
         setLoading(false);
     };
 
+    const getNormalizedAlbumQueue = () => {
+        const fallbackArtist = resolveArtistName(
+            {
+                artist: album?.artist || routeAlbum?.artist,
+                artistName: album?.artistName || routeAlbum?.artistName,
+            },
+            'Unknown Artist'
+        );
+
+        return (Array.isArray(albumTracks) ? albumTracks : []).map((t) => {
+            const artistLabel = resolveArtistName(t, fallbackArtist);
+            return {
+                ...t,
+                artistName: artistLabel,
+                artist: typeof t.artist === 'object' && t.artist !== null
+                    ? { ...t.artist, name: t.artist.name || artistLabel }
+                    : { name: artistLabel },
+            };
+        });
+    };
+
     const playTrack = async (track) => {
         try {
-            const trackId = track.id || track._id;
+            const trackId = getTrackId(track);
             if (!trackId) return;
 
             // Якщо натиснули на поточний трек цього альбому — просто play/pause
@@ -286,27 +324,8 @@ export default function AlbumDetailScreen({ route, navigation }) {
                 return;
             }
 
-            const normalizedQueue = albumTracks.map((t) => {
-                const artistLabel = resolveArtistName(
-                    t,
-                    resolveArtistName(
-                        {
-                            artist: album?.artist || routeAlbum?.artist,
-                            artistName: album?.artistName || routeAlbum?.artistName,
-                        },
-                        'Unknown Artist'
-                    )
-                );
-                return {
-                    ...t,
-                    artistName: artistLabel,
-                    artist: typeof t.artist === 'object' && t.artist !== null
-                        ? { ...t.artist, name: t.artist.name || artistLabel }
-                        : { name: artistLabel },
-                };
-            });
-
-            const trackIndex = normalizedQueue.findIndex((t) => (t.id || t._id) === trackId);
+            const normalizedQueue = getNormalizedAlbumQueue();
+            const trackIndex = normalizedQueue.findIndex((t) => getTrackId(t) === trackId);
             if (trackIndex === -1) return;
 
             if (normalizedQueue.length > 0) {
@@ -326,6 +345,103 @@ export default function AlbumDetailScreen({ route, navigation }) {
             await togglePlay();
         } else {
             await playTrack(albumTracks[0]);
+        }
+    };
+
+    const handleAlbumShuffle = async () => {
+        const normalizedTracks = getNormalizedAlbumQueue().filter((track) => !!getTrackId(track));
+        if (!normalizedTracks.length) return;
+
+        if (normalizedTracks.length === 1) {
+            await setQueue(normalizedTracks, 0);
+            return;
+        }
+
+        const shuffled = [...normalizedTracks];
+        for (let i = shuffled.length - 1; i > 0; i -= 1) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+        }
+        await setQueue(shuffled, 0);
+    };
+
+    const ensureDownloadDir = async () => {
+        const downloadsDir = `${FileSystem.documentDirectory}downloads`;
+        const dirInfo = await FileSystem.getInfoAsync(downloadsDir);
+        if (!dirInfo.exists) {
+            await FileSystem.makeDirectoryAsync(downloadsDir, { intermediates: true });
+        }
+        return downloadsDir;
+    };
+
+    const downloadSingleTrack = async (track, downloadsDir, authHeaders) => {
+        const sourceTrack = track?.track || track;
+        const trackId = getTrackId(sourceTrack);
+        if (!trackId) return false;
+
+        const fileUri = `${downloadsDir}/${trackId}.mp3`;
+        const existing = await FileSystem.getInfoAsync(fileUri);
+        if (!existing.exists) {
+            await FileSystem.downloadAsync(getStreamUrl(trackId), fileUri, {
+                headers: authHeaders,
+            });
+        }
+
+        const fallbackArtist = resolveArtistName(
+            { artist: album?.artist || routeAlbum?.artist, artistName: album?.artistName || routeAlbum?.artistName },
+            'Unknown Artist'
+        );
+
+        const payload = {
+            ...sourceTrack,
+            id: sourceTrack.id || sourceTrack._id || trackId,
+            title: sourceTrack.title || 'Unknown title',
+            artistName: resolveArtistName(sourceTrack, fallbackArtist),
+            localUri: fileUri,
+            downloadedAt: new Date().toISOString(),
+        };
+
+        const saveResult = await saveOfflineDownload(payload);
+        return !saveResult?.error;
+    };
+
+    const handleDownloadAlbum = async () => {
+        if (downloadingAll) return;
+
+        const normalizedTracks = getNormalizedAlbumQueue().filter((track) => !!getTrackId(track));
+        if (!normalizedTracks.length) {
+            Alert.alert('Downloads', 'No tracks in album');
+            return;
+        }
+
+        setDownloadingAll(true);
+        try {
+            const token = await AsyncStorage.getItem('userToken');
+            const authHeaders = token ? { Authorization: `Bearer ${token}` } : undefined;
+            const downloadsDir = await ensureDownloadDir();
+
+            let success = 0;
+            let fail = 0;
+            for (const track of normalizedTracks) {
+                try {
+                    // eslint-disable-next-line no-await-in-loop
+                    const ok = await downloadSingleTrack(track, downloadsDir, authHeaders);
+                    if (ok) success += 1;
+                    else fail += 1;
+                } catch (_) {
+                    fail += 1;
+                }
+            }
+
+            if (fail > 0) {
+                Alert.alert('Downloads', `Downloaded: ${success}\nFailed: ${fail}`);
+            } else {
+                Alert.alert('Downloads', `Downloaded ${success} ${success === 1 ? 'track' : 'tracks'}`);
+            }
+        } catch (_) {
+            Alert.alert('Downloads', 'Failed to download album');
+        } finally {
+            setDownloadingAll(false);
         }
     };
 
@@ -483,6 +599,66 @@ export default function AlbumDetailScreen({ route, navigation }) {
             title: 'Add to playlist',
             trackIds,
         });
+    };
+
+    const handleAddAlbumToQueue = async () => {
+        closeModal();
+
+        const normalizedTracks = getNormalizedAlbumQueue().filter((track) => !!getTrackId(track));
+        if (!normalizedTracks.length) {
+            Alert.alert('Queue', 'No tracks in album');
+            return;
+        }
+
+        const currentId = getTrackId(currentTrack);
+        if (!currentId) {
+            await setQueue(normalizedTracks, 0);
+            return;
+        }
+
+        const existingIds = new Set(
+            (Array.isArray(queue) ? queue : []).map((item) => getTrackId(item)).filter(Boolean)
+        );
+        const unique = normalizedTracks.filter((item) => !existingIds.has(getTrackId(item)));
+
+        if (!unique.length) {
+            Alert.alert('Queue', 'All album tracks are already in queue');
+            return;
+        }
+
+        unique.forEach((item) => addToQueue(item));
+        Alert.alert('Queue', `Added ${unique.length} ${unique.length === 1 ? 'track' : 'tracks'} to queue`);
+    };
+
+    const handleStartRadioFromAlbum = async () => {
+        closeModal();
+        const seedTrack = getNormalizedAlbumQueue()[0];
+        const seedTrackId = getTrackId(seedTrack);
+        if (!seedTrackId) {
+            Alert.alert('Radio', 'No tracks in album');
+            return;
+        }
+
+        try {
+            const radioTracks = await getRadioQueue(seedTrackId);
+            if (!Array.isArray(radioTracks) || radioTracks.length === 0) {
+                Alert.alert('Radio', 'No similar tracks found');
+                return;
+            }
+
+            const formattedQueue = radioTracks.map((t) => ({
+                id: t.trackId || t.id,
+                title: t.title,
+                artist: { name: t.artistName || t.artist?.name || 'Unknown Artist' },
+                artistName: t.artistName || t.artist?.name || 'Unknown Artist',
+                ...t,
+            }));
+
+            await setQueue(formattedQueue, 0);
+        } catch (e) {
+            console.log('Radio start error:', e);
+            Alert.alert('Radio', 'Failed to start radio');
+        }
     };
 
     const openShareModal = () => {
@@ -649,8 +825,15 @@ export default function AlbumDetailScreen({ route, navigation }) {
 
                         {/* CONTROLS */}
                         <View style={styles.controlsRow}>
-                            <TouchableOpacity style={styles.circleBtn} hitSlop={{ top: scale(10), bottom: scale(10), left: scale(10), right: scale(10) }}>
-                                {renderIcon('download.svg', 'Dwn', { width: scale(24), height: scale(24) }, '#F5D8CB')}
+                            <TouchableOpacity
+                                style={styles.circleBtn}
+                                onPress={handleDownloadAlbum}
+                                disabled={downloadingAll}
+                                hitSlop={{ top: scale(10), bottom: scale(10), left: scale(10), right: scale(10) }}
+                            >
+                                {downloadingAll
+                                    ? <ActivityIndicator size="small" color="#F5D8CB" />
+                                    : renderIcon('download.svg', 'Dwn', { width: scale(24), height: scale(24) }, '#F5D8CB')}
                             </TouchableOpacity>
 
                             <TouchableOpacity
@@ -685,7 +868,11 @@ export default function AlbumDetailScreen({ route, navigation }) {
                                 {renderIcon('share.svg', 'Shr', { width: scale(24), height: scale(24) }, '#F5D8CB')}
                             </TouchableOpacity>
 
-                            <TouchableOpacity style={styles.circleBtn} hitSlop={{ top: scale(10), bottom: scale(10), left: scale(10), right: scale(10) }}>
+                            <TouchableOpacity
+                                style={styles.circleBtn}
+                                onPress={handleAlbumShuffle}
+                                hitSlop={{ top: scale(10), bottom: scale(10), left: scale(10), right: scale(10) }}
+                            >
                                 {renderIcon('shuffle.svg', 'Mix', { width: scale(24), height: scale(24) }, '#F5D8CB')}
                             </TouchableOpacity>
                         </View>
@@ -766,16 +953,13 @@ export default function AlbumDetailScreen({ route, navigation }) {
                                                 </TouchableOpacity>
 
                                                 <TouchableOpacity
-                                                    style={[styles.menuItemCapsule, styles.menuItemCapsuleStub]}
-                                                    onPress={() => {
-                                                        closeModal();
-                                                        Alert.alert('Queue', 'Function coming soon');
-                                                    }}
+                                                    style={styles.menuItemCapsule}
+                                                    onPress={handleAddAlbumToQueue}
                                                 >
-                                                    <View style={[styles.menuItemIconCircle, styles.menuItemIconCircleStub]}>
-                                                        {renderIcon('add to queue.svg', '', { width: scale(24), height: scale(24) }, '#FF4D4F')}
+                                                    <View style={styles.menuItemIconCircle}>
+                                                        {renderIcon('add to queue.svg', '', { width: scale(24), height: scale(24) }, '#F5D8CB')}
                                                     </View>
-                                                    <Text style={[styles.menuItemText, styles.menuItemTextStub]}>Add to queue</Text>
+                                                    <Text style={styles.menuItemText}>Add to queue</Text>
                                                 </TouchableOpacity>
 
                                                 <TouchableOpacity style={styles.menuItemCapsule} onPress={handleViewArtist}>
@@ -786,16 +970,13 @@ export default function AlbumDetailScreen({ route, navigation }) {
                                                 </TouchableOpacity>
 
                                                 <TouchableOpacity
-                                                    style={[styles.menuItemCapsule, styles.menuItemCapsuleStub]}
-                                                    onPress={() => {
-                                                        closeModal();
-                                                        Alert.alert('Radio', 'Function coming soon');
-                                                    }}
+                                                    style={styles.menuItemCapsule}
+                                                    onPress={handleStartRadioFromAlbum}
                                                 >
-                                                    <View style={[styles.menuItemIconCircle, styles.menuItemIconCircleStub]}>
-                                                        {renderIcon('radio.svg', '', { width: scale(24), height: scale(24) }, '#FF4D4F')}
+                                                    <View style={styles.menuItemIconCircle}>
+                                                        {renderIcon('radio.svg', '', { width: scale(24), height: scale(24) }, '#F5D8CB')}
                                                     </View>
-                                                    <Text style={[styles.menuItemText, styles.menuItemTextStub]}>Go to radio based on album</Text>
+                                                    <Text style={styles.menuItemText}>Go to radio based on album</Text>
                                                 </TouchableOpacity>
                                             </ScrollView>
                                         </View>
@@ -1028,14 +1209,5 @@ const styles = StyleSheet.create({
         fontSize: scale(16),
         fontFamily: 'Poppins-Regular',
         fontWeight: '400',
-    },
-    menuItemCapsuleStub: {
-        borderColor: '#FF4D4F',
-    },
-    menuItemIconCircleStub: {
-        borderColor: '#FF4D4F',
-    },
-    menuItemTextStub: {
-        color: '#FF4D4F',
     },
 });

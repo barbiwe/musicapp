@@ -19,12 +19,20 @@ import {
     getIcons,
     getTrackCoverUrl,
     getAlbums,       // 👇 Додано
+    getAlbumTracks,
     getAlbumCoverUrl, // 👇 Додано
     subscribeToArtist,
     unsubscribeFromArtist,
     getArtistSubscriptionStatus,
     getArtistFollowersCount,
+    getArtistLikesCount,
+    getArtistPlaysCount,
+    getArtistInfo,
+    getArtistSpecialization,
     getTrackPlays,
+    getAllPodcasts,
+    getMyPodcasts,
+    getPodcastCoverUrl,
     getSubscriptions,
     resolveArtistName,
     scale
@@ -174,6 +182,88 @@ const resolveTrackId = (track) =>
     track?.TrackId ||
     null;
 
+const resolvePodcastId = (podcast) =>
+    podcast?.id ||
+    podcast?.Id ||
+    podcast?._id ||
+    podcast?.podcastId ||
+    podcast?.PodcastId ||
+    null;
+
+const collectPodcastOwnerCandidates = (podcast) => (
+    [
+        podcast?.ownerId,
+        podcast?.OwnerId,
+        podcast?.userId,
+        podcast?.UserId,
+        podcast?.artistId,
+        podcast?.ArtistId,
+        podcast?.authorId,
+        podcast?.AuthorId,
+        podcast?.createdBy,
+        podcast?.CreatedBy,
+        podcast?.creatorId,
+        podcast?.CreatorId,
+        podcast?.owner?.id,
+        podcast?.owner?.Id,
+        podcast?.artist?.id,
+        podcast?.artist?.Id,
+    ]
+        .filter(Boolean)
+        .map((v) => String(v))
+);
+
+const collectPodcastAuthorCandidates = (podcast) => (
+    [
+        podcast?.author,
+        podcast?.Author,
+        podcast?.artistName,
+        podcast?.ArtistName,
+        podcast?.ownerName,
+        podcast?.OwnerName,
+        podcast?.userName,
+        podcast?.UserName,
+        podcast?.username,
+        podcast?.Username,
+        podcast?.creatorName,
+        podcast?.CreatorName,
+        podcast?.artist?.name,
+        podcast?.owner?.name,
+    ]
+        .map((v) => normalizeName(v))
+        .filter(Boolean)
+);
+
+const resolveTrackLikesCount = (track) => {
+    if (!track || typeof track !== 'object') return 0;
+
+    const directCandidates = [
+        track.likesCount,
+        track.LikesCount,
+        track.likeCount,
+        track.LikeCount,
+        track.totalLikes,
+        track.TotalLikes,
+        track.likes,
+        track.Likes,
+    ];
+
+    for (const candidate of directCandidates) {
+        if (typeof candidate === 'number' && Number.isFinite(candidate)) {
+            return Math.max(0, candidate);
+        }
+        if (typeof candidate === 'string') {
+            const parsed = Number(candidate);
+            if (Number.isFinite(parsed)) return Math.max(0, parsed);
+        }
+        if (Array.isArray(candidate)) {
+            return Math.max(0, candidate.length);
+        }
+    }
+
+    return 0;
+};
+
 const artistProfileSessionCache = new Map();
 
 export default function ArtistProfileScreen({ navigation, route }) {
@@ -186,9 +276,14 @@ export default function ArtistProfileScreen({ navigation, route }) {
     const [tracks, setTracks] = useState([]);
     const [trackPlaysMap, setTrackPlaysMap] = useState({});
     const [albums, setAlbums] = useState([]); // 👇 Стейт для альбомів
+    const [podcasts, setPodcasts] = useState([]);
     const [icons, setIcons] = useState({});
     const [isFollowing, setIsFollowing] = useState(false);
     const [followersCount, setFollowersCount] = useState(0);
+    const [artistLikesCount, setArtistLikesCount] = useState(null);
+    const [artistPlaysCount, setArtistPlaysCount] = useState(null);
+    const [artistInfo, setArtistInfo] = useState(null);
+    const [artistSpecialization, setArtistSpecialization] = useState('');
     const [followBusy, setFollowBusy] = useState(false);
     const [subscriptionArtistId, setSubscriptionArtistId] = useState(artistId ? String(artistId) : null);
     const loadReqIdRef = useRef(0);
@@ -199,11 +294,26 @@ export default function ArtistProfileScreen({ navigation, route }) {
             setTracks(cached.tracks || []);
             setTrackPlaysMap(cached.trackPlaysMap || {});
             setAlbums(cached.albums || []);
+            setPodcasts(cached.podcasts || []);
             setIcons(cached.icons || {});
             setSubscriptionArtistId(cached.subscriptionArtistId || (artistId ? String(artistId) : null));
             setIsFollowing(!!cached.isFollowing);
             setFollowersCount(Number(cached.followersCount) || 0);
+            setArtistLikesCount(
+                cached.artistLikesCount === null || cached.artistLikesCount === undefined
+                    ? null
+                    : Number(cached.artistLikesCount) || 0
+            );
+            setArtistPlaysCount(
+                cached.artistPlaysCount === null || cached.artistPlaysCount === undefined
+                    ? null
+                    : Number(cached.artistPlaysCount) || 0
+            );
+            setArtistInfo(cached.artistInfo || null);
+            setArtistSpecialization(cached.artistSpecialization || '');
             setLoading(false);
+            // Keep UI fast from cache but refresh data in background
+            loadData({ withLoader: false, cacheKey: profileCacheKey });
             return;
         }
 
@@ -218,9 +328,11 @@ export default function ArtistProfileScreen({ navigation, route }) {
 
         try {
             // 👇 Завантажуємо треки, АЛЬБОМИ та іконки
-            const [tracksRes, albumsRes, iconsRes] = await Promise.all([
+            const [tracksRes, albumsRes, podcastsRes, myPodcastsRes, iconsRes] = await Promise.all([
                 getTracks(),
                 getAlbums(),
+                getAllPodcasts(),
+                getMyPodcasts(),
                 getIcons()
             ]);
 
@@ -230,15 +342,50 @@ export default function ArtistProfileScreen({ navigation, route }) {
             const artistNameKey = normalizeName(artist?.name);
 
             // 1. Фільтруємо ТРЕКИ артиста
-            const artistTracks = tracksRes.filter(t =>
+            const artistTracks = tracksRes.filter((t) =>
                 (t.artistId && String(t.artistId) === String(artistId)) ||
                 (t.ArtistId && String(t.ArtistId) === String(artistId)) ||
                 normalizeName(resolveArtistName(t, '')) === artistNameKey
             );
-            setTracks(artistTracks);
+
+            // 2. Фільтруємо АЛЬБОМИ артиста (за ownerId або artist name)
+            const artistAlbums = Array.isArray(albumsRes) ? albumsRes.filter((a) =>
+                (a.artistId && String(a.artistId) === String(artistId)) ||
+                (a.ArtistId && String(a.ArtistId) === String(artistId)) ||
+                normalizeName(a.artist || a.artistName || a.artist?.name || '') === artistNameKey
+            ) : [];
+            setAlbums(artistAlbums);
+
+            // 3. Підтягуємо треки з альбомів, бо не завжди вони є в загальному /Tracks
+            const artistAlbumTrackGroups = await Promise.all(
+                artistAlbums.map(async (album) => {
+                    const id = album?.id || album?.Id || album?._id || album?.albumId || album?.AlbumId;
+                    if (!id) return [];
+                    try {
+                        const tracks = await getAlbumTracks(id);
+                        return Array.isArray(tracks) ? tracks : [];
+                    } catch (_) {
+                        return [];
+                    }
+                })
+            );
+            const artistAlbumTracks = artistAlbumTrackGroups.flat();
+
+            const mergedTracksMap = new Map();
+            [...artistTracks, ...artistAlbumTracks].forEach((track, index) => {
+                const id = resolveTrackId(track);
+                const fallbackKey = id
+                    ? `id:${String(id)}`
+                    : `noid:${String(track?.title || '').trim().toLowerCase()}-${String(resolveArtistName(track, '')).trim().toLowerCase()}-${index}`;
+                if (!mergedTracksMap.has(fallbackKey)) {
+                    mergedTracksMap.set(fallbackKey, track);
+                }
+            });
+            const mergedArtistTracks = Array.from(mergedTracksMap.values());
+            setTracks(mergedArtistTracks);
 
             const playPairs = await Promise.all(
-                artistTracks.map(async (track) => {
+                mergedArtistTracks.map(async (track) => {
                     const id = resolveTrackId(track);
                     if (!id) return [null, 0];
                     const plays = await getTrackPlays(id);
@@ -252,13 +399,35 @@ export default function ArtistProfileScreen({ navigation, route }) {
             }, {});
             setTrackPlaysMap(nextTrackPlaysMap);
 
-            // 2. Фільтруємо АЛЬБОМИ артиста (за ownerId або artist name)
-            const artistAlbums = Array.isArray(albumsRes) ? albumsRes.filter(a =>
-                (a.artistId && String(a.artistId) === String(artistId)) ||
-                (a.ArtistId && String(a.ArtistId) === String(artistId)) ||
-                normalizeName(a.artist || a.artistName || a.artist?.name || '') === artistNameKey
-            ) : [];
-            setAlbums(artistAlbums);
+            const ownerIds = [
+                artist?.ownerId,
+                artist?.OwnerId,
+                artist?.userId,
+                artist?.UserId,
+                artistId,
+            ].filter(Boolean).map((v) => String(v));
+
+            const mergedPodcastsMap = new Map();
+            [...(Array.isArray(podcastsRes) ? podcastsRes : []), ...(Array.isArray(myPodcastsRes) ? myPodcastsRes : [])]
+                .forEach((podcast, index) => {
+                    const id = resolvePodcastId(podcast);
+                    const key = id
+                        ? `id:${String(id)}`
+                        : `noid:${normalizeName(podcast?.title || podcast?.name)}-${index}`;
+                    if (!mergedPodcastsMap.has(key)) {
+                        mergedPodcastsMap.set(key, podcast);
+                    }
+                });
+
+            const artistPodcasts = Array.from(mergedPodcastsMap.values()).filter((p) => {
+                const podcastOwnerCandidates = collectPodcastOwnerCandidates(p);
+                const podcastAuthorCandidates = collectPodcastAuthorCandidates(p);
+
+                const matchesOwner = podcastOwnerCandidates.some((candidate) => ownerIds.includes(String(candidate)));
+                const matchesAuthor = podcastAuthorCandidates.some((candidate) => candidate === artistNameKey);
+                return matchesOwner || matchesAuthor;
+            });
+            setPodcasts(artistPodcasts);
 
             // Unblock UI early: subscription/followers details can load in background.
             if (withLoader && reqId === loadReqIdRef.current) {
@@ -275,7 +444,7 @@ export default function ArtistProfileScreen({ navigation, route }) {
                 subscriptions.find((s) => normalizeName(s.name) === artistNameKey) ||
                 null;
 
-            const candidateIds = collectArtistIdCandidates(artist, artistTracks, artistId);
+            const candidateIds = collectArtistIdCandidates(artist, mergedArtistTracks, artistId);
             if (matchedSubscription?.ids?.length) {
                 matchedSubscription.ids.forEach((id) => {
                     if (!candidateIds.includes(String(id))) {
@@ -302,24 +471,56 @@ export default function ArtistProfileScreen({ navigation, route }) {
             }
 
             const countIds = [...new Set([detectedArtistId, ...candidateIds].filter(Boolean).map((id) => String(id)))];
-            const countValues = await Promise.all(
-                countIds.map(async (countId) => Number(await getArtistFollowersCount(countId)) || 0)
-            );
-            const nextFollowers = countValues.reduce((max, value) => (value > max ? value : max), 0);
+            const [followersValues, playsValues, likesValues] = await Promise.all([
+                Promise.all(countIds.map(async (countId) => Number(await getArtistFollowersCount(countId)) || 0)),
+                Promise.all(countIds.map(async (countId) => Number(await getArtistPlaysCount(countId)) || 0)),
+                Promise.all(countIds.map(async (countId) => Number(await getArtistLikesCount(countId)) || 0)),
+            ]);
+            const nextFollowers = followersValues.reduce((max, value) => (value > max ? value : max), 0);
+            const nextPlays = playsValues.reduce((max, value) => (value > max ? value : max), 0);
+            const nextLikes = likesValues.reduce((max, value) => (value > max ? value : max), 0);
+
+            let nextArtistInfo = null;
+            let nextArtistSpecialization = '';
+            for (const infoId of countIds) {
+                // eslint-disable-next-line no-await-in-loop
+                const infoData = await getArtistInfo(infoId);
+                if (infoData && typeof infoData === 'object') {
+                    nextArtistInfo = infoData;
+                    break;
+                }
+            }
+            for (const specializationId of countIds) {
+                // eslint-disable-next-line no-await-in-loop
+                const specialization = await getArtistSpecialization(specializationId);
+                if (specialization) {
+                    nextArtistSpecialization = specialization;
+                    break;
+                }
+            }
 
             if (reqId !== loadReqIdRef.current) return;
 
             setSubscriptionArtistId(detectedArtistId || null);
             setIsFollowing(detectedSubscribed);
             setFollowersCount(Number(nextFollowers) || 0);
+            setArtistLikesCount(Number(nextLikes) || 0);
+            setArtistPlaysCount(Number(nextPlays) || 0);
+            setArtistInfo(nextArtistInfo);
+            setArtistSpecialization(nextArtistSpecialization || '');
             artistProfileSessionCache.set(cacheKey, {
-                tracks: artistTracks,
+                tracks: mergedArtistTracks,
                 trackPlaysMap: nextTrackPlaysMap,
                 albums: artistAlbums,
+                podcasts: artistPodcasts,
                 icons: iconsRes || {},
                 subscriptionArtistId: detectedArtistId || null,
                 isFollowing: detectedSubscribed,
                 followersCount: Number(nextFollowers) || 0,
+                artistLikesCount: Number(nextLikes) || 0,
+                artistPlaysCount: Number(nextPlays) || 0,
+                artistInfo: nextArtistInfo,
+                artistSpecialization: nextArtistSpecialization || '',
             });
 
         } catch (e) {
@@ -394,13 +595,28 @@ export default function ArtistProfileScreen({ navigation, route }) {
 
     const avatarSourceUserId =
         artist?.ownerId ||
+        artistInfo?.ownerId ||
+        artistInfo?.OwnerId ||
         artist?.OwnerId ||
         artist?.userId ||
         artist?.UserId ||
         artistId;
     const avatarUrl = avatarSourceUserId ? getUserAvatarUrl(avatarSourceUserId) : null;
-    const artistCountry = artist?.country || artist?.location || artist?.artistCountry || 'USA';
-    const artistRole = artist?.role || artist?.type || 'Rapper';
+    const artistCountry =
+        artistInfo?.country ||
+        artistInfo?.Country ||
+        artist?.country ||
+        artist?.location ||
+        artist?.artistCountry ||
+        'USA';
+    const artistRole =
+        artistSpecialization ||
+        artistInfo?.specialization ||
+        artistInfo?.Specialization ||
+        artist?.specialization ||
+        artist?.role ||
+        artist?.type ||
+        'Artist';
 
     const popularTracks = useMemo(() => {
         const withPlays = tracks.map((track, index) => {
@@ -418,6 +634,27 @@ export default function ArtistProfileScreen({ navigation, route }) {
             .slice(0, 3)
             .map((item) => item.track);
     }, [tracks, trackPlaysMap]);
+
+    const fallbackArtistLikes = useMemo(() => {
+        return tracks.reduce((sum, track) => sum + resolveTrackLikesCount(track), 0);
+    }, [tracks]);
+
+    const fallbackArtistPlays = useMemo(() => {
+        return tracks.reduce((sum, track) => {
+            const id = resolveTrackId(track);
+            if (!id) return sum;
+            return sum + (Number(trackPlaysMap[String(id)]) || 0);
+        }, 0);
+    }, [tracks, trackPlaysMap]);
+
+    const totalArtistLikes = artistLikesCount === null ? fallbackArtistLikes : Number(artistLikesCount) || 0;
+    const totalArtistPlays = artistPlaysCount === null ? fallbackArtistPlays : Number(artistPlaysCount) || 0;
+    const artistBio =
+        artistInfo?.aboutMe ||
+        artistInfo?.AboutMe ||
+        artist?.aboutMe ||
+        artist?.bio ||
+        'No bio yet.';
 
     const allSongsTracks = useMemo(() => {
         const popularIds = new Set(
@@ -545,11 +782,11 @@ export default function ArtistProfileScreen({ navigation, route }) {
                                     <Text style={[styles.statLabel, styles.realStatLabel]}>followers</Text>
                                 </View>
                                 <View style={styles.statItem}>
-                                    <Text style={styles.statNumber}>18.6 M</Text>
-                                    <Text style={styles.statLabel}>listeners</Text>
+                                    <Text style={styles.statNumber}>{formatFollowers(totalArtistLikes)}</Text>
+                                    <Text style={styles.statLabel}>likes</Text>
                                 </View>
                                 <View style={styles.statItem}>
-                                    <Text style={styles.statNumber}>12.6 B</Text>
+                                    <Text style={styles.statNumber}>{formatFollowers(totalArtistPlays)}</Text>
                                     <Text style={styles.statLabel}>listeners</Text>
                                 </View>
                             </View>
@@ -557,8 +794,7 @@ export default function ArtistProfileScreen({ navigation, route }) {
                     </LinearGradient>
                     {/* --- BIO --- */}
                     <Text style={styles.bioText}>
-                        An American artist who broke the rules of the modern pop and hip-hop scene.
-                        He became a global sensation after his hit Old Town Road.
+                        {artistBio}
                     </Text>
 
                     {/* --- ALBUMS (REAL DATA) --- */}
@@ -646,50 +882,92 @@ export default function ArtistProfileScreen({ navigation, route }) {
                         </View>
                     )}
 
-                    {/* --- ALL SONGS --- */}
+                    {/* --- PODCASTS AND SHOW --- */}
                     <View style={styles.section}>
-                        <Text style={styles.sectionTitle}>All Songs</Text>
-                        <View style={{ paddingHorizontal: scale(16) }}>
-                            {allSongsTracks.map((t, i) => {
-                                const cover = getTrackCoverUrl(t);
-                                return (
-                                    <View key={resolveTrackId(t) || `song-${i}`}>
+                        <Text style={styles.sectionTitle}>Podcasts and Show</Text>
+                        {podcasts.length > 0 ? (
+                            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.popularScrollContent}>
+                                {podcasts.map((podcast, index) => {
+                                    const podcastId = resolvePodcastId(podcast);
+                                    const cover = getPodcastCoverUrl(podcast);
+                                    return (
                                         <TouchableOpacity
-                                            style={styles.songRow}
-                                            onPress={() => onOpenTrack(t)}
+                                            key={podcastId || `podcast-${index}`}
+                                            style={styles.popularCard}
+                                            onPress={() => {
+                                                if (!podcastId) return;
+                                                navigation.navigate('PodcastDetail', {
+                                                    podcastId,
+                                                    podcast,
+                                                });
+                                            }}
                                         >
-                                            <View style={styles.vinylContainer}>
-                                                {cover ? (
-                                                    <Image
-                                                        source={{ uri: cover }}
-                                                        style={styles.innerCover}
-                                                        resizeMode="cover"
-                                                    />
-                                                ) : (
-                                                    <View style={[styles.innerCover, { backgroundColor: '#555' }]} />
-                                                )}
-
-                                                <View style={styles.vinylOverlayWrapper}>
-                                                    {renderIcon('vinyl.svg', { width: scale(50), height: scale(50) }, null)}
-                                                </View>
-                                            </View>
-
-                                            <View style={styles.songInfo}>
-                                                <Text style={styles.songTitle} numberOfLines={1}>{t.title}</Text>
-                                                <Text style={styles.songArtist} numberOfLines={1}>{resolveArtistName(t, artist?.name || 'Unknown')}</Text>
-                                            </View>
-
-                                            <TouchableOpacity>
-                                                {renderIcon('hurt.svg', { width: 24, height: 24 }, '#fff')}
-                                            </TouchableOpacity>
+                                            {cover ? (
+                                                <Image source={{ uri: cover }} style={styles.popularImage} resizeMode="cover" />
+                                            ) : (
+                                                <View style={styles.popularImagePlaceholder} />
+                                            )}
+                                            <Text style={styles.popularTitle} numberOfLines={1}>
+                                                {podcast?.title || podcast?.name || 'Podcast'}
+                                            </Text>
+                                            <Text style={styles.popularArtist} numberOfLines={1}>
+                                                {podcast?.author || artist?.name || 'Unknown'}
+                                            </Text>
                                         </TouchableOpacity>
-
-                                        {i < allSongsTracks.length - 1 && <View style={styles.separator} />}
-                                    </View>
-                                );
-                            })}
-                        </View>
+                                    );
+                                })}
+                            </ScrollView>
+                        ) : (
+                            <Text style={styles.emptyPodcastsText}>No podcasts yet</Text>
+                        )}
                     </View>
+
+                    {/* --- ALL SONGS --- */}
+                    {allSongsTracks.length > 0 && (
+                        <View style={styles.section}>
+                            <Text style={styles.sectionTitle}>All Songs</Text>
+                            <View style={{ paddingHorizontal: scale(16) }}>
+                                {allSongsTracks.map((t, i) => {
+                                    const cover = getTrackCoverUrl(t);
+                                    return (
+                                        <View key={resolveTrackId(t) || `song-${i}`}>
+                                            <TouchableOpacity
+                                                style={styles.songRow}
+                                                onPress={() => onOpenTrack(t)}
+                                            >
+                                                <View style={styles.vinylContainer}>
+                                                    {cover ? (
+                                                        <Image
+                                                            source={{ uri: cover }}
+                                                            style={styles.innerCover}
+                                                            resizeMode="cover"
+                                                        />
+                                                    ) : (
+                                                        <View style={[styles.innerCover, { backgroundColor: '#555' }]} />
+                                                    )}
+
+                                                    <View style={styles.vinylOverlayWrapper}>
+                                                        {renderIcon('vinyl.svg', { width: scale(50), height: scale(50) }, null)}
+                                                    </View>
+                                                </View>
+
+                                                <View style={styles.songInfo}>
+                                                    <Text style={styles.songTitle} numberOfLines={1}>{t.title}</Text>
+                                                    <Text style={styles.songArtist} numberOfLines={1}>{resolveArtistName(t, artist?.name || 'Unknown')}</Text>
+                                                </View>
+
+                                                <TouchableOpacity>
+                                                    {renderIcon('hurt.svg', { width: 24, height: 24 }, '#fff')}
+                                                </TouchableOpacity>
+                                            </TouchableOpacity>
+
+                                            {i < allSongsTracks.length - 1 && <View style={styles.separator} />}
+                                        </View>
+                                    );
+                                })}
+                            </View>
+                        </View>
+                    )}
 
                 </LinearGradient>
             </ScrollView>
@@ -855,6 +1133,12 @@ const styles = StyleSheet.create({
         color: '#F5D8CB',
         marginLeft: scale(16),
         marginBottom: scale(15),
+    },
+    emptyPodcastsText: {
+        marginLeft: scale(16),
+        color: '#B9B9B9',
+        fontSize: scale(14),
+        fontFamily: 'Poppins-Regular',
     },
     albumCard: {
         marginRight: scale(15),

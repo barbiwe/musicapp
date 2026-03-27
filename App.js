@@ -9,7 +9,10 @@ import {
     Dimensions,
     TextInput,
     Alert,
-    Image // 👈 Додано Image для рендеру іконок
+    Image, // 👈 Додано Image для рендеру іконок
+    Platform,
+    Keyboard,
+    InputAccessoryView,
 } from 'react-native';
 import { NavigationContainer, DarkTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -19,7 +22,13 @@ import { useFonts } from 'expo-font';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { SvgXml } from 'react-native-svg';
 
-import { getIcons, getCachedIcons, scale, warmAppStartupData } from './api/api';
+import {
+    getIcons,
+    getCachedIcons,
+    scale,
+    warmAppStartupData,
+    refreshUserToken,
+} from './api/api';
 
 /* SCREENS */
 import OnboardingScreen from './screens/auth/OnboardingScreen';
@@ -54,10 +63,12 @@ import AboutUsScreen from './screens/profile/AboutUsScreen';
 import DownloadsScreen from './screens/profile/DownloadsScreen';
 import ListeningHistoryScreen from './screens/profile/ListeningHistoryScreen';
 import EditProfileScreen from './screens/profile/EditProfileScreen';
+import ProfileGenrePickerScreen from './screens/profile/ProfileGenrePickerScreen';
 import ProScreen from './screens/ProScreen';
 import ChoosePodcastScreen from './screens/library/ChoosePodcastScreen';
 import ChooseArtistScreen from './screens/library/ChooseArtistScreen';
 import PodcastDetailScreen from './screens/library/PodcastDetailScreen';
+import PodcastEpisodeDescriptionScreen from './screens/library/PodcastEpisodeDescriptionScreen';
 import RequestScreen from './screens/request/RequestScreen';
 import RequestTermsScreen from './screens/request/RequestTermsScreen';
 import RequestDetailsScreen from './screens/request/RequestDetailsScreen';
@@ -84,11 +95,12 @@ const navigationTheme = {
     },
 };
 
-// Global dark keyboard for all TextInput (especially iOS)
-if (!TextInput.defaultProps) {
-    TextInput.defaultProps = {};
-}
-TextInput.defaultProps.keyboardAppearance = 'dark';
+// Global dark keyboard + global iOS "Done" toolbar for all TextInput
+TextInput.defaultProps = {
+    ...(TextInput.defaultProps || {}),
+    keyboardAppearance: 'dark',
+    ...(Platform.OS === 'ios' ? { inputAccessoryViewID: 'globalKeyboardAccessory' } : {}),
+};
 
 // Diploma demo mode: disable intrusive system alerts/popups across app screens.
 if (!global.__VOX_DISABLE_ALERTS__) {
@@ -247,6 +259,10 @@ function LibraryStackScreen() {
 function MainTabs() {
     useEffect(() => {
         warmAppStartupData().catch(() => {});
+        const intervalId = setInterval(() => {
+            warmAppStartupData().catch(() => {});
+        }, 120000);
+        return () => clearInterval(intervalId);
     }, []);
 
     return (
@@ -256,6 +272,8 @@ function MainTabs() {
                 tabBar={props => <GlassTabBar {...props} />}
                 screenOptions={{
                     headerShown: false,
+                    lazy: false,
+                    freezeOnBlur: false,
                     tabBarStyle: { position: 'absolute' }, // Прозорість
                     sceneStyle: { backgroundColor: '#190707' },
                 }}
@@ -271,6 +289,64 @@ function MainTabs() {
         </View>
     );
 }
+
+function MainTabsGate() {
+    const [ready, setReady] = useState(false);
+
+    useEffect(() => {
+        let isMounted = true;
+
+        (async () => {
+            const startedAt = Date.now();
+            const minGateMs = 900;
+            const maxWaitMs = 5500;
+            try {
+                await refreshUserToken();
+            } catch (_) {
+                // no-op
+            }
+            await Promise.race([
+                warmAppStartupData(),
+                new Promise((resolve) => setTimeout(resolve, maxWaitMs)),
+            ]);
+            const elapsed = Date.now() - startedAt;
+            if (elapsed < minGateMs) {
+                await new Promise((resolve) => setTimeout(resolve, minGateMs - elapsed));
+            }
+            if (isMounted) setReady(true);
+        })();
+
+        return () => {
+            isMounted = false;
+        };
+    }, []);
+
+    if (!ready) {
+        return (
+            <View style={styles.tabsWarmupOverlay}>
+                <ActivityIndicator size="large" color="#F5D8CB" />
+                <Text style={styles.tabsWarmupText}>Preparing app...</Text>
+            </View>
+        );
+    }
+
+    return <MainTabs />;
+}
+
+function GlobalKeyboardAccessory() {
+    if (Platform.OS !== 'ios') return null;
+
+    return (
+        <InputAccessoryView nativeID="globalKeyboardAccessory">
+            <View style={styles.keyboardAccessory}>
+                <TouchableOpacity style={styles.keyboardDoneBtn} onPress={Keyboard.dismiss} activeOpacity={0.85}>
+                    <Text style={styles.keyboardDoneText}>Done</Text>
+                </TouchableOpacity>
+            </View>
+        </InputAccessoryView>
+    );
+}
+
 export default function App() {
     const [isTokenLoading, setIsTokenLoading] = useState(true);
     const [isFontsGateDone, setIsFontsGateDone] = useState(false);
@@ -381,13 +457,14 @@ export default function App() {
                 <Stack.Screen name="CreateNewPassword" component={CreateNewPasswordScreen} />
 
                 {/* 👇 ГОЛОВНИЙ ЕКРАН З МЕНЮ (Тут живуть Home, Search, Library) */}
-                <Stack.Screen name="MainTabs" component={MainTabs} />
+                <Stack.Screen name="MainTabs" component={MainTabsGate} />
 
                 {/* ЕКРАНИ БЕЗ МЕНЮ (Поверх всього) */}
                 <Stack.Screen name="Upload" component={MusicScreen} />
                 <Stack.Screen name="AlbumDetail" component={AlbumDetailScreen} />
                 <Stack.Screen name="Profile" component={ProfileScreen} />
                 <Stack.Screen name="EditProfile" component={EditProfileScreen} />
+                <Stack.Screen name="ProfileGenrePicker" component={ProfileGenrePickerScreen} />
                 <Stack.Screen
                     name="Player"
                     component={PlayerScreen}
@@ -409,6 +486,7 @@ export default function App() {
                 <Stack.Screen name="ProScreen" component={ProScreen} />
                 <Stack.Screen name="ChoosePodcast" component={ChoosePodcastScreen} />
                 <Stack.Screen name="PodcastDetail" component={PodcastDetailScreen} />
+                <Stack.Screen name="PodcastEpisodeDescription" component={PodcastEpisodeDescriptionScreen} />
                 <Stack.Screen name="ChooseArtist" component={ChooseArtistScreen} />
                 <Stack.Screen name="CreatePlaylist" component={CreatePlaylistScreen} />
                 <Stack.Screen name="AddToPlaylist" component={AddToPlaylistScreen} />
@@ -417,6 +495,7 @@ export default function App() {
                 <Stack.Screen name="RequestDetails" component={RequestDetailsScreen} />
 
             </Stack.Navigator>
+            <GlobalKeyboardAccessory />
         </NavigationContainer>
         </View>
     );
@@ -470,5 +549,43 @@ const styles = StyleSheet.create({
         fontSize: scale(10),
         fontWeight: '500',
         marginTop: scale(4)
-    }
+    },
+    tabsWarmupOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(25, 7, 7, 0.88)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 999,
+    },
+    tabsWarmupText: {
+        marginTop: 12,
+        color: '#F5D8CB',
+        fontSize: 14,
+        fontFamily: 'Poppins-Medium',
+    },
+    keyboardAccessory: {
+        backgroundColor: '#111111',
+        borderTopWidth: StyleSheet.hairlineWidth,
+        borderTopColor: 'rgba(255,255,255,0.18)',
+        height: 44,
+        paddingHorizontal: 12,
+        justifyContent: 'center',
+        alignItems: 'flex-end',
+    },
+    keyboardDoneBtn: {
+        minWidth: 56,
+        height: 32,
+        borderRadius: 16,
+        backgroundColor: 'rgba(255,255,255,0.08)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.18)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 14,
+    },
+    keyboardDoneText: {
+        color: '#F5D8CB',
+        fontFamily: 'Poppins-Medium',
+        fontSize: 14,
+    },
 });

@@ -214,6 +214,15 @@ export default function PlayerScreen({ navigation, route }) {
     const [progressTrackPageX, setProgressTrackPageX] = useState(0);
     const [likedTrackIds, setLikedTrackIds] = useState([]);
 
+    useEffect(() => {
+        if (!isPodcastTrack) return;
+        if (navigation.canGoBack()) {
+            navigation.goBack();
+            return;
+        }
+        navigation.navigate('Home');
+    }, [isPodcastTrack, navigation]);
+
     // 4. СИНХРОНІЗАЦІЯ (Якщо відкрили з іншого екрану)
     useEffect(() => {
         if (route.params?.track) {
@@ -1017,7 +1026,7 @@ export default function PlayerScreen({ navigation, route }) {
                             <TouchableOpacity disabled>
                                 <Text style={[styles.footerTab, styles.controlDisabledText]}>Lyrics</Text>
                             </TouchableOpacity>
-                            <TouchableOpacity disabled style={styles.controlDisabled}>
+                            <TouchableOpacity disabled>
                                 <Text style={[styles.footerTab, styles.controlDisabledText]}>Related</Text>
                             </TouchableOpacity>
                         </View>

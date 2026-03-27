@@ -23,6 +23,10 @@ import { usePlayerStore } from '../store/usePlayerStore';
 import {
     getTracks,
     getAlbums,
+    getCachedTracks,
+    getCachedAlbums,
+    getCachedRecentlyPlayed,
+    getCachedRecommendations,
     getTrackCoverUrl,
     getUserAvatarUrl,
     getRecentlyPlayed,
@@ -43,6 +47,37 @@ const svgCache = {};
 const PREMIUM_BANNER_INVALIDATE_KEY = 'premium_banner_invalidate_v1';
 const getTrackId = (track) =>
     String(track?.id || track?._id || track?.trackId || track?.track?.id || '').trim();
+
+const mapRecentHistoryItems = (recentRes) => {
+    const safeRecent = Array.isArray(recentRes) ? recentRes : [];
+    return safeRecent.map((item) => {
+        if (item?.track) {
+            return {
+                ...item.track,
+                artist: { name: item.track.artistName || 'Unknown' },
+            };
+        }
+        return item;
+    });
+};
+
+const extractArtistsFromTracks = (tracks) => {
+    const safeTracks = Array.isArray(tracks) ? tracks : [];
+    const map = new Map();
+    safeTracks.forEach((t) => {
+        const artistName = t.artistName || t.artist?.name || 'Unknown Artist';
+        const backendArtistId = t.artistId || t.ArtistId || t.artist?.id || t.artist?._id;
+        if (backendArtistId && !map.has(String(backendArtistId))) {
+            map.set(String(backendArtistId), {
+                id: String(backendArtistId),
+                artistId: String(backendArtistId),
+                name: artistName,
+                userId: t.ownerId || t.OwnerId || null,
+            });
+        }
+    });
+    return [...map.values()];
+};
 
 const ArtistAvatar = ({ uri, name }) => {
     const [imgError, setImgError] = useState(false);
@@ -165,13 +200,25 @@ const ColoredSvg = ({ uri, width, height, color }) => {
 export default function DiscoverScreen({ navigation }) {
     const isFocused = useIsFocused();
     const setTrack = usePlayerStore((state) => state.setTrack);
-    const [loading, setLoading] = useState(true);
-    const [tracks, setTracks] = useState([]);
-    const [popularTracks, setPopularTracks] = useState([]);
-    const [recentTracks, setRecentTracks] = useState([]);
-    const [recommendations, setRecommendations] = useState([]);
-    const [artists, setArtists] = useState([]);
-    const [albums, setAlbums] = useState([]);
+    const initialTracks = getCachedTracks() || [];
+    const initialAlbums = getCachedAlbums() || [];
+    const initialRecommendations = getCachedRecommendations() || [];
+    const initialRecentTracks = mapRecentHistoryItems(getCachedRecentlyPlayed() || []);
+    const initialArtists = extractArtistsFromTracks(initialTracks);
+    const hasInitialWarmData =
+        initialTracks.length > 0 ||
+        initialAlbums.length > 0 ||
+        initialRecommendations.length > 0 ||
+        initialRecentTracks.length > 0;
+    const [loading, setLoading] = useState(!hasInitialWarmData);
+    const [tracks, setTracks] = useState(initialTracks);
+    const [popularTracks, setPopularTracks] = useState(
+        initialTracks.map((track) => ({ ...track, playsCount: 0 }))
+    );
+    const [recentTracks, setRecentTracks] = useState(initialRecentTracks);
+    const [recommendations, setRecommendations] = useState(initialRecommendations);
+    const [artists, setArtists] = useState(initialArtists);
+    const [albums, setAlbums] = useState(initialAlbums);
     const [icons, setIcons] = useState({});
     const [discoverBanner, setDiscoverBanner] = useState(null);
     const [isPremium, setIsPremium] = useState(false);
@@ -181,18 +228,7 @@ export default function DiscoverScreen({ navigation }) {
     const syncingPremiumBannerRef = useRef(false);
     const syncingRecentRef = useRef(false);
 
-    const mapRecentHistory = useCallback((recentRes) => {
-        const safeRecent = Array.isArray(recentRes) ? recentRes : [];
-        return safeRecent.map((item) => {
-            if (item?.track) {
-                return {
-                    ...item.track,
-                    artist: { name: item.track.artistName || 'Unknown' },
-                };
-            }
-            return item;
-        });
-    }, []);
+    const mapRecentHistory = useCallback((recentRes) => mapRecentHistoryItems(recentRes), []);
 
     const syncPremiumBanner = useCallback(async (options = {}) => {
         const forceRefreshToken = !!options?.forceRefreshToken;
@@ -254,6 +290,10 @@ export default function DiscoverScreen({ navigation }) {
             load();
             return;
         }
+        if (tracks.length === 0 || recommendations.length === 0) {
+            load();
+            return;
+        }
         void (async () => {
             const invalidated = await syncPremiumBannerIfInvalidated();
             if (!invalidated) {
@@ -263,22 +303,27 @@ export default function DiscoverScreen({ navigation }) {
             // Lightweight focus sync for "Recently played" without full Discover reload.
             await syncRecentPlayed({ force: true });
         })();
-    }, [isFocused, syncPremiumBannerIfInvalidated, syncPremiumBanner, syncRecentPlayed]);
+    }, [isFocused, tracks.length, recommendations.length, syncPremiumBannerIfInvalidated, syncPremiumBanner, syncRecentPlayed]);
 
     const load = async () => {
         const reqId = ++loadReqIdRef.current;
-        setLoading(true);
+        const hasWarmData =
+            tracks.length > 0 ||
+            recommendations.length > 0 ||
+            recentTracks.length > 0 ||
+            albums.length > 0;
+        if (!hasWarmData) setLoading(true);
 
         try {
             const currentUserId = await AsyncStorage.getItem('userId');
             if (currentUserId && reqId === loadReqIdRef.current) setMyId(currentUserId);
 
             const [tracksRes, albumsRes, iconsRes, recentRes, recsRes, premium] = await Promise.all([
-                getTracks(),
-                getAlbums(),
-                getIcons(),
-                getRecentlyPlayed(),
-                getRecommendations(),
+                getTracks({ force: !hasWarmData }),
+                getAlbums({ force: !hasWarmData }),
+                Object.keys(icons || {}).length === 0 ? getIcons() : Promise.resolve(icons),
+                getRecentlyPlayed(!hasWarmData),
+                getRecommendations({ force: !hasWarmData }),
                 isPremiumUser(),
             ]);
 
@@ -325,7 +370,7 @@ export default function DiscoverScreen({ navigation }) {
             setRecommendations(formattedRecs);
 
             // Do not block UI with heavy counters/followers/banner requests.
-            setLoading(false);
+            if (!hasWarmData) setLoading(false);
 
             Promise.all(
                 safeTracks.map(async (track) => {
@@ -388,11 +433,11 @@ export default function DiscoverScreen({ navigation }) {
         } catch (e) {
             console.log('Discover load error', e);
             hasLoadedOnceRef.current = false;
-            if (reqId === loadReqIdRef.current) {
+            if (reqId === loadReqIdRef.current && !hasWarmData) {
                 setLoading(false);
             }
         } finally {
-            if (reqId === loadReqIdRef.current) {
+            if (reqId === loadReqIdRef.current && !hasWarmData) {
                 setLoading(false);
             }
         }

@@ -59,10 +59,69 @@ export default function GenreDetailScreen({ navigation, route }) {
     const [genreTracks, setGenreTracks] = useState([]);
     const [albums, setAlbums] = useState([]);
     const [artists, setArtists] = useState([]);
+    const normalizeGenreToken = (value) =>
+        String(value || '')
+            .trim()
+            .toLowerCase()
+            .replace(/[\s_-]+/g, '');
+
+    const getAlbumGenreSignals = (album) => {
+        if (!album || typeof album !== 'object') return { ids: [], names: [] };
+
+        const ids = [];
+        const names = [];
+
+        const pushId = (value) => {
+            const raw = String(value || '').trim();
+            if (!raw) return;
+            ids.push(raw.toLowerCase());
+        };
+
+        const pushName = (value) => {
+            const raw = String(value || '').trim().toLowerCase();
+            if (!raw) return;
+            names.push(raw);
+            const token = normalizeGenreToken(raw);
+            if (token) names.push(token);
+        };
+
+        pushId(album.genreId);
+        pushId(album.GenreId);
+        pushName(album.genreName);
+        pushName(album.GenreName);
+
+        if (Array.isArray(album.genreIds)) album.genreIds.forEach(pushId);
+        if (Array.isArray(album.GenreIds)) album.GenreIds.forEach(pushId);
+
+        const singleGenre = album.genre || album.Genre;
+        if (typeof singleGenre === 'string') {
+            pushName(singleGenre);
+        } else if (singleGenre && typeof singleGenre === 'object') {
+            pushId(singleGenre.id || singleGenre._id || singleGenre.genreId || singleGenre.GenreId);
+            pushName(singleGenre.name || singleGenre.title || singleGenre.Name || singleGenre.Title);
+        }
+
+        const listGenres = Array.isArray(album.genres) ? album.genres : (Array.isArray(album.Genres) ? album.Genres : []);
+        listGenres.forEach((g) => {
+            if (typeof g === 'string') {
+                pushName(g);
+                return;
+            }
+            if (g && typeof g === 'object') {
+                pushId(g.id || g._id || g.genreId || g.GenreId);
+                pushName(g.name || g.title || g.Name || g.Title);
+            }
+        });
+
+        return {
+            ids: Array.from(new Set(ids)),
+            names: Array.from(new Set(names)),
+        };
+    };
 
     useEffect(() => {
         loadData();
-    }, [genre?.name]);
+    }, [genre?.name, genre?.id]);
 
     const loadData = async () => {
         setLoading(true);
@@ -89,12 +148,34 @@ export default function GenreDetailScreen({ navigation, route }) {
                     .map((id) => String(id))
             );
 
+            const selectedGenreId = String(genre?.id || '').trim().toLowerCase();
+            const selectedGenreName = String(genre?.name || '').trim().toLowerCase();
+            const selectedGenreToken = normalizeGenreToken(selectedGenreName);
             const backendAlbums = Array.isArray(albumsRes) ? albumsRes : [];
             const filteredAlbums = backendAlbums.filter((a) => {
                 const aId = a.id || a._id || a.albumId || a.AlbumId;
-                return aId && albumIdSet.has(String(aId));
+                const byTracks = !!(aId && albumIdSet.has(String(aId)));
+                if (byTracks) return true;
+
+                const signals = getAlbumGenreSignals(a);
+                const byGenreId = selectedGenreId ? signals.ids.includes(selectedGenreId) : false;
+                const byGenreName = selectedGenreName ? signals.names.includes(selectedGenreName) : false;
+                const byGenreToken = selectedGenreToken ? signals.names.includes(selectedGenreToken) : false;
+                return byGenreId || byGenreName || byGenreToken;
             });
-            setAlbums(filteredAlbums);
+            const uniqueAlbums = [];
+            const seenAlbumIds = new Set();
+            filteredAlbums.forEach((a) => {
+                const aId = String(a.id || a._id || a.albumId || a.AlbumId || '').trim();
+                if (!aId) {
+                    uniqueAlbums.push(a);
+                    return;
+                }
+                if (seenAlbumIds.has(aId)) return;
+                seenAlbumIds.add(aId);
+                uniqueAlbums.push(a);
+            });
+            setAlbums(uniqueAlbums);
 
             const fromTracks = new Map();
             tracks.forEach((t) => {
@@ -351,7 +432,7 @@ const styles = StyleSheet.create({
     },
     squareCover: {
         width: scale(115),
-        height: scale(95),
+        height: scale(115),
         borderRadius: scale(12),
         backgroundColor: '#2A1111',
     },

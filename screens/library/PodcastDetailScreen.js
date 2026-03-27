@@ -7,15 +7,16 @@ import {
     Image,
     ActivityIndicator,
     TouchableOpacity,
-    Alert,
+    Modal,
+    Pressable,
     Dimensions,
     StatusBar,
     Platform,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { BlurView } from 'expo-blur';
 import { SvgXml } from 'react-native-svg';
 import { useFocusEffect } from '@react-navigation/native';
-import MiniPlayer from '../../components/MiniPlayer';
 import ShareSheetModal from '../../components/ShareSheetModal';
 import { usePlayerStore } from '../../store/usePlayerStore';
 import {
@@ -147,6 +148,8 @@ export default function PodcastDetailScreen({ route, navigation }) {
         isPlaying,
         position,
         duration,
+        playbackRate,
+        setPlaybackRate,
         setQueue,
         togglePlay,
     } = usePlayerStore();
@@ -158,6 +161,7 @@ export default function PodcastDetailScreen({ route, navigation }) {
     const [isLiked, setIsLiked] = useState(false);
     const [loading, setLoading] = useState(true);
     const [shareVisible, setShareVisible] = useState(false);
+    const [moreVisible, setMoreVisible] = useState(false);
     const hasLoadedOnceRef = useRef(false);
     const cacheKey = String(podcastId || '').trim();
 
@@ -301,24 +305,30 @@ export default function PodcastDetailScreen({ route, navigation }) {
 
     const authorName = useMemo(() => {
         const fromPodcast = String(
-            podcast?.author || podcast?.artistName || routePodcast?.author || routePodcast?.artistName || ''
+            podcast?.author || podcast?.artistName || podcast?.ownerName || ''
         ).trim();
-
         if (fromPodcast) return fromPodcast;
 
-        const fromEpisode = String(
-            episodes?.[0]?.author || episodes?.[0]?.artistName || episodes?.[0]?.ownerName || ''
+        const fromRoute = String(
+            routePodcast?.author || routePodcast?.artistName || routePodcast?.ownerName || ''
         ).trim();
+        return fromRoute || 'Unknown';
+    }, [podcast, routePodcast]);
 
-        return fromEpisode || 'Unknown';
-    }, [podcast, routePodcast, episodes]);
+    const podcastTitle = useMemo(() => {
+        const fromPodcast = String(podcast?.title || podcast?.name || '').trim();
+        if (fromPodcast) return fromPodcast;
+
+        const fromRoute = String(routePodcast?.title || routePodcast?.name || '').trim();
+        return fromRoute || 'Podcast';
+    }, [podcast, routePodcast]);
 
     const coverUrl = useMemo(() => getPodcastCoverUrl(podcast || routePodcast), [podcast, routePodcast]);
 
     const normalizedEpisodes = useMemo(() => {
         const baseCover = coverUrl;
         const mainAudio = getPodcastAudioUrl(podcast || routePodcast);
-        const normalizedPodcastTitle = String(podcast?.title || routePodcast?.title || 'Podcast').trim();
+        const normalizedPodcastTitle = podcastTitle;
 
         const mainEpisode = mainAudio
             ? {
@@ -328,12 +338,13 @@ export default function PodcastDetailScreen({ route, navigation }) {
                 podcastId,
                 isPodcast: true,
                 skipHistory: true,
-                title: String(podcast?.title || routePodcast?.title || 'Episode 1').trim(),
-                episodeTitle: String(podcast?.title || routePodcast?.title || 'Episode 1').trim(),
+                title: 'Episode 1',
+                episodeTitle: 'Episode 1',
                 podcastTitle: normalizedPodcastTitle,
                 artistName: authorName,
                 coverUrl: baseCover,
                 localUri: mainAudio,
+                description: String(podcast?.description || podcast?.about || '').trim(),
                 dateLabel: formatDate(podcast?.createdAt),
                 durationLabel: formatDuration(podcast?.duration),
                 rawDurationMs: parseDurationToSeconds(podcast?.duration) * 1000,
@@ -360,12 +371,18 @@ export default function PodcastDetailScreen({ route, navigation }) {
                         podcastId,
                         isPodcast: true,
                         skipHistory: true,
-                        title: String(episode?.title || `Episode ${mainEpisode ? index + 2 : index + 1}`).trim(),
-                        episodeTitle: String(episode?.title || `Episode ${mainEpisode ? index + 2 : index + 1}`).trim(),
+                        title: String(episode?.title || episode?.name || `Episode ${index + 1}`).trim(),
+                        episodeTitle: String(episode?.title || episode?.name || `Episode ${index + 1}`).trim(),
                         podcastTitle: normalizedPodcastTitle,
                         artistName: authorName,
                         coverUrl: baseCover,
                         localUri: streamUrl,
+                        description: String(
+                            episode?.description ||
+                            episode?.episodeDescription ||
+                            episode?.about ||
+                            ''
+                        ).trim(),
                         dateLabel: formatDate(episode?.createdAt || episode?.uploadedAt || podcast?.createdAt),
                         durationLabel: formatDuration(episode?.duration || episode?.length || episode?.durationSeconds),
                         rawDurationMs,
@@ -373,8 +390,7 @@ export default function PodcastDetailScreen({ route, navigation }) {
                 })
                 .filter(Boolean);
 
-            const withMain = mainEpisode ? [mainEpisode, ...mapped] : mapped;
-            return withMain.map((episode) => {
+            return mapped.map((episode) => {
                 const progress = progressByEpisodeId[String(episode.episodeId || '')];
                 const savedPositionMs = Math.max(0, Number(progress?.positionMs) || 0);
                 const savedDurationMs = Math.max(0, Number(progress?.durationMs) || 0);
@@ -428,7 +444,7 @@ export default function PodcastDetailScreen({ route, navigation }) {
                 progressRatio,
             },
         ];
-    }, [episodes, podcastId, podcast, routePodcast, authorName, coverUrl, progressByEpisodeId]);
+    }, [episodes, podcastId, podcast, routePodcast, authorName, coverUrl, progressByEpisodeId, podcastTitle]);
 
     const isCurrentPodcastTrack =
         Boolean(currentTrack?.isPodcast) &&
@@ -455,18 +471,6 @@ export default function PodcastDetailScreen({ route, navigation }) {
         await setQueue(normalizedEpisodes, episodeIndex);
     };
 
-    const handleShuffle = async () => {
-        if (!normalizedEpisodes.length) return;
-
-        const shuffled = [...normalizedEpisodes];
-        for (let i = shuffled.length - 1; i > 0; i -= 1) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-        }
-
-        await setQueue(shuffled, 0);
-    };
-
     const handleLikeToggle = async () => {
         const prev = isLiked;
         const next = !prev;
@@ -481,7 +485,29 @@ export default function PodcastDetailScreen({ route, navigation }) {
     };
 
     const openMore = () => {
-        setShareVisible(true);
+        setMoreVisible(true);
+    };
+
+    const closeMore = () => {
+        setMoreVisible(false);
+    };
+
+    const handleOpenEpisodeDescription = () => {
+        navigation.navigate('PodcastEpisodeDescription', {
+            title: activeEpisode?.title || podcastTitle,
+            description: activeEpisodeDescription || 'No episode description yet.',
+        });
+        closeMore();
+    };
+
+    const handlePlaybackSpeedPress = async () => {
+        const nextRate = (() => {
+            if (playbackRate >= 2) return 1.0;
+            if (playbackRate >= 1.5) return 2.0;
+            if (playbackRate >= 1.25) return 1.5;
+            return 1.25;
+        })();
+        await setPlaybackRate(nextRate);
     };
 
     if (loading) {
@@ -501,7 +527,68 @@ export default function PodcastDetailScreen({ route, navigation }) {
     }
 
     const currentTrackId = String(currentTrack?.id || currentTrack?._id || '').trim();
-    const podcastTitle = String(podcast?.title || routePodcast?.title || 'Podcast').trim();
+    const activeEpisode = normalizedEpisodes.find((episode) => String(episode.id || '') === currentTrackId)
+        || normalizedEpisodes[0]
+        || null;
+    const activeEpisodeDescription = String(
+        activeEpisode?.description ||
+        activeEpisode?.episodeDescription ||
+        activeEpisode?.about ||
+        podcast?.description ||
+        podcast?.about ||
+        routePodcast?.description ||
+        routePodcast?.about ||
+        ''
+    ).trim();
+    const playbackRateLabel = `${Number(playbackRate).toFixed(1)}x`;
+
+    const handleOpenPodcastAuthorProfile = () => {
+        const source = podcast || routePodcast || {};
+        const authorIdCandidates = [
+            source?.artistId,
+            source?.ArtistId,
+            source?.ownerId,
+            source?.OwnerId,
+            source?.userId,
+            source?.UserId,
+            source?.authorId,
+            source?.AuthorId,
+            source?.createdBy,
+            source?.CreatedBy,
+            source?.creatorId,
+            source?.CreatorId,
+            source?.artist?.id,
+            source?.artist?.Id,
+            source?.artist?._id,
+            source?.owner?.id,
+            source?.owner?.Id,
+            source?.owner?._id,
+            route?.params?.artistId,
+            route?.params?.ownerId,
+        ]
+            .map((v) => String(v || '').trim())
+            .filter(Boolean);
+
+        const resolvedAuthorId = authorIdCandidates[0] || null;
+        if (!resolvedAuthorId) return;
+
+        navigation.navigate('ArtistProfile', {
+            artist: {
+                id: resolvedAuthorId,
+                artistId: resolvedAuthorId,
+                ownerId: resolvedAuthorId,
+                name: authorName,
+                country: source?.country || source?.artist?.country || null,
+                aboutMe: source?.aboutMe || source?.artist?.aboutMe || source?.description || null,
+                specialization:
+                    source?.specialization ||
+                    source?.artist?.specialization ||
+                    source?.genreName ||
+                    null,
+            },
+        });
+        closeMore();
+    };
 
     return (
         <View style={styles.container}>
@@ -555,7 +642,7 @@ export default function PodcastDetailScreen({ route, navigation }) {
                             <TouchableOpacity
                                 style={styles.circleBtn}
                                 hitSlop={{ top: scale(10), bottom: scale(10), left: scale(10), right: scale(10) }}
-                                onPress={() => Alert.alert('Download', 'Coming soon')}
+                                onPress={() => {}}
                             >
                                 {renderIcon('download.svg', { width: scale(24), height: scale(24) }, '#F5D8CB')}
                             </TouchableOpacity>
@@ -593,9 +680,9 @@ export default function PodcastDetailScreen({ route, navigation }) {
                             <TouchableOpacity
                                 style={styles.circleBtn}
                                 hitSlop={{ top: scale(10), bottom: scale(10), left: scale(10), right: scale(10) }}
-                                onPress={handleShuffle}
+                                onPress={() => {}}
                             >
-                                {renderIcon('shuffle.svg', { width: scale(24), height: scale(24) }, '#F5D8CB')}
+                                {renderIcon('night.svg', { width: scale(24), height: scale(24) }, '#F5D8CB')}
                             </TouchableOpacity>
                         </View>
                     </View>
@@ -682,6 +769,66 @@ export default function PodcastDetailScreen({ route, navigation }) {
                 </LinearGradient>
             </ScrollView>
 
+            <Modal
+                visible={moreVisible}
+                transparent
+                animationType="fade"
+                onRequestClose={closeMore}
+            >
+                <Pressable style={styles.modalOverlay} onPress={closeMore}>
+                    <Pressable style={styles.moreSheet} onPress={() => {}}>
+                        <LinearGradient
+                            colors={['rgba(255, 255, 255, 0.15)', 'rgba(255, 255, 255, 0.1)', 'rgba(255, 255, 255, 0.05)']}
+                            locations={[0, 0.2, 1]}
+                            start={{ x: 0.5, y: 0 }}
+                            end={{ x: 0.5, y: 1 }}
+                            style={styles.moreBorderGradient}
+                        >
+                            <BlurView intensity={40} tint="dark" style={styles.moreGlassContainer}>
+                                <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(30, 10, 8, 0.86)' }]} />
+
+                                <View style={styles.moreInner}>
+                                    <Text style={styles.moreTitle}>More</Text>
+
+                                    <TouchableOpacity
+                                        style={styles.moreItem}
+                                        activeOpacity={0.85}
+                                        onPress={handleOpenPodcastAuthorProfile}
+                                    >
+                                        <View style={styles.moreItemIconCircle}>
+                                            {renderIcon('artist.svg', { width: scale(24), height: scale(24) }, '#F5D8CB')}
+                                        </View>
+                                        <Text style={styles.moreItemText}>Follow show</Text>
+                                    </TouchableOpacity>
+
+                                    <TouchableOpacity
+                                        style={styles.moreItem}
+                                        activeOpacity={0.85}
+                                        onPress={handlePlaybackSpeedPress}
+                                    >
+                                        <View style={styles.moreItemIconCircle}>
+                                            <Text style={styles.moreSpeedText}>{playbackRateLabel}</Text>
+                                        </View>
+                                        <Text style={styles.moreItemText}>Playback speed</Text>
+                                    </TouchableOpacity>
+
+                                    <TouchableOpacity
+                                        style={styles.moreItem}
+                                        activeOpacity={0.85}
+                                        onPress={handleOpenEpisodeDescription}
+                                    >
+                                        <View style={styles.moreItemIconCircle}>
+                                            {renderIcon('song information.svg', { width: scale(24), height: scale(24) }, '#F5D8CB')}
+                                        </View>
+                                        <Text style={styles.moreItemText}>Episode description</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            </BlurView>
+                        </LinearGradient>
+                    </Pressable>
+                </Pressable>
+            </Modal>
+
             <ShareSheetModal
                 visible={shareVisible}
                 onClose={() => setShareVisible(false)}
@@ -689,8 +836,6 @@ export default function PodcastDetailScreen({ route, navigation }) {
                 shareTitle={`${podcastTitle} — ${authorName}`}
                 shareUrl={getPodcastAudioUrl(podcast || routePodcast)}
             />
-
-            <MiniPlayer bottomOffset={scale(24)} />
         </View>
     );
 }
@@ -782,7 +927,7 @@ const styles = StyleSheet.create({
 
     episodesContainer: {
         paddingHorizontal: scale(16),
-        marginTop: scale(8),
+        marginTop: scale(12),
     },
     sectionTitle: {
         color: '#F5D8CB',
@@ -853,5 +998,72 @@ const styles = StyleSheet.create({
         fontSize: scale(14),
         fontFamily: 'Poppins-Regular',
         marginBottom: scale(12),
+    },
+    modalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0, 0, 0, 0.3)',
+        justifyContent: 'flex-end',
+    },
+    moreSheet: {
+        width: '100%',
+        borderTopLeftRadius: scale(40),
+        borderTopRightRadius: scale(40),
+        overflow: 'hidden',
+    },
+    moreBorderGradient: {
+        borderTopLeftRadius: scale(40),
+        borderTopRightRadius: scale(40),
+        paddingTop: scale(1.5),
+        paddingHorizontal: scale(1.5),
+    },
+    moreGlassContainer: {
+        borderTopLeftRadius: scale(40),
+        borderTopRightRadius: scale(40),
+        overflow: 'hidden',
+        width: '100%',
+    },
+    moreInner: {
+        paddingHorizontal: scale(20),
+        paddingTop: scale(24),
+        paddingBottom: scale(32),
+        alignItems: 'center',
+    },
+    moreTitle: {
+        color: '#F5D8CB',
+        fontSize: scale(22),
+        fontFamily: 'Unbounded-SemiBold',
+        marginBottom: scale(22),
+    },
+    moreItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        width: '100%',
+        height: scale(56),
+        borderRadius: scale(28),
+        borderWidth: 1,
+        borderColor: '#F5D8CB',
+        marginBottom: scale(14),
+        paddingRight: scale(16),
+    },
+    moreItemIconCircle: {
+        width: scale(56),
+        height: scale(56),
+        borderRadius: scale(28),
+        borderWidth: 1,
+        borderColor: '#F5D8CB',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginLeft: scale(-1),
+        marginRight: scale(12),
+    },
+    moreItemText: {
+        color: '#F5D8CB',
+        fontSize: scale(16),
+        fontFamily: 'Poppins-Regular',
+    },
+    moreSpeedText: {
+        color: '#F5D8CB',
+        fontSize: scale(13),
+        fontFamily: 'Poppins-Regular',
     },
 });

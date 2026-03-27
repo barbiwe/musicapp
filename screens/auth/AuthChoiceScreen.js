@@ -17,7 +17,7 @@ import * as WebBrowser from "expo-web-browser";
 import * as Google from "expo-auth-session/providers/google";
 
 // 👇 Імпортуємо scale та getIcons
-import { googleLogin, scale, getIcons } from "../../api/api";
+import { googleLogin, resolvePostAuthDestination, scale, getIcons } from "../../api/api";
 import { getGoogleAuthRequestConfig } from '../../config/googleAuthConfig';
 
 WebBrowser.maybeCompleteAuthSession();
@@ -117,7 +117,8 @@ export default function AuthChoiceScreen({ navigation }) {
         if (result?.error) {
             Alert.alert("Login Failed", typeof result.error === 'string' ? result.error : "Google login failed");
         } else {
-            navigation.replace('MainTabs');
+            const nextRoute = await resolvePostAuthDestination();
+            navigation.replace(nextRoute);
         }
     };
 

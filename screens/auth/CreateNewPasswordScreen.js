@@ -107,14 +107,17 @@ export default function CreateNewPasswordScreen({ navigation, route }) {
                             secureTextEntry={securePassword}
                         />
                         <TouchableOpacity style={styles.rightIconButton} onPress={() => setSecurePassword((v) => !v)}>
-                            <RemoteTintIcon
-                                icons={icons}
-                                iconName="eye.svg"
-                                width={scale(18)}
-                                height={scale(18)}
-                                color="#F5D8CB"
-                                fallback="o"
-                            />
+                            <View style={styles.eyeIconWrap}>
+                                <RemoteTintIcon
+                                    icons={icons}
+                                    iconName="eye.svg"
+                                    width={scale(22)}
+                                    height={scale(22)}
+                                    color="#F5D8CB"
+                                    fallback="o"
+                                />
+                                {!securePassword && <View style={styles.eyeSlash} />}
+                            </View>
                         </TouchableOpacity>
                     </View>
 
@@ -139,14 +142,17 @@ export default function CreateNewPasswordScreen({ navigation, route }) {
                             secureTextEntry={secureConfirm}
                         />
                         <TouchableOpacity style={styles.rightIconButton} onPress={() => setSecureConfirm((v) => !v)}>
-                            <RemoteTintIcon
-                                icons={icons}
-                                iconName="eye.svg"
-                                width={scale(18)}
-                                height={scale(18)}
-                                color="#F5D8CB"
-                                fallback="o"
-                            />
+                            <View style={styles.eyeIconWrap}>
+                                <RemoteTintIcon
+                                    icons={icons}
+                                    iconName="eye.svg"
+                                    width={scale(22)}
+                                    height={scale(22)}
+                                    color="#F5D8CB"
+                                    fallback="o"
+                                />
+                                {!secureConfirm && <View style={styles.eyeSlash} />}
+                            </View>
                         </TouchableOpacity>
                     </View>
 
@@ -229,6 +235,21 @@ const styles = StyleSheet.create({
         height: scale(38),
         alignItems: 'center',
         justifyContent: 'center',
+    },
+    eyeIconWrap: {
+        width: scale(24),
+        height: scale(24),
+        alignItems: 'center',
+        justifyContent: 'center',
+        position: 'relative',
+    },
+    eyeSlash: {
+        position: 'absolute',
+        width: scale(23),
+        height: scale(2),
+        borderRadius: scale(1),
+        backgroundColor: '#F5D8CB',
+        transform: [{ rotate: '-35deg' }],
     },
     hintText: {
         color: 'rgba(245,216,203,0.78)',

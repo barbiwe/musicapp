@@ -34,6 +34,15 @@ const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const svgCache = {};
 let profileSessionCache = null;
 
+const isArtistRoleValue = (value) => {
+    if (value === null || value === undefined) return false;
+    if (Array.isArray(value)) return value.some(isArtistRoleValue);
+
+    const raw = String(value).trim().toLowerCase();
+    if (!raw) return false;
+    return raw === '2' || raw === 'artist' || raw.includes('artist');
+};
+
 const ColoredSvg = ({ uri, width, height, color }) => {
     const cacheKey = `${uri}_${color || 'original'}`;
     const [xml, setXml] = useState(svgCache[cacheKey] || null);
@@ -73,8 +82,10 @@ export default function ProfileScreen({ navigation }) {
     const currentUserIdRef = useRef(null);
     const [loading, setLoading] = useState(true);
     const [username, setUsername] = useState('User');
+    const [userRole, setUserRole] = useState(null);
     const [avatarUri, setAvatarUri] = useState(null);
     const [icons, setIcons] = useState(() => getCachedIcons() || {});
+    const isArtistRole = isArtistRoleValue(userRole);
 
     useFocusEffect(
         useCallback(() => {
@@ -90,9 +101,10 @@ export default function ProfileScreen({ navigation }) {
     const loadProfileData = async ({ force = false, silent = false } = {}) => {
         if (!silent) setLoading(true);
         try {
-            const entries = await AsyncStorage.multiGet(['userId', 'username']);
+            const entries = await AsyncStorage.multiGet(['userId', 'username', 'userRole']);
             const storedId = entries?.find(([key]) => key === 'userId')?.[1] || null;
             const storedName = entries?.find(([key]) => key === 'username')?.[1] || null;
+            const storedRole = entries?.find(([key]) => key === 'userRole')?.[1] || null;
             currentUserIdRef.current = storedId;
 
             const canUseSessionCache =
@@ -105,6 +117,7 @@ export default function ProfileScreen({ navigation }) {
                 setUsername(profileSessionCache.username || 'User');
                 setAvatarUri(profileSessionCache.avatarUri || null);
                 setIcons(profileSessionCache.icons || getCachedIcons() || {});
+                setUserRole(profileSessionCache.userRole || null);
                 return;
             }
 
@@ -119,6 +132,7 @@ export default function ProfileScreen({ navigation }) {
 
             const safeUsername = storedName || 'User';
             setUsername(safeUsername);
+            setUserRole(storedRole);
 
             let safeAvatarUri = null;
             if (storedId) {
@@ -132,6 +146,7 @@ export default function ProfileScreen({ navigation }) {
                 username: safeUsername,
                 avatarUri: safeAvatarUri,
                 icons: safeIcons,
+                userRole: storedRole,
             };
         } catch (e) {
             if (!silent) hasLoadedOnceRef.current = false;
@@ -164,6 +179,7 @@ export default function ProfileScreen({ navigation }) {
                 username,
                 icons,
                 avatarUri: asset.uri,
+                userRole,
             };
 
             const res = await changeAvatar(asset.uri);
@@ -276,11 +292,14 @@ export default function ProfileScreen({ navigation }) {
                                 <View style={styles.profileInfo}>
                                     <Text style={styles.username} numberOfLines={1}>{username}</Text>
                                     <TouchableOpacity
-                                        style={styles.singerBadge}
-                                        activeOpacity={0.7}
-                                        onPress={() => navigation.navigate('Request')}
+                                        style={[styles.singerBadge, isArtistRole && styles.singerBadgeDisabled]}
+                                        activeOpacity={isArtistRole ? 1 : 0.7}
+                                        onPress={isArtistRole ? undefined : () => navigation.navigate('Request')}
+                                        disabled={isArtistRole}
                                     >
-                                        <Text style={styles.singerBadgeText}>Become a singer</Text>
+                                        <Text style={[styles.singerBadgeText, isArtistRole && styles.singerBadgeTextDisabled]}>
+                                            {isArtistRole ? 'Artist account' : 'Become a singer'}
+                                        </Text>
                                     </TouchableOpacity>
                                 </View>
 
@@ -440,6 +459,13 @@ const styles = StyleSheet.create({
         color: '#F5D8CB',
         fontSize: scale(14),
         fontFamily: 'Poppins-Regular',
+    },
+    singerBadgeDisabled: {
+        borderColor: 'rgba(245, 216, 203, 0.45)',
+        backgroundColor: 'rgba(245, 216, 203, 0.08)',
+    },
+    singerBadgeTextDisabled: {
+        color: '#B9B9B9',
     },
     editButton: {
         padding: scale(10),

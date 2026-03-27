@@ -16,7 +16,6 @@ import {
     getAlbumDetails,
     getAlbumCoverUrl,
     getLikedAlbums,
-    getMyAlbums,
     scale,
 } from '../../api/api';
 
@@ -69,13 +68,11 @@ export default function LibraryAlbum({ navigation }) {
 
         if (!silent) setLoading(true);
         try {
-            const [myAlbumsRaw, likedAlbumIdsRaw, allAlbumsRaw] = await Promise.all([
-                getMyAlbums({ force }),
+            const [likedAlbumIdsRaw, allAlbumsRaw] = await Promise.all([
                 getLikedAlbums({ force }),
                 getAlbums({ force }),
             ]);
 
-            const myAlbums = toArray(myAlbumsRaw);
             const allAlbums = toArray(allAlbumsRaw);
             const likedAlbumIds = (Array.isArray(likedAlbumIdsRaw) ? likedAlbumIdsRaw : [])
                 .map((id) => String(id || '').trim())
@@ -102,7 +99,7 @@ export default function LibraryAlbum({ navigation }) {
             const likedDetailsFallback = likedDetailsFallbackRaw.filter(Boolean);
 
             const uniqueById = new Map();
-            [...myAlbums, ...likedFromAll, ...likedDetailsFallback].forEach((album) => {
+            [...likedFromAll, ...likedDetailsFallback].forEach((album) => {
                 const id = normalizeAlbumId(album);
                 if (!id) return;
                 if (!uniqueById.has(id)) {

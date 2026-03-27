@@ -1,10 +1,9 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
+    Keyboard,
     Image,
-    Modal,
-    Pressable,
     ScrollView,
     StatusBar,
     StyleSheet,
@@ -140,18 +139,18 @@ const extractFavoriteMusicGenreNames = (rawFavorites, allMusicGenres) => {
     return toUnique(names);
 };
 
-export default function EditProfileScreen({ navigation }) {
+export default function EditProfileScreen({ navigation, route }) {
     const [loading, setLoading] = useState(true);
     const [savingAvatar, setSavingAvatar] = useState(false);
     const [icons, setIcons] = useState({});
     const [username, setUsername] = useState('');
+    const [savedUsername, setSavedUsername] = useState('');
     const [avatarUri, setAvatarUri] = useState(null);
     const [musicGenres, setMusicGenres] = useState([]);
     const [podcastGenres, setPodcastGenres] = useState([]);
     const [allMusicGenres, setAllMusicGenres] = useState([]);
     const [allPodcastGenres, setAllPodcastGenres] = useState([]);
-    const [pickerVisible, setPickerVisible] = useState(false);
-    const [pickerType, setPickerType] = useState('music');
+    const handledPickerTokenRef = useRef(null);
 
     useEffect(() => {
         const load = async () => {
@@ -199,7 +198,9 @@ export default function EditProfileScreen({ navigation }) {
                 setAllPodcastGenres(normalizedPodcastGenres);
                 setMusicGenres(initialMusic);
                 setPodcastGenres(initialPodcast);
-                setUsername(String(storedName || ''));
+                const initialUsername = String(storedName || '');
+                setUsername(initialUsername);
+                setSavedUsername(initialUsername);
                 if (storedUserId) {
                     setAvatarUri(`${getUserAvatarUrl(storedUserId)}?t=${Date.now()}`);
                 } else {
@@ -242,16 +243,6 @@ export default function EditProfileScreen({ navigation }) {
         />
     );
 
-    const availableMusic = useMemo(() => {
-        const selected = new Set(musicGenres.map((g) => g.toLowerCase()));
-        return allMusicGenres.filter((g) => !selected.has(g.name.toLowerCase()));
-    }, [allMusicGenres, musicGenres]);
-
-    const availablePodcast = useMemo(() => {
-        const selected = new Set(podcastGenres.map((g) => g.toLowerCase()));
-        return allPodcastGenres.filter((g) => !selected.has(g.name.toLowerCase()));
-    }, [allPodcastGenres, podcastGenres]);
-
     const musicGenreIdByName = useMemo(() => {
         const map = new Map();
         (Array.isArray(allMusicGenres) ? allMusicGenres : []).forEach((genre) => {
@@ -263,12 +254,57 @@ export default function EditProfileScreen({ navigation }) {
         return map;
     }, [allMusicGenres]);
 
+    useEffect(() => {
+        const token = route?.params?.genrePickerResultToken;
+        const payload = route?.params?.genrePickerResult;
+        if (!token || !payload || handledPickerTokenRef.current === token) return;
+        handledPickerTokenRef.current = token;
+
+        const type = payload?.type === 'podcast' ? 'podcast' : 'music';
+        const selectedNames = toUnique(
+            (Array.isArray(payload?.selectedGenres) ? payload.selectedGenres : [])
+                .map((name) => String(name || '').trim())
+                .filter(Boolean)
+        );
+
+        if (type === 'music') {
+            const prevMusic = Array.isArray(musicGenres) ? musicGenres : [];
+            const prevSet = new Set(prevMusic.map((name) => String(name).toLowerCase()));
+            const nextSet = new Set(selectedNames.map((name) => String(name).toLowerCase()));
+
+            selectedNames.forEach((name) => {
+                const lowered = String(name).toLowerCase();
+                if (prevSet.has(lowered)) return;
+                const genreId = musicGenreIdByName.get(lowered);
+                if (genreId) void addFavoriteGenre(genreId);
+            });
+
+            prevMusic.forEach((name) => {
+                const lowered = String(name).toLowerCase();
+                if (nextSet.has(lowered)) return;
+                const genreId = musicGenreIdByName.get(lowered);
+                if (genreId) void removeFavoriteGenre(genreId);
+            });
+
+            setMusicGenres(selectedNames);
+            return;
+        }
+
+        setPodcastGenres(selectedNames);
+    }, [route?.params?.genrePickerResultToken, route?.params?.genrePickerResult, musicGenres, musicGenreIdByName]);
+
     const saveUsername = async (value) => {
         const safe = String(value || '').trim();
         const finalName = safe || 'User';
         setUsername(finalName);
         await AsyncStorage.setItem(STORAGE_KEYS.username, finalName);
+        setSavedUsername(finalName);
+        Keyboard.dismiss();
     };
+
+    const normalizedUsername = String(username || '').trim();
+    const normalizedSavedUsername = String(savedUsername || '').trim();
+    const hasUsernameChanges = normalizedUsername !== normalizedSavedUsername;
 
     const pickAvatar = async () => {
         const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -304,22 +340,21 @@ export default function EditProfileScreen({ navigation }) {
     };
 
     const openGenrePicker = (type) => {
-        setPickerType(type);
-        setPickerVisible(true);
-    };
+        const safeType = type === 'podcast' ? 'podcast' : 'music';
+        const selectedGenres = safeType === 'music' ? musicGenres : podcastGenres;
+        const allGenres = toUnique([
+            ...(safeType === 'music' ? allMusicGenres : allPodcastGenres)
+            .map((genre) => String(genre?.name || '').trim())
+            .filter(Boolean),
+            ...selectedGenres,
+        ]);
 
-    const onAddGenre = (name) => {
-        if (!name) return;
-        if (pickerType === 'music') {
-            setMusicGenres((prev) => toUnique([...prev, name]));
-            const genreId = musicGenreIdByName.get(String(name).toLowerCase());
-            if (genreId) {
-                void addFavoriteGenre(genreId);
-            }
-        } else {
-            setPodcastGenres((prev) => toUnique([...prev, name]));
-        }
-        setPickerVisible(false);
+        navigation.navigate('ProfileGenrePicker', {
+            type: safeType,
+            sourceKey: route?.key,
+            allGenres,
+            selectedGenres,
+        });
     };
 
     const onRemoveGenre = (type, name) => {
@@ -334,8 +369,6 @@ export default function EditProfileScreen({ navigation }) {
             setPodcastGenres((prev) => prev.filter((g) => g.toLowerCase() !== name.toLowerCase()));
         }
     };
-
-    const currentPickerList = pickerType === 'music' ? availableMusic : availablePodcast;
 
     if (loading) {
         return (
@@ -405,13 +438,25 @@ export default function EditProfileScreen({ navigation }) {
                         <TextInput
                             value={username}
                             onChangeText={setUsername}
-                            onBlur={() => saveUsername(username)}
+                            keyboardAppearance="dark"
+                            returnKeyType="done"
+                            blurOnSubmit
+                            onSubmitEditing={() => saveUsername(username)}
                             placeholder="Your nick"
                             placeholderTextColor="rgba(245,216,203,0.55)"
                             style={styles.input}
                             selectionColor="#F5D8CB"
                             autoCapitalize="none"
                         />
+                        {hasUsernameChanges && (
+                            <TouchableOpacity
+                                style={styles.doneInlineBtn}
+                                onPress={() => saveUsername(username)}
+                                activeOpacity={0.85}
+                            >
+                                <Text style={styles.doneInlineBtnText}>Done</Text>
+                            </TouchableOpacity>
+                        )}
                     </View>
 
                     <View style={styles.sectionHeader}>
@@ -467,37 +512,6 @@ export default function EditProfileScreen({ navigation }) {
                     <View style={{ height: scale(40) }} />
                 </ScrollView>
             </View>
-
-            <Modal
-                visible={pickerVisible}
-                transparent
-                animationType="fade"
-                onRequestClose={() => setPickerVisible(false)}
-            >
-                <Pressable style={styles.modalOverlay} onPress={() => setPickerVisible(false)}>
-                    <Pressable style={styles.pickerCard} onPress={() => {}}>
-                        <Text style={styles.pickerTitle}>
-                            {pickerType === 'music' ? 'Select music genre' : 'Select podcast genre'}
-                        </Text>
-                        <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: scale(320) }}>
-                            {currentPickerList.length === 0 ? (
-                                <Text style={styles.pickerEmpty}>No genres left</Text>
-                            ) : (
-                                currentPickerList.map((item) => (
-                                    <TouchableOpacity
-                                        key={`${pickerType}-${item.id}`}
-                                        style={styles.pickerRow}
-                                        onPress={() => onAddGenre(item.name)}
-                                        activeOpacity={0.85}
-                                    >
-                                        <Text style={styles.pickerRowText}>{item.name}</Text>
-                                    </TouchableOpacity>
-                                ))
-                            )}
-                        </ScrollView>
-                    </Pressable>
-                </Pressable>
-            </Modal>
         </LinearGradient>
     );
 }
@@ -583,7 +597,7 @@ const styles = StyleSheet.create({
         borderColor: '#F5D8CB',
         flexDirection: 'row',
         alignItems: 'center',
-        paddingRight: scale(16),
+        paddingRight: scale(10),
         marginBottom: scale(22),
     },
     inputIconCircle: {
@@ -603,6 +617,23 @@ const styles = StyleSheet.create({
         fontFamily: 'Poppins-Regular',
         fontSize: scale(14),
         paddingVertical: 0,
+        paddingRight: scale(8),
+    },
+    doneInlineBtn: {
+        height: scale(28),
+        borderRadius: scale(14),
+        borderWidth: 1,
+        borderColor: 'rgba(245,216,203,0.65)',
+        backgroundColor: 'rgba(245,216,203,0.14)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: scale(12),
+        marginLeft: scale(8),
+    },
+    doneInlineBtnText: {
+        color: '#F5D8CB',
+        fontFamily: 'Poppins-Medium',
+        fontSize: scale(12),
     },
     sectionHeader: {
         flexDirection: 'row',
@@ -672,45 +703,6 @@ const styles = StyleSheet.create({
     },
     deleteText: {
         color: 'rgba(245,216,203,0.45)',
-        fontFamily: 'Poppins-Regular',
-        fontSize: scale(13),
-    },
-    modalOverlay: {
-        flex: 1,
-        backgroundColor: 'rgba(0,0,0,0.45)',
-        justifyContent: 'flex-end',
-    },
-    pickerCard: {
-        borderTopLeftRadius: scale(22),
-        borderTopRightRadius: scale(22),
-        borderWidth: 1,
-        borderColor: 'rgba(245,216,203,0.25)',
-        backgroundColor: 'rgba(38, 13, 11, 0.98)',
-        paddingHorizontal: scale(16),
-        paddingTop: scale(14),
-        paddingBottom: scale(22),
-    },
-    pickerTitle: {
-        color: '#F5D8CB',
-        fontFamily: 'Unbounded-SemiBold',
-        fontSize: scale(13),
-        marginBottom: scale(10),
-    },
-    pickerEmpty: {
-        color: 'rgba(245,216,203,0.8)',
-        fontFamily: 'Poppins-Regular',
-        fontSize: scale(12),
-        paddingVertical: scale(16),
-        textAlign: 'center',
-    },
-    pickerRow: {
-        minHeight: scale(38),
-        justifyContent: 'center',
-        borderBottomWidth: 1,
-        borderBottomColor: 'rgba(245,216,203,0.15)',
-    },
-    pickerRowText: {
-        color: '#F5D8CB',
         fontFamily: 'Poppins-Regular',
         fontSize: scale(13),
     },

@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { SvgXml } from 'react-native-svg';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useFocusEffect } from '@react-navigation/native';
 import { usePlayerStore } from '../store/usePlayerStore';
 import {
     getTracks,
@@ -163,41 +164,51 @@ export default function SearchScreen({ navigation }) {
         loadData();
     }, []);
 
+    useFocusEffect(
+        React.useCallback(() => {
+            if (genres.length === 0 || (tracks.length === 0 && recentTracks.length === 0)) {
+                loadData();
+            }
+        }, [genres.length, tracks.length, recentTracks.length])
+    );
+
     const loadData = async () => {
         const hasWarmData = recentTracks.length > 0 || genres.length > 0;
         if (!hasWarmData) setLoading(true);
-        try {
-            // 1) Швидкі дані для першого рендера екрана
-            const [recentRes, genresRes, iconsRes] = await Promise.all([
-                getRecentlyPlayed(),
-                getGenres(),
-                Object.keys(icons).length === 0 ? getIcons() : Promise.resolve(icons),
-            ]);
+        // 1) Fast data for first paint (independent, no global fail)
+        const [recentRes, genresRes, iconsRes] = await Promise.allSettled([
+            getRecentlyPlayed(!hasWarmData),
+            getGenres({ force: !hasWarmData }),
+            Object.keys(icons).length === 0 ? getIcons() : Promise.resolve(icons),
+        ]);
 
-            setRecentTracks(normalizeHistory(recentRes));
-            setGenres(normalizeGenres(genresRes));
-            setIcons(iconsRes || {});
-            setLoading(false);
-
-            // 2) Важкі дані — у фоні, щоб не блокувати відкриття Search
-            Promise.allSettled([getTracks(), getAlbums(), getAllArtists()])
-                .then(([tracksRes, albumsRes, artistsRes]) => {
-                    const tracksValue = tracksRes.status === 'fulfilled' ? tracksRes.value : [];
-                    const albumsValue = albumsRes.status === 'fulfilled' ? albumsRes.value : [];
-                    const artistsValue = artistsRes.status === 'fulfilled' ? artistsRes.value : [];
-
-                    setTracks(Array.isArray(tracksValue) ? tracksValue : []);
-                    setAlbums(Array.isArray(albumsValue) ? albumsValue : []);
-                    setArtists(Array.isArray(artistsValue) ? artistsValue : []);
-                });
-        } catch (e) {
-            setTracks([]);
-            setRecentTracks([]);
-            setGenres([]);
-            setAlbums([]);
-            setArtists([]);
-            setLoading(false);
+        if (recentRes.status === 'fulfilled') {
+            setRecentTracks(normalizeHistory(recentRes.value));
         }
+        if (genresRes.status === 'fulfilled') {
+            setGenres(normalizeGenres(genresRes.value));
+        }
+        if (iconsRes.status === 'fulfilled') {
+            setIcons(iconsRes.value || {});
+        }
+        setLoading(false);
+
+        // 2) Heavy data in background
+        Promise.allSettled([
+            getTracks({ force: !hasWarmData }),
+            getAlbums({ force: !hasWarmData }),
+            getAllArtists({ force: !hasWarmData }),
+        ]).then(([tracksRes, albumsRes, artistsRes]) => {
+            if (tracksRes.status === 'fulfilled') {
+                setTracks(Array.isArray(tracksRes.value) ? tracksRes.value : []);
+            }
+            if (albumsRes.status === 'fulfilled') {
+                setAlbums(Array.isArray(albumsRes.value) ? albumsRes.value : []);
+            }
+            if (artistsRes.status === 'fulfilled') {
+                setArtists(Array.isArray(artistsRes.value) ? artistsRes.value : []);
+            }
+        });
     };
 
     const renderIcon = (iconName, size, tintColor = '#F5D8CB') => {

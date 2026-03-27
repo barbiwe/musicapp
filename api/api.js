@@ -145,6 +145,16 @@ const clearMapCache = (map) => {
     if (map?.clear) map.clear();
 };
 
+const scheduleSoftRefresh = (refreshFn) => {
+    setTimeout(() => {
+        try {
+            refreshFn();
+        } catch (_) {
+            // no-op
+        }
+    }, 0);
+};
+
 const PERSISTED_PUBLIC_ARRAY_CACHE_KEYS = [
     'tracks',
     'genres',
@@ -938,6 +948,37 @@ export const getFavoriteGenres = async () => {
     return null;
 };
 
+const parseStoredIdsArray = (rawValue) => {
+    if (!rawValue) return [];
+    try {
+        const parsed = JSON.parse(rawValue);
+        return Array.isArray(parsed) ? parsed : [];
+    } catch (_) {
+        return [];
+    }
+};
+
+export const resolvePostAuthDestination = async () => {
+    try {
+        const backendFavoriteGenres = await getFavoriteGenres();
+        if (Array.isArray(backendFavoriteGenres)) {
+            return backendFavoriteGenres.length > 0 ? 'MainTabs' : 'FavoriteGenres';
+        }
+    } catch (_) {
+        // fallback to local storage below
+    }
+
+    try {
+        const localRaw = await AsyncStorage.getItem('favoriteGenreIds');
+        const localIds = parseStoredIdsArray(localRaw);
+        if (localIds.length > 0) return 'MainTabs';
+    } catch (_) {
+        // ignore local read errors
+    }
+
+    return 'FavoriteGenres';
+};
+
 export const saveFavoriteGenres = async (genreIds) => {
     const ids = Array.from(
         new Set(
@@ -1040,6 +1081,7 @@ export const getMyPlaylists = async (options = {}) => {
         const cached = await readArrayCache('my_playlists', CACHE_TTL.myPlaylists, true);
         if (cached.data) {
             myPlaylistsCache = cached.data;
+            if (cached.stale) scheduleSoftRefresh(() => getMyPlaylists({ force: true }));
             return myPlaylistsCache;
         }
 
@@ -1375,6 +1417,7 @@ export const getLikedTracks = async (options = {}) => {
         const cached = await readArrayCache('liked_tracks', CACHE_TTL.likedTracks, true);
         if (cached.data) {
             likedTracksCache = cached.data;
+            if (cached.stale) scheduleSoftRefresh(() => getLikedTracks({ force: true }));
             return likedTracksCache;
         }
 
@@ -1451,6 +1494,7 @@ export const getLikedAlbums = async (options = {}) => {
         const cached = await readArrayCache('liked_albums', CACHE_TTL.likedAlbums, true);
         if (cached.data) {
             likedAlbumsCache = cached.data;
+            if (cached.stale) scheduleSoftRefresh(() => getLikedAlbums({ force: true }));
             return likedAlbumsCache;
         }
 
@@ -1842,6 +1886,7 @@ export const getMyAlbums = async (options = {}) => {
         const cached = await readArrayCache('my_albums', CACHE_TTL.myAlbums, true);
         if (cached.data) {
             myAlbumsCache = cached.data;
+            if (cached.stale) scheduleSoftRefresh(() => getMyAlbums({ force: true }));
             return myAlbumsCache;
         }
         try {
@@ -1912,41 +1957,329 @@ export const getAlbumTracks = async (albumId) => {
 
 //create albums
 
-export const createAlbum = async (title, cover) => {
-    const formData = new FormData();
+export const createAlbum = async (title, cover, genreIds = [], tracks = []) => {
+    const safeGenreIds = Array.isArray(genreIds)
+        ? genreIds.map((id) => String(id || '').trim()).filter(Boolean)
+        : [];
+    const primaryGenreId = safeGenreIds[0] || null;
+    const safeTracks = Array.isArray(tracks)
+        ? tracks
+            .map((item, index) => ({
+                index,
+                title: String(item?.title || '').trim() || `Track ${index + 1}`,
+                file: item?.file || null,
+            }))
+            .filter((item) => !!item?.file?.uri)
+        : [];
 
-    formData.append('title', title);
+    console.log('[ALBUM-PUBLISH][API] createAlbum:start', {
+        endpoint: '/api/Album/create',
+        title: String(title || '').trim(),
+        hasCover: !!cover?.uri,
+        primaryGenreId,
+        genreIds: safeGenreIds,
+        coverName: cover?.fileName || cover?.name || null,
+        coverUri: cover?.uri || null,
+        coverSize: cover?.size || null,
+        tracksCount: safeTracks.length,
+        tracks: safeTracks.map((item) => ({
+            index: item.index,
+            title: item.title,
+            audioName: item?.file?.name || item?.file?.fileName || null,
+            audioUri: item?.file?.uri || null,
+            audioSize: item?.file?.size || null,
+            audioType: item?.file?.mimeType || item?.file?.type || null,
+        })),
+    });
 
-    if (cover) {
-        const filename = cover.uri.split('/').pop();
-        const match = /\.(\w+)$/.exec(filename);
-        let type = match ? `image/${match[1]}` : 'image/jpeg';
-
-        formData.append('cover', {
-            uri: cover.uri,
-            name: filename || 'cover.jpg',
-            type: type,
-        });
+    if (!safeTracks.length) {
+        return {
+            error: 'At least one track file is required',
+            status: 400,
+        };
     }
 
+    const createFormData = (trackFileKey, trackTitleKey) => {
+        const formData = new FormData();
+        formData.append('title', title);
+        if (primaryGenreId) {
+            // Backend contract can vary by casing/singular/plural across environments.
+            formData.append('GenreId', primaryGenreId);
+            formData.append('genreId', primaryGenreId);
+        }
+        safeGenreIds.forEach((id) => {
+            formData.append('genreIds', id);
+            formData.append('GenreIds', id);
+        });
+
+        if (cover) {
+            const filename = cover.uri.split('/').pop();
+            const match = /\.(\w+)$/.exec(filename);
+            const type = match ? `image/${match[1]}` : 'image/jpeg';
+
+            formData.append('cover', {
+                uri: cover.uri,
+                name: filename || 'cover.jpg',
+                type,
+            });
+        }
+
+        safeTracks.forEach((item) => {
+            const fileName = item?.file?.name || item?.file?.fileName || item?.file?.uri?.split('/').pop() || 'track.mp3';
+            formData.append(trackFileKey, {
+                uri: item.file.uri,
+                name: fileName,
+                type: getFileTypeFromUri(item.file.uri, 'audio/mpeg'),
+            });
+            formData.append(trackTitleKey, item.title);
+        });
+
+        return formData;
+    };
+
+    const attempts = [
+        { trackFileKey: 'trackFiles', trackTitleKey: 'trackTitles' },
+        { trackFileKey: 'tracks', trackTitleKey: 'trackTitles' },
+        { trackFileKey: 'files', trackTitleKey: 'titles' },
+        { trackFileKey: 'audioFiles', trackTitleKey: 'trackTitles' },
+    ];
+
+    let lastError = null;
+    for (let i = 0; i < attempts.length; i += 1) {
+        const attempt = attempts[i];
+        try {
+            console.log('[ALBUM-PUBLISH][API] createAlbum:attempt', {
+                index: i,
+                trackFileKey: attempt.trackFileKey,
+                trackTitleKey: attempt.trackTitleKey,
+            });
+
+            const formData = createFormData(attempt.trackFileKey, attempt.trackTitleKey);
+            const res = await api.post('/api/Album/create', formData, {
+                headers: { 'Content-Type': 'multipart/form-data' },
+            });
+
+            console.log('[ALBUM-PUBLISH][API] createAlbum:success', {
+                status: res?.status || null,
+                albumId: res?.data?.id || res?.data?.albumId || null,
+                trackFileKey: attempt.trackFileKey,
+                trackTitleKey: attempt.trackTitleKey,
+            });
+
+            albumsCache = null;
+            albumsRequest = null;
+            myAlbumsCache = null;
+            myAlbumsRequest = null;
+            clearMapCache(albumDetailsCache);
+            clearMapCache(albumDetailsRequest);
+            clearMapCache(albumTracksCache);
+            clearMapCache(albumTracksRequest);
+            removePersistedArrayCache('albums');
+            removePersistedArrayCache('my_albums');
+            return { success: true, data: res.data };
+        } catch (e) {
+            lastError = e;
+            const rawData = e?.response?.data;
+            const rawDataText =
+                typeof rawData === 'string'
+                    ? rawData
+                    : JSON.stringify(rawData || {});
+            const normalizedErrorText = rawDataText.toLowerCase();
+
+            const isSerializationCycleError =
+                e?.response?.status === 500 &&
+                (
+                    normalizedErrorText.includes('possible object cycle') ||
+                    normalizedErrorText.includes('serializercycledetected') ||
+                    normalizedErrorText.includes('path: $.albumtracks.album.albumtracks')
+                );
+
+            if (isSerializationCycleError) {
+                try {
+                    const myAlbums = await getMyAlbums({ force: true });
+                    const safeTitle = String(title || '').trim().toLowerCase();
+                    const matched = (Array.isArray(myAlbums) ? myAlbums : [])
+                        .filter((item) => String(item?.title || '').trim().toLowerCase() === safeTitle)
+                        .sort((a, b) => {
+                            const at = new Date(a?.createdAt || 0).getTime();
+                            const bt = new Date(b?.createdAt || 0).getTime();
+                            return bt - at;
+                        })[0];
+
+                    if (matched) {
+                        console.log('[ALBUM-PUBLISH][API] createAlbum:recovered-after-serialization-error', {
+                            recoveredAlbumId: matched?.id || matched?.Id || null,
+                            title: matched?.title || null,
+                        });
+                        albumsCache = null;
+                        albumsRequest = null;
+                        myAlbumsCache = null;
+                        myAlbumsRequest = null;
+                        clearMapCache(albumDetailsCache);
+                        clearMapCache(albumDetailsRequest);
+                        clearMapCache(albumTracksCache);
+                        clearMapCache(albumTracksRequest);
+                        removePersistedArrayCache('albums');
+                        removePersistedArrayCache('my_albums');
+                        return { success: true, data: matched, recovered: true };
+                    }
+                } catch (_) {
+                    // ignore recovery errors, continue normal error flow
+                }
+            }
+
+            const shouldTryNext =
+                e?.response?.status === 400 &&
+                (
+                    normalizedErrorText.includes('track file') ||
+                    normalizedErrorText.includes('trackfiles')
+                ) &&
+                i < attempts.length - 1;
+
+            console.log('[ALBUM-PUBLISH][API] createAlbum:error', {
+                status: e?.response?.status || null,
+                code: e?.code || null,
+                message: e?.message || null,
+                responseData: rawData || null,
+                trackFileKey: attempt.trackFileKey,
+                trackTitleKey: attempt.trackTitleKey,
+                willRetry: shouldTryNext,
+            });
+
+            if (!shouldTryNext) break;
+        }
+    }
+
+    return {
+        error: lastError?.response?.data || lastError?.message || 'Create album failed',
+        status: lastError?.response?.status || null,
+    };
+};
+
+export const uploadAlbumCover = async (albumId, cover) => {
+    const id = String(albumId || '').trim();
+    if (!id) return { error: 'Album id is required' };
+    if (!cover?.uri) return { error: 'Cover image is required' };
+
+    console.log('[ALBUM-PUBLISH][API] uploadAlbumCover:start', {
+        endpoint: `/api/Album/${id}/upload-cover`,
+        albumId: id,
+        coverName: cover?.fileName || cover?.name || null,
+        coverUri: cover?.uri || null,
+        coverSize: cover?.size || null,
+    });
+
+    const formData = new FormData();
+    const filename = cover.fileName || cover.name || cover.uri.split('/').pop() || 'cover.jpg';
+    const match = /\.(\w+)$/.exec(filename);
+    const type = match ? `image/${match[1]}` : 'image/jpeg';
+
+    formData.append('cover', {
+        uri: cover.uri,
+        name: filename,
+        type,
+    });
+
     try {
-        const res = await api.post('/api/Album/create', formData, {
+        const res = await api.post(`/api/Album/${id}/upload-cover`, formData, {
             headers: { 'Content-Type': 'multipart/form-data' },
         });
+        console.log('[ALBUM-PUBLISH][API] uploadAlbumCover:success', {
+            status: res?.status || null,
+            albumId: id,
+        });
+
         albumsCache = null;
         albumsRequest = null;
         myAlbumsCache = null;
         myAlbumsRequest = null;
-        clearMapCache(albumDetailsCache);
-        clearMapCache(albumDetailsRequest);
-        clearMapCache(albumTracksCache);
-        clearMapCache(albumTracksRequest);
+        albumDetailsCache.delete(id);
+        albumDetailsRequest.delete(id);
         removePersistedArrayCache('albums');
         removePersistedArrayCache('my_albums');
-        return { success: true, data: res.data };
+
+        return { success: true, data: res?.data };
     } catch (e) {
-        console.log('Create album error:', e.response?.data);
-        return { error: typeof e.response?.data === 'string' ? e.response.data : 'Create album failed' };
+        console.log('[ALBUM-PUBLISH][API] uploadAlbumCover:error', {
+            albumId: id,
+            status: e?.response?.status || null,
+            code: e?.code || null,
+            message: e?.message || null,
+            responseData: e?.response?.data || null,
+        });
+        return {
+            error: e?.response?.data || e?.message || 'Upload album cover failed',
+            status: e?.response?.status || null,
+        };
+    }
+};
+
+export const addTrackToAlbum = async (albumId, trackId) => {
+    const aid = String(albumId || '').trim();
+    const tid = String(trackId || '').trim();
+    if (!aid) return { error: 'Album id is required' };
+    if (!tid) return { error: 'Track id is required' };
+
+    console.log('[ALBUM-PUBLISH][API] addTrackToAlbum:start', {
+        endpoint: `/api/Album/${aid}/add-track`,
+        albumId: aid,
+        trackId: tid,
+    });
+
+    try {
+        const res = await api.post(`/api/Album/${aid}/add-track`, { trackId: tid });
+        console.log('[ALBUM-PUBLISH][API] addTrackToAlbum:success', {
+            status: res?.status || null,
+            albumId: aid,
+            trackId: tid,
+            payload: 'trackId',
+        });
+        albumTracksCache.delete(aid);
+        albumTracksRequest.delete(aid);
+        albumDetailsCache.delete(aid);
+        albumDetailsRequest.delete(aid);
+        myAlbumsCache = null;
+        myAlbumsRequest = null;
+        removePersistedArrayCache('my_albums');
+        return { success: true, data: res?.data };
+    } catch (e) {
+        console.log('[ALBUM-PUBLISH][API] addTrackToAlbum:retry-pascalcase', {
+            albumId: aid,
+            trackId: tid,
+            status: e?.response?.status || null,
+            code: e?.code || null,
+        });
+        // fallback for backends that expect PascalCase property
+        try {
+            const res = await api.post(`/api/Album/${aid}/add-track`, { TrackId: tid });
+            console.log('[ALBUM-PUBLISH][API] addTrackToAlbum:success', {
+                status: res?.status || null,
+                albumId: aid,
+                trackId: tid,
+                payload: 'TrackId',
+            });
+            albumTracksCache.delete(aid);
+            albumTracksRequest.delete(aid);
+            albumDetailsCache.delete(aid);
+            albumDetailsRequest.delete(aid);
+            myAlbumsCache = null;
+            myAlbumsRequest = null;
+            removePersistedArrayCache('my_albums');
+            return { success: true, data: res?.data };
+        } catch (e2) {
+            console.log('[ALBUM-PUBLISH][API] addTrackToAlbum:error', {
+                albumId: aid,
+                trackId: tid,
+                status: e2?.response?.status || e?.response?.status || null,
+                code: e2?.code || e?.code || null,
+                message: e2?.message || e?.message || null,
+                responseData: e2?.response?.data || e?.response?.data || null,
+            });
+            return {
+                error: e2?.response?.data || e2?.message || e?.response?.data || e?.message || 'Add track to album failed',
+                status: e2?.response?.status || e?.response?.status || null,
+            };
+        }
     }
 };
 
@@ -2007,7 +2340,7 @@ export const getTracks = async (options = {}) => {
         return fetchTracksFromApi();
     })().finally(() => {
         tracksRequest = null;
-    })();
+    });
 
     return tracksRequest;
 };
@@ -2037,7 +2370,26 @@ export const getTrackDetails = async (trackId) => {
     return request;
 };
 
-export const getMyTracks = async () => {
+export const getMyTracks = async (options = {}) => {
+    const force = options?.force === true;
+    if (force) {
+        if (myTracksRequest) return myTracksRequest;
+        myTracksRequest = (async () => {
+            try {
+                const res = await api.get('/api/Tracks/my');
+                const data = Array.isArray(res?.data) ? res.data : [];
+                myTracksCache = data;
+                await writeArrayCache('my_tracks', data);
+                return data;
+            } catch {
+                return myTracksCache || [];
+            }
+        })().finally(() => {
+            myTracksRequest = null;
+        });
+        return myTracksRequest;
+    }
+
     if (myTracksCache) return myTracksCache;
     if (myTracksRequest) return myTracksRequest;
 
@@ -2045,6 +2397,7 @@ export const getMyTracks = async () => {
         const cached = await readArrayCache('my_tracks', CACHE_TTL.myTracks, true);
         if (cached.data) {
             myTracksCache = cached.data;
+            if (cached.stale) scheduleSoftRefresh(() => getMyTracks({ force: true }));
             return myTracksCache;
         }
         try {
@@ -2204,7 +2557,20 @@ const refreshGenresInBackground = () => {
     })();
 };
 
-export const getGenres = async () => {
+export const getGenres = async (options = {}) => {
+    const force = options?.force === true;
+    if (force) {
+        if (genresRequest) return genresRequest;
+        genresRequest = (async () => {
+            try {
+                return await fetchGenresFromApi();
+            } finally {
+                genresRequest = null;
+            }
+        })();
+        return genresRequest;
+    }
+
     if (genresCache) return genresCache;
     if (genresRequest) return genresRequest;
 
@@ -2218,7 +2584,7 @@ export const getGenres = async () => {
         return fetchGenresFromApi();
     })().finally(() => {
         genresRequest = null;
-    })();
+    });
 
     return genresRequest;
 };
@@ -2258,6 +2624,9 @@ export const uploadTrack = async (
     formData.append('artistId', artistId);
     formData.append('title', title);
     formData.append('lyrics', lyrics || "");
+    if (albumId) {
+        formData.append('albumId', String(albumId));
+    }
 
     // Логуємо файл
     console.log(`📂 Audio: ${file.name} (${file.uri})`);
@@ -2509,7 +2878,26 @@ export const createPodcast = async ({
     }
 };
 
-export const getMyPodcasts = async () => {
+export const getMyPodcasts = async (options = {}) => {
+    const force = options?.force === true;
+    if (force) {
+        if (myPodcastsRequest) return myPodcastsRequest;
+        myPodcastsRequest = (async () => {
+            try {
+                const res = await api.get('/api/Podcasts/my');
+                const data = Array.isArray(res?.data) ? res.data : [];
+                myPodcastsCache = data;
+                await writeArrayCache('my_podcasts', data);
+                return data;
+            } catch (_) {
+                return myPodcastsCache || [];
+            }
+        })().finally(() => {
+            myPodcastsRequest = null;
+        });
+        return myPodcastsRequest;
+    }
+
     if (myPodcastsCache) return myPodcastsCache;
     if (myPodcastsRequest) return myPodcastsRequest;
 
@@ -2517,6 +2905,7 @@ export const getMyPodcasts = async () => {
         const cached = await readArrayCache('my_podcasts', CACHE_TTL.myPodcasts, true);
         if (cached.data) {
             myPodcastsCache = cached.data;
+            if (cached.stale) scheduleSoftRefresh(() => getMyPodcasts({ force: true }));
             return myPodcastsCache;
         }
         try {
@@ -2564,6 +2953,7 @@ export const getAllPodcasts = async (options = {}) => {
         const cached = await readArrayCache('all_podcasts', CACHE_TTL.allPodcasts, true);
         if (cached.data) {
             allPodcastsCache = cached.data;
+            if (cached.stale) scheduleSoftRefresh(() => getAllPodcasts({ force: true }));
             return allPodcastsCache;
         }
         try {
@@ -2874,7 +3264,20 @@ const refreshRecommendationsInBackground = () => {
     })();
 };
 
-export const getRecommendations = async () => {
+export const getRecommendations = async (options = {}) => {
+    const force = options?.force === true;
+    if (force) {
+        if (recommendationsRequest) return recommendationsRequest;
+        recommendationsRequest = (async () => {
+            try {
+                return await fetchRecommendationsFromApi();
+            } finally {
+                recommendationsRequest = null;
+            }
+        })();
+        return recommendationsRequest;
+    }
+
     if (recommendationsCache) return recommendationsCache;
     if (recommendationsRequest) return recommendationsRequest;
 
@@ -3025,6 +3428,7 @@ export const getSubscriptions = async (options = {}) => {
         const cached = await readArrayCache('subscriptions', CACHE_TTL.subscriptions, true);
         if (cached.data) {
             subscriptionsCache = cached.data;
+            if (cached.stale) scheduleSoftRefresh(() => getSubscriptions({ force: true }));
             return subscriptionsCache;
         }
         try {
@@ -3062,62 +3466,131 @@ export const getArtistSubscriptionStatus = async (artistId) => {
     }
 };
 
-export const getArtistFollowersCount = async (artistId) => {
+const parseArtistNumericValue = (value, depth = 0) => {
+    if (depth > 3 || value === null || value === undefined) return null;
+
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+
+    if (typeof value === 'string') {
+        const cleaned = value.trim();
+        if (!cleaned) return null;
+        const parsed = Number(cleaned);
+        return Number.isFinite(parsed) ? parsed : null;
+    }
+
+    if (typeof value === 'object') {
+        const preferredKeys = [
+            'count',
+            'Count',
+            'plays',
+            'Plays',
+            'likes',
+            'Likes',
+            'followersCount',
+            'FollowersCount',
+            'followers',
+            'Followers',
+            'total',
+            'Total',
+            'value',
+            'Value',
+            'data',
+            'Data',
+        ];
+
+        for (const key of preferredKeys) {
+            if (Object.prototype.hasOwnProperty.call(value, key)) {
+                const nested = parseArtistNumericValue(value[key], depth + 1);
+                if (nested !== null) return nested;
+            }
+        }
+
+        for (const key of Object.keys(value)) {
+            const nested = parseArtistNumericValue(value[key], depth + 1);
+            if (nested !== null) return nested;
+        }
+    }
+
+    return null;
+};
+
+const parseArtistStringValue = (value, depth = 0) => {
+    if (depth > 3 || value === null || value === undefined) return '';
+    if (typeof value === 'string') return value.trim();
+    if (typeof value !== 'object') return '';
+
+    const preferredKeys = [
+        'specialization',
+        'Specialization',
+        'value',
+        'Value',
+        'data',
+        'Data',
+        'title',
+        'Title',
+        'name',
+        'Name',
+    ];
+
+    for (const key of preferredKeys) {
+        if (Object.prototype.hasOwnProperty.call(value, key)) {
+            const nested = parseArtistStringValue(value[key], depth + 1);
+            if (nested) return nested;
+        }
+    }
+
+    for (const key of Object.keys(value)) {
+        const nested = parseArtistStringValue(value[key], depth + 1);
+        if (nested) return nested;
+    }
+
+    return '';
+};
+
+const getArtistMetricCount = async (artistId, metricPath) => {
     const id = String(artistId || '').trim();
     if (!id) return 0;
 
     try {
-        const res = await api.get(`/api/Auth/artists/${id}/followers-count`);
-        const data = res?.data;
-
-        const parseAnyNumber = (value, depth = 0) => {
-            if (depth > 3 || value === null || value === undefined) return null;
-
-            if (typeof value === 'number' && Number.isFinite(value)) return value;
-
-            if (typeof value === 'string') {
-                const cleaned = value.trim();
-                if (!cleaned) return null;
-                const parsed = Number(cleaned);
-                return Number.isFinite(parsed) ? parsed : null;
-            }
-
-            if (typeof value === 'object') {
-                const preferredKeys = [
-                    'count',
-                    'Count',
-                    'followersCount',
-                    'FollowersCount',
-                    'followers',
-                    'Followers',
-                    'total',
-                    'Total',
-                    'value',
-                    'Value',
-                    'data',
-                    'Data',
-                ];
-
-                for (const key of preferredKeys) {
-                    if (Object.prototype.hasOwnProperty.call(value, key)) {
-                        const nested = parseAnyNumber(value[key], depth + 1);
-                        if (nested !== null) return nested;
-                    }
-                }
-
-                for (const key of Object.keys(value)) {
-                    const nested = parseAnyNumber(value[key], depth + 1);
-                    if (nested !== null) return nested;
-                }
-            }
-
-            return null;
-        };
-
-        const parsed = parseAnyNumber(data);
+        const res = await api.get(`/api/Auth/artists/${id}/${metricPath}`);
+        const parsed = parseArtistNumericValue(res?.data);
         return parsed !== null ? parsed : 0;
     } catch (_) {
         return 0;
+    }
+};
+
+export const getArtistFollowersCount = async (artistId) =>
+    getArtistMetricCount(artistId, 'followers-count');
+
+export const getArtistPlaysCount = async (artistId) =>
+    getArtistMetricCount(artistId, 'plays-count');
+
+export const getArtistLikesCount = async (artistId) =>
+    getArtistMetricCount(artistId, 'likes-count');
+
+export const getArtistInfo = async (artistId) => {
+    const id = String(artistId || '').trim();
+    if (!id) return null;
+
+    try {
+        const res = await api.get(`/api/Auth/artists/${id}/info`);
+        const data = res?.data;
+        return data && typeof data === 'object' ? data : null;
+    } catch (_) {
+        return null;
+    }
+};
+
+export const getArtistSpecialization = async (artistId) => {
+    const id = String(artistId || '').trim();
+    if (!id) return '';
+
+    try {
+        const res = await api.get(`/api/Auth/artists/${id}/specialization`);
+        return parseArtistStringValue(res?.data);
+    } catch (_) {
+        return '';
     }
 };
 
@@ -3162,7 +3635,7 @@ export const getRecentlyPlayed = async (forceRefresh = false) => {
         return fetchRecentlyPlayedFromApi();
     })().finally(() => {
         recentPlayedRequest = null;
-    })();
+    });
 
     return recentPlayedRequest;
 };
@@ -3175,6 +3648,10 @@ export const warmSearchData = async () => {
         getIcons(),
     ]);
 };
+
+let warmAppStartupRequest = null;
+let warmAppStartupLastRunAt = 0;
+const WARMUP_COOLDOWN_MS = 30000;
 
 const prefetchImageUrls = async (urls, limit = 24) => {
     const uniqueUrls = Array.from(
@@ -3205,6 +3682,13 @@ const prefetchImageUrls = async (urls, limit = 24) => {
  * Runs in background and never throws.
  */
 export const warmAppStartupData = async () => {
+    const now = Date.now();
+    if (warmAppStartupRequest) return warmAppStartupRequest;
+    if (warmAppStartupLastRunAt && now - warmAppStartupLastRunAt < WARMUP_COOLDOWN_MS) {
+        return;
+    }
+
+    warmAppStartupRequest = (async () => {
     try {
         const hasToken = !!(await AsyncStorage.getItem('userToken'));
         const safeList = async (fn) => {
@@ -3252,7 +3736,7 @@ export const warmAppStartupData = async () => {
             safeList(getMyPodcasts),
             safeList(getLikedTracks),
             safeList(getLikedAlbums),
-            safeList(() => getRecentlyPlayed(true)),
+            safeList(getRecentlyPlayed),
         ]);
 
         const privateImageUrls = [
@@ -3266,6 +3750,12 @@ export const warmAppStartupData = async () => {
     } catch (_) {
         // warmup should never block app launch
     }
+    })().finally(() => {
+        warmAppStartupLastRunAt = Date.now();
+        warmAppStartupRequest = null;
+    });
+
+    return warmAppStartupRequest;
 };
 
 // 4. Heritage (Рандомні/Спеціальні)

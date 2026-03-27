@@ -18,7 +18,7 @@ import { SvgUri, SvgXml } from 'react-native-svg';
 import * as WebBrowser from "expo-web-browser";
 import * as Google from "expo-auth-session/providers/google";
 // 👇 Імпорти API та утиліт
-import { registerUser, googleLogin, scale, getIcons } from "../../api/api";
+import { registerUser, googleLogin, resolvePostAuthDestination, scale, getIcons } from "../../api/api";
 import { getGoogleAuthRequestConfig } from '../../config/googleAuthConfig';
 
 WebBrowser.maybeCompleteAuthSession();
@@ -125,7 +125,8 @@ export default function RegisterScreen({ navigation }) {
         if (result?.error) {
             Alert.alert("Error", typeof result.error === 'string' ? result.error : 'Google registration failed');
         } else {
-            navigation.replace('FavoriteGenres');
+            const nextRoute = await resolvePostAuthDestination();
+            navigation.replace(nextRoute);
         }
     };
 
@@ -276,6 +277,16 @@ export default function RegisterScreen({ navigation }) {
                                 style={styles.input}
                                 placeholderTextColor="#F5D8CB"
                             />
+                            <TouchableOpacity
+                                onPress={() => setSecure(!secure)}
+                                style={styles.rightIconButton}
+                                activeOpacity={0.8}
+                            >
+                                <View style={styles.eyeIconWrap}>
+                                    {renderIcon('eye.svg', 'o', { width: scale(22), height: scale(22) }, '#F5D8CB')}
+                                    {!secure && <View style={styles.eyeSlash} />}
+                                </View>
+                            </TouchableOpacity>
                         </View>
 
                         {/* Текст помилки знизу */}
@@ -410,7 +421,31 @@ const styles = StyleSheet.create({
         fontSize: scale(14),
         color: '#F5D8CB',
         fontFamily: 'Unbounded-Regular',
-        marginLeft: scale(56) + scale(12) // Відступ для тексту, щоб не наліз на іконку
+        marginLeft: scale(56) + scale(12), // Відступ для тексту, щоб не наліз на іконку
+        paddingRight: scale(34),
+    },
+    rightIconButton: {
+        position: 'absolute',
+        right: scale(10),
+        width: scale(32),
+        height: scale(32),
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    eyeIconWrap: {
+        width: scale(24),
+        height: scale(24),
+        alignItems: 'center',
+        justifyContent: 'center',
+        position: 'relative',
+    },
+    eyeSlash: {
+        position: 'absolute',
+        width: scale(23),
+        height: scale(2),
+        borderRadius: scale(1),
+        backgroundColor: '#F5D8CB',
+        transform: [{ rotate: '-35deg' }],
     },
 
     /* BUTTON */

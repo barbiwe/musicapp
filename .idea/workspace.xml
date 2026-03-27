@@ -8,17 +8,23 @@
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/App.js" beforeDir="false" afterPath="$PROJECT_DIR$/App.js" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/api/api.js" beforeDir="false" afterPath="$PROJECT_DIR$/api/api.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/components/MiniPlayer.js" beforeDir="false" afterPath="$PROJECT_DIR$/components/MiniPlayer.js" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/screens/AlbumDetailScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/AlbumDetailScreen.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/screens/AlbumListScreen.js" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/screens/CreateAlbumScreen.js" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/screens/ArtistProfileScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/ArtistProfileScreen.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/screens/DiscoverScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/DiscoverScreen.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/screens/GenreDetailScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/GenreDetailScreen.js" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/screens/MusicScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/MusicScreen.js" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/screens/PlayerScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/PlayerScreen.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/screens/auth/CreateNewPasswordScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/auth/CreateNewPasswordScreen.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/screens/auth/FavoriteGenresScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/auth/FavoriteGenresScreen.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/screens/library/ChooseArtistScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/library/ChooseArtistScreen.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/screens/library/PlaylistDetailScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/library/PlaylistDetailScreen.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/screens/SearchScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/SearchScreen.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/screens/auth/AuthChoiceScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/auth/AuthChoiceScreen.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/screens/auth/HomeScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/auth/HomeScreen.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/screens/auth/LoginScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/auth/LoginScreen.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/screens/library/LibraryAlbum.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/library/LibraryAlbum.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/screens/library/LibraryAll.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/library/LibraryAll.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/screens/library/PodcastDetailScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/library/PodcastDetailScreen.js" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/screens/profile/EditProfileScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/profile/EditProfileScreen.js" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/screens/profile/ProfileScreen.js" beforeDir="false" afterPath="$PROJECT_DIR$/screens/profile/ProfileScreen.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/store/usePlayerStore.js" beforeDir="false" afterPath="$PROJECT_DIR$/store/usePlayerStore.js" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />

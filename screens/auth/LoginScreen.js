@@ -20,7 +20,7 @@ import * as Google from 'expo-auth-session/providers/google';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SvgUri, SvgXml } from 'react-native-svg';
 // 👇 Імпортуємо готові функції та утиліти
-import { loginUser, googleLogin, scale, getIcons } from '../../api/api';
+import { loginUser, googleLogin, resolvePostAuthDestination, scale, getIcons } from '../../api/api';
 import { getGoogleAuthRequestConfig } from '../../config/googleAuthConfig';
 
 WebBrowser.maybeCompleteAuthSession();
@@ -135,7 +135,8 @@ export default function LoginScreen({ navigation }) {
                 if (uid) await AsyncStorage.setItem('userId', uid.toString());
             } catch(e) { console.log(e); }
 
-            navigation.replace('MainTabs');
+            const nextRoute = await resolvePostAuthDestination();
+            navigation.replace(nextRoute);
         }
     };
 
@@ -278,12 +279,15 @@ export default function LoginScreen({ navigation }) {
                                 placeholderTextColor="#F5D8CB"
                                 secureTextEntry={secure}
                             />
-                            {/* Око для показу пароля (опціонально) */}
                             <TouchableOpacity
                                 onPress={() => setSecure(!secure)}
-                                style={{ position: 'absolute', right: scale(16) }}
+                                style={styles.rightIconButton}
+                                activeOpacity={0.8}
                             >
-                                {/* Тут можна додати іконку ока, якщо вона є в базі */}
+                                <View style={styles.eyeIconWrap}>
+                                    {renderIcon('eye.svg', { width: scale(22), height: scale(22) }, '#F5D8CB')}
+                                    {!secure && <View style={styles.eyeSlash} />}
+                                </View>
                             </TouchableOpacity>
                         </View>
                     </View>
@@ -404,7 +408,31 @@ const styles = StyleSheet.create({
         fontSize: scale(14),
         color: '#F5D8CB',
         fontFamily: 'Unbounded-Regular',
-        marginLeft: scale(56) + scale(12)
+        marginLeft: scale(56) + scale(12),
+        paddingRight: scale(34),
+    },
+    rightIconButton: {
+        position: 'absolute',
+        right: scale(10),
+        width: scale(32),
+        height: scale(32),
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    eyeIconWrap: {
+        width: scale(24),
+        height: scale(24),
+        alignItems: 'center',
+        justifyContent: 'center',
+        position: 'relative',
+    },
+    eyeSlash: {
+        position: 'absolute',
+        width: scale(23),
+        height: scale(2),
+        borderRadius: scale(1),
+        backgroundColor: '#F5D8CB',
+        transform: [{ rotate: '-35deg' }],
     },
     errorText: {
         color: '#FF6B6B',

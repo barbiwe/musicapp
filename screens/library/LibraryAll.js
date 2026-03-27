@@ -18,11 +18,11 @@ import {
     getAllPodcasts,
     getAlbumCoverUrl,
     getAlbums,
+    getAlbumDetails,
     getIcons,
     getLikedAlbums,
     getLikedTracks,
     getMyPlaylists,
-    getMyAlbums,
     getPlaylistCoverUrl,
     getPodcastCoverUrl,
     getSubscriptions,
@@ -162,7 +162,6 @@ export default function LibraryAll({ navigation }) {
                 token,
                 likedTracksRaw,
                 myPlaylistsRaw,
-                myAlbumsRaw,
                 likedAlbumIdsRaw,
                 allAlbumsRaw,
                 allPodcastsRaw,
@@ -173,7 +172,6 @@ export default function LibraryAll({ navigation }) {
                 AsyncStorage.getItem('userToken'),
                 getLikedTracks({ force }),
                 getMyPlaylists({ force }),
-                getMyAlbums({ force }),
                 getLikedAlbums({ force }),
                 getAlbums({ force }),
                 getAllPodcasts({ force }),
@@ -206,15 +204,34 @@ export default function LibraryAll({ navigation }) {
                 .filter(Boolean)
                 .sort((a, b) => a.title.localeCompare(b.title));
 
-            const myAlbums = toArray(myAlbumsRaw);
             const allAlbums = toArray(allAlbumsRaw);
             const likedAlbumIds = (Array.isArray(likedAlbumIdsRaw) ? likedAlbumIdsRaw : [])
                 .map((id) => normalizeId(id))
                 .filter(Boolean);
 
             const likedAlbumSet = new Set(likedAlbumIds);
+            const likedFromAll = allAlbums.filter((album) => likedAlbumSet.has(normalizeId(album?.id || album?.Id || album?._id || album?.albumId || album?.AlbumId)));
+            const unresolvedLikedIds = likedAlbumIds.filter(
+                (albumId) =>
+                    !likedFromAll.some(
+                        (album) => normalizeId(album?.id || album?.Id || album?._id || album?.albumId || album?.AlbumId) === albumId
+                    )
+            );
+            const likedDetailsFallbackRaw = await Promise.all(
+                unresolvedLikedIds.map(async (albumId) => {
+                    try {
+                        const album = await getAlbumDetails(albumId);
+                        if (!album) return null;
+                        return { ...album, id: normalizeId(album?.id || album?.Id || albumId) || albumId };
+                    } catch (_) {
+                        return null;
+                    }
+                })
+            );
+            const likedDetailsFallback = likedDetailsFallbackRaw.filter(Boolean);
+
             const mergedAlbumsMap = new Map();
-            [...myAlbums, ...allAlbums.filter((album) => likedAlbumSet.has(normalizeId(album?.id || album?.Id)))].forEach(
+            [...likedFromAll, ...likedDetailsFallback].forEach(
                 (album) => {
                     const id = normalizeId(album?.id || album?.Id || album?._id || album?.albumId);
                     if (!id || mergedAlbumsMap.has(id)) return;

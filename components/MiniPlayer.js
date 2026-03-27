@@ -119,6 +119,8 @@ export default function MiniPlayer({ bottomOffset = scale(100) }) {
     const coverUrl = getTrackCoverUrl(currentTrack);
     const adCoverUrl = adData?.imageUrl || null;
     const isPodcastTrack = Boolean(currentTrack?.isPodcast) && !adModalVisible;
+    if (isPodcastTrack) return null;
+
     const displayedTitle = adModalVisible
         ? 'Advertisement'
         : isPodcastTrack

@@ -25,6 +25,7 @@ import * as ImagePicker from 'expo-image-picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { jwtDecode } from 'jwt-decode';
 import {
+    createAlbum,
     createPodcast,
     getAlbums,
     getGenres,
@@ -36,7 +37,21 @@ import {
 } from '../api/api';
 import RemoteTintIcon from '../components/RemoteTintIcon';
 
-const getEntityId = (item) => String(item?.id || item?._id || item?.podcastId || '').trim();
+const getEntityId = (item) =>
+    String(
+        item?.id ||
+        item?.Id ||
+        item?._id ||
+        item?.podcastId ||
+        item?.PodcastId ||
+        item?.albumId ||
+        item?.AlbumId ||
+        item?.trackId ||
+        item?.TrackId ||
+        item?.genreId ||
+        item?.GenreId ||
+        ''
+    ).trim();
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 const CREATE_MODES = ['track', 'podcast', 'album'];
 const resolveCreateMode = (value) => {
@@ -47,6 +62,12 @@ const createAlbumTrackDraft = () => ({
     id: `album-track-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     title: '',
     file: null,
+});
+const createPodcastEpisodeDraft = () => ({
+    id: `podcast-episode-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    title: '',
+    description: '',
+    audio: null,
 });
 const isArtistRoleValue = (value) => {
     if (value === null || value === undefined) return false;
@@ -106,6 +127,7 @@ export default function MusicScreen({ navigation, route }) {
     const [selectedAlbumGenreIds, setSelectedAlbumGenreIds] = useState([]);
     const [isAlbumGenreOpen, setIsAlbumGenreOpen] = useState(false);
     const [albumTracks, setAlbumTracks] = useState([createAlbumTrackDraft()]);
+    const [albumLoading, setAlbumLoading] = useState(false);
 
     // Podcast upload state
     const [podcastTitle, setPodcastTitle] = useState('');
@@ -114,10 +136,7 @@ export default function MusicScreen({ navigation, route }) {
     const [isPodcastGenreModalVisible, setPodcastGenreModalVisible] = useState(false);
     const [isPodcastGenreOpen, setIsPodcastGenreOpen] = useState(false);
     const [podcastCover, setPodcastCover] = useState(null);
-    const [episodeDraftTitle, setEpisodeDraftTitle] = useState('');
-    const [episodeDraftDescription, setEpisodeDraftDescription] = useState('');
-    const [episodeDraftAudio, setEpisodeDraftAudio] = useState(null);
-    const [podcastEpisodes, setPodcastEpisodes] = useState([]);
+    const [podcastEpisodes, setPodcastEpisodes] = useState([createPodcastEpisodeDraft()]);
     const [podcastLoading, setPodcastLoading] = useState(false);
 
     const closeAnyModal = () => {
@@ -334,7 +353,7 @@ export default function MusicScreen({ navigation, route }) {
         }
     };
 
-    const pickPodcastEpisodeAudio = async () => {
+    const pickPodcastEpisodeAudio = async (episodeId) => {
         try {
             const result = await DocumentPicker.getDocumentAsync({
                 type: 'audio/*',
@@ -342,41 +361,30 @@ export default function MusicScreen({ navigation, route }) {
             });
             if (result.canceled || !result.assets?.length) return;
 
-            setEpisodeDraftAudio(result.assets[0]);
+            const file = result.assets[0];
+            setPodcastEpisodes((prev) =>
+                prev.map((item) => (item.id === episodeId ? { ...item, audio: file } : item))
+            );
         } catch (_) {
             Alert.alert('Error', 'Failed to pick episode audio.');
         }
     };
 
-    const buildEpisodeFromDraft = (indexHint = 0) => {
-        if (!episodeDraftAudio?.uri) return null;
-        const episodeNumber = Math.max(1, Number(indexHint) || 1);
-        const safeTitle = String(episodeDraftTitle || '').trim() || `Episode ${episodeNumber}`;
-        const safeDescription = String(episodeDraftDescription || '').trim();
-
-        return {
-            id: `podcast-ep-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-            audio: episodeDraftAudio,
-            title: safeTitle,
-            description: safeDescription,
-        };
+    const updatePodcastEpisodeField = (episodeId, field, value) => {
+        setPodcastEpisodes((prev) =>
+            prev.map((item) => (item.id === episodeId ? { ...item, [field]: value } : item))
+        );
     };
 
     const handleAddPodcastEpisode = () => {
-        const episode = buildEpisodeFromDraft(podcastEpisodes.length + 1);
-        if (!episode) {
-            Alert.alert('Error', 'Select episode audio before adding.');
-            return;
-        }
-
-        setPodcastEpisodes((prev) => [...prev, episode]);
-        setEpisodeDraftTitle('');
-        setEpisodeDraftDescription('');
-        setEpisodeDraftAudio(null);
+        setPodcastEpisodes((prev) => [...prev, createPodcastEpisodeDraft()]);
     };
 
     const removePodcastEpisode = (episodeId) => {
-        setPodcastEpisodes((prev) => prev.filter((item) => item.id !== episodeId));
+        setPodcastEpisodes((prev) => {
+            const next = prev.filter((item) => item.id !== episodeId);
+            return next.length ? next : [createPodcastEpisodeDraft()];
+        });
     };
 
     const handleUploadTrack = async () => {
@@ -446,11 +454,19 @@ export default function MusicScreen({ navigation, route }) {
             Alert.alert('Error', 'Select at least one podcast genre.');
             return;
         }
-        const episodesForSubmit = [...podcastEpisodes];
-        const draftEpisode = buildEpisodeFromDraft(episodesForSubmit.length + 1);
-        if (draftEpisode) {
-            episodesForSubmit.push(draftEpisode);
+        const episodesForSubmit = (Array.isArray(podcastEpisodes) ? podcastEpisodes : [])
+            .map((episode, index) => ({
+                title: String(episode?.title || '').trim() || `Episode ${index + 1}`,
+                description: String(episode?.description || '').trim(),
+                audio: episode?.audio || null,
+            }));
+
+        const missingAudio = episodesForSubmit.some((episode) => !episode?.audio?.uri);
+        if (missingAudio) {
+            Alert.alert('Error', 'Select audio file for every episode.');
+            return;
         }
+
         if (!episodesForSubmit.length) {
             Alert.alert('Error', 'Add at least one episode.');
             return;
@@ -481,10 +497,105 @@ export default function MusicScreen({ navigation, route }) {
         setPodcastTitle('');
         setPodcastCover(null);
         setSelectedPodcastGenreIds([]);
-        setPodcastEpisodes([]);
-        setEpisodeDraftTitle('');
-        setEpisodeDraftDescription('');
-        setEpisodeDraftAudio(null);
+        setPodcastEpisodes([createPodcastEpisodeDraft()]);
+    };
+
+    const handleCreateAlbum = async () => {
+        console.log('[ALBUM-PUBLISH][UI] submit tapped', {
+            title: String(albumTitle || '').trim(),
+            hasCover: !!albumCover?.uri,
+            selectedGenresCount: Array.isArray(selectedAlbumGenreIds) ? selectedAlbumGenreIds.length : 0,
+            tracksDraftCount: Array.isArray(albumTracks) ? albumTracks.length : 0,
+        });
+
+        if (!artistId) {
+            Alert.alert('Error', 'Artist profile is not available.');
+            return;
+        }
+
+        const safeTitle = String(albumTitle || '').trim();
+        if (!safeTitle) {
+            Alert.alert('Error', 'Enter album title.');
+            return;
+        }
+
+        if (!albumCover?.uri) {
+            Alert.alert('Error', 'Select album cover.');
+            return;
+        }
+
+        if (!selectedAlbumGenreIds.length) {
+            Alert.alert('Error', 'Select at least one genre.');
+            return;
+        }
+
+        const preparedTracks = (Array.isArray(albumTracks) ? albumTracks : [])
+            .map((item, index) => ({
+                id: item?.id || `idx-${index}`,
+                title: String(item?.title || '').trim(),
+                file: item?.file || null,
+            }));
+
+        const tracksWithAudio = preparedTracks.filter((item) => !!item?.file?.uri);
+        if (!tracksWithAudio.length) {
+            console.log('[ALBUM-PUBLISH][UI] blocked: no tracks with audio');
+            Alert.alert('Error', 'Add at least one track and select audio file.');
+            return;
+        }
+
+        console.log('[ALBUM-PUBLISH][UI] payload prepared', {
+            title: safeTitle,
+            coverName: albumCover?.fileName || albumCover?.name || null,
+            coverUri: albumCover?.uri || null,
+            genreIds: selectedAlbumGenreIds,
+            tracksDraftCount: preparedTracks.length,
+            tracksWithAudioCount: tracksWithAudio.length,
+            tracks: tracksWithAudio.map((item, index) => ({
+                index,
+                title: item?.title || '',
+                audioName: item?.file?.name || item?.file?.fileName || null,
+                audioUri: item?.file?.uri || null,
+                audioSize: item?.file?.size || null,
+                audioType: item?.file?.mimeType || item?.file?.type || null,
+            })),
+        });
+
+        setAlbumLoading(true);
+
+        try {
+            const createResult = await createAlbum(
+                safeTitle,
+                albumCover,
+                selectedAlbumGenreIds,
+                tracksWithAudio
+            );
+            console.log('[ALBUM-PUBLISH][UI] createAlbum result', createResult);
+            if (createResult?.error) {
+                Alert.alert('Create failed', typeof createResult.error === 'string' ? createResult.error : 'Failed to create album');
+                return;
+            }
+
+            const createdAlbumId = getEntityId(createResult?.data);
+            console.log('[ALBUM-PUBLISH][UI] created album id', createdAlbumId || null);
+
+            Alert.alert('Success', 'Album created successfully');
+
+            setAlbumTitle('');
+            setAlbumCover(null);
+            setSelectedAlbumGenreIds([]);
+            setAlbumTracks([createAlbumTrackDraft()]);
+            void fetchData();
+            console.log('[ALBUM-PUBLISH][UI] done');
+        } catch (e) {
+            console.log('[ALBUM-PUBLISH][UI] fatal error', {
+                message: e?.message || null,
+                responseStatus: e?.response?.status || null,
+                responseData: e?.response?.data || null,
+            });
+            Alert.alert('Create failed', 'Unexpected error during album publish.');
+        } finally {
+            setAlbumLoading(false);
+        }
     };
 
     const selectedTrackGenreLabel = (() => {
@@ -533,7 +644,7 @@ export default function MusicScreen({ navigation, route }) {
             return;
         }
 
-        Alert.alert('Album', 'Дизайн створення альбому готовий. Публікацію підключимо наступним кроком.');
+        await handleCreateAlbum();
     };
 
     const showCoverLabel = trackCover?.name || trackCover?.fileName || '';
@@ -573,13 +684,13 @@ export default function MusicScreen({ navigation, route }) {
                     <TouchableOpacity
                         style={[
                             styles.postButton,
-                            (trackLoading || podcastLoading) && styles.postButtonDisabled,
+                            (trackLoading || podcastLoading || albumLoading) && styles.postButtonDisabled,
                         ]}
                         activeOpacity={0.85}
                         onPress={handlePostPress}
-                        disabled={trackLoading || podcastLoading}
+                        disabled={trackLoading || podcastLoading || albumLoading}
                     >
-                        {trackLoading || podcastLoading ? (
+                        {trackLoading || podcastLoading || albumLoading ? (
                             <ActivityIndicator color="#300C0A" size="small" />
                         ) : (
                             <Text style={styles.postButtonText}>Post</Text>
@@ -638,17 +749,19 @@ export default function MusicScreen({ navigation, route }) {
                                     style={styles.uploadCoverImage}
                                 />
                             ) : null}
-                            <View style={styles.uploadCoverOverlay}>
-                                <View style={styles.uploadPlusCircle}>
-                                    <View style={styles.plusGlyph}>
-                                        <View style={styles.plusHorizontal} />
-                                        <View style={styles.plusVertical} />
+                            {!trackCover?.uri ? (
+                                <View style={styles.uploadCoverOverlay}>
+                                    <View style={styles.uploadPlusCircle}>
+                                        <View style={styles.plusGlyph}>
+                                            <View style={styles.plusHorizontal} />
+                                            <View style={styles.plusVertical} />
+                                        </View>
                                     </View>
+                                    <Text style={styles.uploadCoverLabel}>
+                                        {showCoverLabel ? 'Cover selected' : 'Upload Cover'}
+                                    </Text>
                                 </View>
-                                <Text style={styles.uploadCoverLabel}>
-                                    {showCoverLabel ? 'Cover selected' : 'Upload Cover'}
-                                </Text>
-                            </View>
+                            ) : null}
                         </TouchableOpacity>
 
                         <Text style={styles.fieldLabel}>Title</Text>
@@ -804,17 +917,19 @@ export default function MusicScreen({ navigation, route }) {
                                     style={styles.uploadCoverImage}
                                 />
                             ) : null}
-                            <View style={styles.uploadCoverOverlay}>
-                                <View style={styles.uploadPlusCircle}>
-                                    <View style={styles.plusGlyph}>
-                                        <View style={styles.plusHorizontal} />
-                                        <View style={styles.plusVertical} />
+                            {!podcastCover?.uri ? (
+                                <View style={styles.uploadCoverOverlay}>
+                                    <View style={styles.uploadPlusCircle}>
+                                        <View style={styles.plusGlyph}>
+                                            <View style={styles.plusHorizontal} />
+                                            <View style={styles.plusVertical} />
+                                        </View>
                                     </View>
+                                    <Text style={styles.uploadCoverLabel}>
+                                        {podcastCover?.name || podcastCover?.fileName ? 'Cover selected' : 'Upload Cover'}
+                                    </Text>
                                 </View>
-                                <Text style={styles.uploadCoverLabel}>
-                                    {podcastCover?.name || podcastCover?.fileName ? 'Cover selected' : 'Upload Cover'}
-                                </Text>
-                            </View>
+                            ) : null}
                         </TouchableOpacity>
 
                         <Text style={styles.fieldLabel}>Title</Text>
@@ -895,90 +1010,90 @@ export default function MusicScreen({ navigation, route }) {
                             </Text>
                         </View>
 
-                        <Text style={styles.fieldLabel}>Title</Text>
-                        <TextInput
-                            keyboardAppearance="dark"
-                            placeholder="Name this episode..."
-                            value={episodeDraftTitle}
-                            onChangeText={setEpisodeDraftTitle}
-                            style={styles.inputField}
-                            placeholderTextColor="rgba(245,216,203,0.55)"
-                        />
+                        <View style={styles.episodesList}>
+                            {podcastEpisodes.map((episode, index) => (
+                                <View key={episode.id} style={styles.episodeFormBlock}>
+                                    <View style={styles.episodeFormHeader}>
+                                        <Text style={styles.episodeFormTitle}>Episode {index + 1}</Text>
+                                        {podcastEpisodes.length > 1 ? (
+                                            <TouchableOpacity
+                                                style={styles.removeEpisodeBtn}
+                                                onPress={() => removePodcastEpisode(episode.id)}
+                                                activeOpacity={0.85}
+                                            >
+                                                <Text style={styles.removeEpisodeText}>Remove</Text>
+                                            </TouchableOpacity>
+                                        ) : null}
+                                    </View>
 
-                        <Text style={styles.fieldLabel}>Audio File</Text>
-                        <TouchableOpacity
-                            style={styles.selectorField}
-                            onPress={pickPodcastEpisodeAudio}
-                            disabled={podcastLoading}
-                            activeOpacity={0.85}
-                        >
-                            <View style={styles.selectorLeft}>
-                                <RemoteTintIcon
-                                    icons={icons}
-                                    iconName={resolveIconName('download.svg')}
-                                    width={scale(18)}
-                                    height={scale(18)}
-                                    color="#F5D8CB"
-                                    fallback="↓"
-                                />
-                                <Text style={styles.selectorText}>
-                                    {episodeDraftAudio?.name || episodeDraftAudio?.fileName || 'Select file'}
-                                </Text>
-                            </View>
-                            <RemoteTintIcon
-                                icons={icons}
-                                iconName={resolveIconName('arrow-right.svg')}
-                                width={scale(18)}
-                                height={scale(18)}
-                                color="rgba(245,216,203,0.6)"
-                                fallback="›"
-                            />
-                        </TouchableOpacity>
+                                    <Text style={styles.fieldLabel}>Title</Text>
+                                    <TextInput
+                                        keyboardAppearance="dark"
+                                        placeholder="Name this episode..."
+                                        value={episode.title}
+                                        onChangeText={(text) => updatePodcastEpisodeField(episode.id, 'title', text)}
+                                        style={styles.inputField}
+                                        placeholderTextColor="rgba(245,216,203,0.55)"
+                                    />
 
-                        <Text style={styles.fieldLabel}>Description</Text>
-                        <TextInput
-                            keyboardAppearance="dark"
-                            placeholder="What is this episode about?"
-                            value={episodeDraftDescription}
-                            onChangeText={setEpisodeDraftDescription}
-                            style={[styles.inputField, styles.textAreaSmall]}
-                            placeholderTextColor="rgba(245,216,203,0.55)"
-                            multiline
-                            numberOfLines={5}
-                            textAlignVertical="top"
-                        />
-
-                        <TouchableOpacity
-                            style={styles.addTrackBtn}
-                            activeOpacity={0.85}
-                            onPress={handleAddPodcastEpisode}
-                        >
-                            <Text style={styles.addTrackText}>+ Add new episode</Text>
-                        </TouchableOpacity>
-
-                        {podcastEpisodes.length ? (
-                            <View style={styles.episodesList}>
-                                {podcastEpisodes.map((episode) => (
-                                    <View key={episode.id} style={styles.episodeCard}>
-                                        <View style={styles.episodeMeta}>
-                                            <Text numberOfLines={1} style={styles.episodeTitle}>
-                                                {episode.title}
-                                            </Text>
-                                            <Text numberOfLines={1} style={styles.episodeFile}>
-                                                {episode.audio?.name || episode.audio?.fileName || 'Episode audio'}
+                                    <Text style={styles.fieldLabel}>Audio File</Text>
+                                    <TouchableOpacity
+                                        style={styles.selectorField}
+                                        onPress={() => pickPodcastEpisodeAudio(episode.id)}
+                                        disabled={podcastLoading}
+                                        activeOpacity={0.85}
+                                    >
+                                        <View style={styles.selectorLeft}>
+                                            <RemoteTintIcon
+                                                icons={icons}
+                                                iconName={resolveIconName('download.svg')}
+                                                width={scale(18)}
+                                                height={scale(18)}
+                                                color="#F5D8CB"
+                                                fallback="↓"
+                                            />
+                                            <Text style={styles.selectorText}>
+                                                {episode.audio?.name || episode.audio?.fileName || 'Select file'}
                                             </Text>
                                         </View>
-                                        <TouchableOpacity
-                                            style={styles.removeEpisodeBtn}
-                                            onPress={() => removePodcastEpisode(episode.id)}
-                                            activeOpacity={0.85}
-                                        >
-                                            <Text style={styles.removeEpisodeText}>Remove</Text>
-                                        </TouchableOpacity>
-                                    </View>
-                                ))}
-                            </View>
-                        ) : null}
+                                        <RemoteTintIcon
+                                            icons={icons}
+                                            iconName={resolveIconName('arrow-right.svg')}
+                                            width={scale(18)}
+                                            height={scale(18)}
+                                            color="rgba(245,216,203,0.6)"
+                                            fallback="›"
+                                        />
+                                    </TouchableOpacity>
+
+                                    <Text style={styles.fieldLabel}>Description</Text>
+                                    <TextInput
+                                        keyboardAppearance="dark"
+                                        placeholder="What is this episode about?"
+                                        value={episode.description}
+                                        onChangeText={(text) => updatePodcastEpisodeField(episode.id, 'description', text)}
+                                        style={[styles.inputField, styles.textAreaSmall]}
+                                        placeholderTextColor="rgba(245,216,203,0.55)"
+                                        multiline
+                                        numberOfLines={5}
+                                        textAlignVertical="top"
+                                    />
+                                </View>
+                            ))}
+                        </View>
+
+                        <View style={styles.addEpisodeWrap}>
+                            <TouchableOpacity
+                                style={styles.addEpisodeBtn}
+                                activeOpacity={0.85}
+                                onPress={handleAddPodcastEpisode}
+                            >
+                                <View style={styles.addEpisodeInner}>
+                                    <Text style={styles.addEpisodePlus}>+</Text>
+                                    <Text style={styles.addEpisodeLabel}>Add new episode</Text>
+                                </View>
+                            </TouchableOpacity>
+                        </View>
 
                         <View style={styles.warningCard}>
                             <Text style={styles.warningText}>
@@ -999,17 +1114,19 @@ export default function MusicScreen({ navigation, route }) {
                                     style={styles.uploadCoverImage}
                                 />
                             ) : null}
-                            <View style={styles.uploadCoverOverlay}>
-                                <View style={styles.uploadPlusCircle}>
-                                    <View style={styles.plusGlyph}>
-                                        <View style={styles.plusHorizontal} />
-                                        <View style={styles.plusVertical} />
+                            {!albumCover?.uri ? (
+                                <View style={styles.uploadCoverOverlay}>
+                                    <View style={styles.uploadPlusCircle}>
+                                        <View style={styles.plusGlyph}>
+                                            <View style={styles.plusHorizontal} />
+                                            <View style={styles.plusVertical} />
+                                        </View>
                                     </View>
+                                    <Text style={styles.uploadCoverLabel}>
+                                        {albumCoverLabel ? 'Cover selected' : 'Upload Cover'}
+                                    </Text>
                                 </View>
-                                <Text style={styles.uploadCoverLabel}>
-                                    {albumCoverLabel ? 'Cover selected' : 'Upload Cover'}
-                                </Text>
-                            </View>
+                            ) : null}
                         </TouchableOpacity>
 
                         <Text style={styles.fieldLabel}>Title</Text>
@@ -1091,70 +1208,49 @@ export default function MusicScreen({ navigation, route }) {
                         </View>
 
                         <View style={styles.albumTracksList}>
-                            {albumTracks.map((item, index) => (
+                            {albumTracks.map((item) => (
                                 <View key={item.id} style={styles.albumTrackCard}>
-                                    <View style={styles.albumTrackGrip}>
-                                        <View style={styles.gripDotsWrap}>
-                                            {[0, 1, 2].map((row) => (
-                                                <View key={`l-${item.id}-${row}`} style={styles.gripDotsColumn}>
-                                                    <View style={styles.gripDot} />
-                                                    <View style={styles.gripDot} />
-                                                </View>
-                                            ))}
-                                        </View>
-                                    </View>
+                                    <TouchableOpacity
+                                        style={styles.albumTrackRemove}
+                                        activeOpacity={0.85}
+                                        onPress={() => removeAlbumTrack(item.id)}
+                                    >
+                                        <Text style={styles.albumTrackRemoveText}>×</Text>
+                                    </TouchableOpacity>
 
-                                    <View style={styles.albumTrackInner}>
-                                        <View style={styles.albumTrackPreview}>
-                                            <View style={styles.albumTrackPreviewBorder}>
-                                                <RemoteTintIcon
-                                                    icons={icons}
-                                                    iconName={resolveIconName('upload.svg')}
-                                                    width={scale(18)}
-                                                    height={scale(18)}
-                                                    color="rgba(245,216,203,0.55)"
-                                                    fallback="+"
-                                                />
-                                            </View>
-                                        </View>
+                                    <Text style={styles.albumTrackFieldLabel}>Title</Text>
+                                    <TextInput
+                                        keyboardAppearance="dark"
+                                        placeholder="Name your track..."
+                                        value={item.title}
+                                        onChangeText={(text) => updateAlbumTrackTitle(item.id, text)}
+                                        style={styles.albumTrackNameInput}
+                                        placeholderTextColor="rgba(245,216,203,0.55)"
+                                    />
+                                    <View style={styles.albumTrackTitleUnderline} />
 
-                                        <View style={styles.albumTrackMeta}>
-                                            <TextInput
-                            keyboardAppearance="dark"
-                                                placeholder={`Track ${index + 1} name...`}
-                                                value={item.title}
-                                                onChangeText={(text) => updateAlbumTrackTitle(item.id, text)}
-                                                style={styles.albumTrackNameInput}
-                                                placeholderTextColor="rgba(245,216,203,0.55)"
+                                    <Text style={[styles.albumTrackFieldLabel, styles.albumTrackAudioLabel]}>
+                                        Audio file
+                                    </Text>
+                                    <TouchableOpacity
+                                        style={styles.albumTrackFileBtn}
+                                        activeOpacity={0.85}
+                                        onPress={() => pickAlbumTrackAudio(item.id)}
+                                    >
+                                        <View style={styles.albumTrackFileBtnLeft}>
+                                            <RemoteTintIcon
+                                                icons={icons}
+                                                iconName={resolveIconName('download.svg')}
+                                                width={scale(20)}
+                                                height={scale(20)}
+                                                color="#AC654F"
+                                                fallback="↓"
                                             />
-
-                                            <TouchableOpacity
-                                                style={styles.albumTrackFileBtn}
-                                                activeOpacity={0.85}
-                                                onPress={() => pickAlbumTrackAudio(item.id)}
-                                            >
-                                                <RemoteTintIcon
-                                                    icons={icons}
-                                                    iconName={resolveIconName('download.svg')}
-                                                    width={scale(16)}
-                                                    height={scale(16)}
-                                                    color="#F5D8CB"
-                                                    fallback="↓"
-                                                />
-                                                <Text style={styles.albumTrackFileText} numberOfLines={1}>
-                                                    {item.file?.name || item.file?.fileName || 'Select file'}
-                                                </Text>
-                                            </TouchableOpacity>
+                                            <Text style={styles.albumTrackFileText} numberOfLines={1}>
+                                                {item.file?.name || item.file?.fileName || 'Select file'}
+                                            </Text>
                                         </View>
-
-                                        <TouchableOpacity
-                                            style={styles.albumTrackRemove}
-                                            activeOpacity={0.85}
-                                            onPress={() => removeAlbumTrack(item.id)}
-                                        >
-                                            <Text style={styles.albumTrackRemoveText}>×</Text>
-                                        </TouchableOpacity>
-                                    </View>
+                                    </TouchableOpacity>
                                 </View>
                             ))}
                         </View>
@@ -1467,9 +1563,12 @@ const styles = StyleSheet.create({
         backgroundColor: 'rgba(255, 255, 255, 0.08)',
     },
     uploadCoverImage: {
-        ...StyleSheet.absoluteFillObject,
-        width: '100%',
-        height: '100%',
+        position: 'absolute',
+        top: 1,
+        left: 1,
+        right: 1,
+        bottom: 1,
+        borderRadius: scale(27),
     },
     uploadCoverOverlay: {
         flex: 1,
@@ -1663,102 +1762,79 @@ const styles = StyleSheet.create({
         fontSize: scale(14),
     },
     albumTracksList: {
-        gap: scale(10),
+        gap: scale(12),
     },
     albumTrackCard: {
-        minHeight: scale(90),
-        borderRadius: scale(16),
+        minHeight: scale(218),
+        borderRadius: scale(22),
         borderWidth: 1,
         borderColor: 'rgba(255,255,255,0.15)',
         backgroundColor: 'rgba(255,255,255,0.08)',
-        overflow: 'hidden',
-        flexDirection: 'row',
+        paddingHorizontal: scale(20),
+        paddingTop: scale(26),
+        paddingBottom: scale(22),
     },
-    albumTrackGrip: {
-        width: scale(28),
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    gripDotsWrap: {
-        gap: scale(3),
-    },
-    gripDotsColumn: {
-        flexDirection: 'row',
-        gap: scale(3),
-    },
-    gripDot: {
-        width: scale(3),
-        height: scale(3),
-        borderRadius: scale(1.5),
-        backgroundColor: 'rgba(245,216,203,0.5)',
-    },
-    albumTrackInner: {
-        flex: 1,
-        minHeight: scale(90),
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingVertical: scale(10),
-        paddingRight: scale(12),
-        paddingLeft: scale(4),
-    },
-    albumTrackPreview: {
-        width: scale(58),
-        height: scale(58),
-        borderRadius: scale(12),
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.15)',
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: 'rgba(255,255,255,0.08)',
-        marginRight: scale(12),
-    },
-    albumTrackPreviewBorder: {
-        width: scale(34),
-        height: scale(34),
-        borderRadius: scale(8),
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.15)',
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    albumTrackMeta: {
-        flex: 1,
-        justifyContent: 'center',
-        paddingRight: scale(10),
-    },
-    albumTrackNameInput: {
-        minHeight: scale(26),
+    albumTrackFieldLabel: {
         color: '#F5D8CB',
         fontFamily: 'Poppins-Regular',
-        fontSize: scale(15),
-        paddingHorizontal: 0,
-        paddingVertical: 0,
+        fontSize: scale(14),
         marginBottom: scale(6),
     },
+    albumTrackNameInput: {
+        minHeight: scale(28),
+        color: '#F5D8CB',
+        fontFamily: 'Poppins-Regular',
+        fontSize: scale(13),
+        paddingHorizontal: 0,
+        paddingVertical: 0,
+    },
+    albumTrackTitleUnderline: {
+        height: 1,
+        borderBottomWidth: 1,
+        borderBottomColor: 'rgba(245,216,203,0.35)',
+        marginTop: scale(8),
+    },
+    albumTrackAudioLabel: {
+        marginTop: scale(20),
+    },
     albumTrackFileBtn: {
+        minHeight: scale(36),
+        width: '100%',
+        borderRadius: scale(12),
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.22)',
+        paddingHorizontal: scale(16),
+        justifyContent: 'center',
+        marginTop: scale(6),
+        backgroundColor: 'rgba(255,255,255,0.08)',
+    },
+    albumTrackFileBtnLeft: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: scale(8),
+        gap: scale(12),
     },
     albumTrackFileText: {
         flex: 1,
         color: '#F5D8CB',
         fontFamily: 'Poppins-Regular',
-        fontSize: scale(15),
+        fontSize: scale(13),
     },
     albumTrackRemove: {
-        width: scale(30),
-        height: scale(30),
-        borderRadius: scale(15),
+        position: 'absolute',
+        top: scale(10),
+        right: scale(10),
+        width: scale(36),
+        height: scale(36),
+        borderRadius: scale(18),
         alignItems: 'center',
         justifyContent: 'center',
+        zIndex: 2,
     },
     albumTrackRemoveText: {
-        color: 'rgba(245,216,203,0.55)',
+        color: 'rgba(245,216,203,0.45)',
         fontFamily: 'Poppins-Regular',
-        fontSize: scale(28),
-        lineHeight: scale(28),
-        transform: [{ translateY: scale(-1) }],
+        fontSize: scale(44 / 2),
+        lineHeight: scale(44 / 2),
     },
     addTrackBtn: {
         marginTop: scale(12),
@@ -1783,34 +1859,21 @@ const styles = StyleSheet.create({
     },
     episodesList: {
         marginTop: scale(6),
+        marginBottom: scale(12),
+    },
+    episodeFormBlock: {
         marginBottom: scale(8),
     },
-    episodeCard: {
+    episodeFormHeader: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        borderWidth: 1,
-        borderColor: 'rgba(245,216,203,0.24)',
-        borderRadius: scale(12),
-        paddingVertical: scale(10),
-        paddingHorizontal: scale(12),
-        backgroundColor: 'rgba(48,12,10,0.24)',
-        marginBottom: scale(8),
+        marginBottom: scale(4),
     },
-    episodeMeta: {
-        flex: 1,
-        paddingRight: scale(10),
-    },
-    episodeTitle: {
-        color: '#F5D8CB',
-        fontSize: scale(14),
-        fontFamily: 'Poppins-SemiBold',
-    },
-    episodeFile: {
-        color: 'rgba(245,216,203,0.65)',
-        fontSize: scale(12),
-        marginTop: scale(2),
-        fontFamily: 'Poppins-Regular',
+    episodeFormTitle: {
+        color: 'rgba(245,216,203,0.7)',
+        fontFamily: 'Poppins-Medium',
+        fontSize: scale(13),
     },
     removeEpisodeBtn: {
         minHeight: scale(32),
@@ -1827,6 +1890,38 @@ const styles = StyleSheet.create({
         color: '#F5D8CB',
         fontSize: scale(12),
         fontFamily: 'Poppins-Medium',
+    },
+    addEpisodeWrap: {
+        marginTop: scale(6),
+        marginBottom: scale(4),
+    },
+    addEpisodeBtn: {
+        width: '100%',
+        minHeight: scale(58),
+        borderRadius: scale(16),
+        borderWidth: 1,
+        borderStyle: 'dashed',
+        borderColor: 'rgba(255,255,255,0.28)',
+        backgroundColor: 'transparent',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    addEpisodeInner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: scale(8),
+    },
+    addEpisodePlus: {
+        color: 'rgba(245,216,203,0.75)',
+        fontFamily: 'Poppins-Regular',
+        fontSize: scale(30),
+        lineHeight: scale(30),
+    },
+    addEpisodeLabel: {
+        color: 'rgba(245,216,203,0.75)',
+        fontFamily: 'Poppins-Regular',
+        fontSize: scale(16),
     },
     warningCard: {
         marginTop: scale(18),

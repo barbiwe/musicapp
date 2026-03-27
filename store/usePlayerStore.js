@@ -387,6 +387,7 @@ export const usePlayerStore = create((set, get) => ({
     adPositionMs: 0,
     adDurationMs: 0,
     isAdPlaying: false,
+    playbackRate: 1.0,
 
     initPlayer: async () => {
         try {
@@ -561,6 +562,12 @@ export const usePlayerStore = create((set, get) => ({
                 artist: playerTrack.artist,
                 artwork: playerTrack.artwork,
             });
+            try {
+                const desiredRate = Number(get().playbackRate) || 1.0;
+                await TrackPlayer.setRate(desiredRate);
+            } catch (_) {
+                // ignore rate errors
+            }
 
             const startPositionMs = Math.max(0, Number(track?.startPositionMs) || 0);
             if (startPositionMs > 0) {
@@ -858,6 +865,18 @@ export const usePlayerStore = create((set, get) => ({
         const { repeatMode } = get();
         const next = repeatMode === 'off' ? 'one' : 'off';
         set({ repeatMode: next });
+    },
+
+    setPlaybackRate: async (nextRate) => {
+        const safeRate = Math.max(0.5, Math.min(2, Number(nextRate) || 1.0));
+        try {
+            await ensurePlayerReady(set, get);
+            await TrackPlayer.setRate(safeRate);
+        } catch (_) {
+            // ignore
+        } finally {
+            set({ playbackRate: safeRate });
+        }
     },
 
     setMiniPlayerHiddenKey: (key) => {
