@@ -22,6 +22,10 @@ import {
     getPlaylistCoverUrl,
     getPodcastCoverUrl,
     getUserAvatarUrl,
+    getLikedTracks,
+    getLikedAlbums,
+    getSubscriptions,
+    isPodcastLiked,
     searchLibrary,
     scale,
 } from '../../api/api';
@@ -31,6 +35,13 @@ import { usePlayerStore } from '../../store/usePlayerStore';
 const RECENT_KEY = 'library_search_recent_v1';
 const API_BASE = api?.defaults?.baseURL || process.env.EXPO_PUBLIC_API_URL || 'http://54.144.57.220:8080';
 let librarySearchSessionCache = null;
+const SEARCH_SECTIONS = [
+    { type: 'artist', title: 'Artists' },
+    { type: 'album', title: 'Albums' },
+    { type: 'podcast', title: 'Podcasts' },
+    { type: 'track', title: 'Songs' },
+    { type: 'playlist', title: 'Playlists' },
+];
 
 const safeText = (value, fallback = '') => {
     const str = String(value || '').trim();
@@ -42,6 +53,109 @@ const toAbsoluteUrl = (raw) => {
     if (!value) return null;
     if (/^https?:\/\//i.test(value)) return value;
     return `${API_BASE}${value.startsWith('/') ? '' : '/'}${value}`;
+};
+
+const normalizeId = (value) => String(value || '').trim();
+
+const getTrackId = (item) =>
+    normalizeId(item?.id || item?._id || item?.trackId || item?.TrackId || item?.payload?.id || item?.payload?._id);
+
+const getAlbumId = (item) =>
+    normalizeId(item?.id || item?._id || item?.albumId || item?.AlbumId || item?.payload?.id || item?.payload?._id);
+
+const getPodcastId = (item) =>
+    normalizeId(item?.id || item?._id || item?.podcastId || item?.PodcastId || item?.payload?.id || item?.payload?._id);
+
+const getArtistId = (item) =>
+    normalizeId(
+        item?.artistId ||
+        item?.ArtistId ||
+        item?.artist?.id ||
+        item?.artist?._id ||
+        item?.id ||
+        item?._id ||
+        item?.payload?.id ||
+        item?.payload?.artistId
+    );
+
+const getSubscriptionArtistId = (item) =>
+    normalizeId(
+        item?.artistId ||
+        item?.ArtistId ||
+        item?.artist?.id ||
+        item?.artist?._id ||
+        item?.ownerId ||
+        item?.userId ||
+        item?.id ||
+        item?._id
+    );
+
+const toIdSet = (list, idResolver) => {
+    const set = new Set();
+    (Array.isArray(list) ? list : []).forEach((entry) => {
+        if (typeof entry === 'string' || typeof entry === 'number') {
+            const id = normalizeId(entry);
+            if (id) set.add(id);
+            return;
+        }
+
+        if (!entry || typeof entry !== 'object') return;
+        const id = normalizeId(idResolver ? idResolver(entry) : entry?.id || entry?._id);
+        if (id) set.add(id);
+    });
+    return set;
+};
+
+const filterSearchResultByLibrary = async (data = {}) => {
+    const tracks = Array.isArray(data?.tracks) ? data.tracks : [];
+    const playlists = Array.isArray(data?.playlists) ? data.playlists : [];
+    const albums = Array.isArray(data?.albums) ? data.albums : [];
+    const podcasts = Array.isArray(data?.podcasts) ? data.podcasts : [];
+    const artists = Array.isArray(data?.artists) ? data.artists : [];
+
+    try {
+        const [likedTracksRaw, likedAlbumsRaw, subscriptionsRaw] = await Promise.all([
+            getLikedTracks().catch(() => []),
+            getLikedAlbums().catch(() => []),
+            getSubscriptions().catch(() => []),
+        ]);
+
+        const likedTrackIds = toIdSet(likedTracksRaw, getTrackId);
+        const likedAlbumIds = toIdSet(likedAlbumsRaw, getAlbumId);
+        const subscribedArtistIds = toIdSet(subscriptionsRaw, getSubscriptionArtistId);
+
+        const filteredTracks = tracks.filter((track) => likedTrackIds.has(getTrackId(track)));
+        const filteredAlbums = albums.filter((album) => likedAlbumIds.has(getAlbumId(album)));
+        const filteredArtists = artists.filter((artist) => subscribedArtistIds.has(getArtistId(artist)));
+
+        const podcastLikes = await Promise.all(
+            podcasts.map(async (podcast) => {
+                const id = getPodcastId(podcast);
+                if (!id) return { podcast, liked: false };
+                const liked = await isPodcastLiked(id).catch(() => false);
+                return { podcast, liked };
+            })
+        );
+        const filteredPodcasts = podcastLikes
+            .filter((item) => item.liked)
+            .map((item) => item.podcast);
+
+        return {
+            tracks: filteredTracks,
+            playlists,
+            albums: filteredAlbums,
+            podcasts: filteredPodcasts,
+            artists: filteredArtists,
+        };
+    } catch (_) {
+        return {
+            tracks: [],
+            playlists,
+            albums: [],
+            podcasts: [],
+            artists: [],
+        };
+    }
 };
 
 const itemImageUrl = (item) => {
@@ -93,7 +207,7 @@ const itemSubtitle = (item) => {
         return `Album / ${artist}`;
     }
     if (item.type === 'playlist') {
-        return 'Playlist';
+        return 'Playlist / Contains a matching track';
     }
     if (item.type === 'podcast') {
         const author = item.payload?.author || item.payload?.artistName || 'Podcast';
@@ -200,7 +314,9 @@ export default function LibrarySearchScreen({ navigation }) {
         const timeoutId = setTimeout(async () => {
             const response = await searchLibrary(q);
             if (reqId !== searchReqIdRef.current) return;
-            setResults(mapSearchResult(response));
+            const filteredResponse = await filterSearchResultByLibrary(response);
+            if (reqId !== searchReqIdRef.current) return;
+            setResults(mapSearchResult(filteredResponse));
         }, 250);
 
         return () => clearTimeout(timeoutId);
@@ -223,6 +339,14 @@ export default function LibrarySearchScreen({ navigation }) {
         () => (query.trim() ? results : recentTrackCards),
         [query, results, recentTrackCards]
     );
+    const groupedSearchSections = useMemo(() => {
+        if (!query.trim()) return [];
+
+        return SEARCH_SECTIONS.map((section) => ({
+            ...section,
+            items: results.filter((item) => item?.type === section.type),
+        })).filter((section) => section.items.length > 0);
+    }, [query, results]);
 
     const persistRecent = async (item) => {
         try {
@@ -304,6 +428,47 @@ export default function LibrarySearchScreen({ navigation }) {
                 },
             });
         }
+    };
+
+    const renderResultItem = (item) => {
+        const imageUrl = itemImageUrl(item) || item.imageUrl;
+        const imageSource = getImageSource(item, imageUrl);
+        const roundImage = isRoundImageType(item);
+
+        return (
+            <TouchableOpacity
+                key={`${item.type}-${item.id}`}
+                style={styles.resultCard}
+                activeOpacity={0.85}
+                onPress={() => onOpenItem(item)}
+            >
+                {imageSource ? (
+                    <Image
+                        source={imageSource}
+                        style={[
+                            styles.resultImage,
+                            roundImage ? styles.resultImageRound : styles.resultImageSquare,
+                        ]}
+                    />
+                ) : (
+                    <View
+                        style={[
+                            styles.resultImage,
+                            roundImage ? styles.resultImageRound : styles.resultImageSquare,
+                            styles.resultFallback,
+                        ]}
+                    />
+                )}
+                <View style={styles.resultTextWrap}>
+                    <Text style={styles.resultTitle} numberOfLines={1}>
+                        {item.title}
+                    </Text>
+                    <Text style={styles.resultSubtitle} numberOfLines={1}>
+                        {item.subtitle || itemSubtitle(item) || 'Song / Unknown'}
+                    </Text>
+                </View>
+            </TouchableOpacity>
+        );
     };
 
     return (
@@ -402,35 +567,20 @@ export default function LibrarySearchScreen({ navigation }) {
                     ) : null}
 
                     <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.listContent}>
-                        {listToRender.map((item) => {
-                            const imageUrl = itemImageUrl(item) || item.imageUrl;
-                            const imageSource = getImageSource(item, imageUrl);
-                            return (
-                            <TouchableOpacity
-                                key={`${item.type}-${item.id}`}
-                                style={styles.resultCard}
-                                activeOpacity={0.85}
-                                onPress={() => onOpenItem(item)}
-                            >
-                                {imageSource ? (
-                                    <Image
-                                        source={imageSource}
-                                        style={styles.resultImage}
-                                    />
-                                ) : (
-                                    <View style={[styles.resultImage, styles.resultFallback]} />
-                                )}
-                                <View style={styles.resultTextWrap}>
-                                    <Text style={styles.resultTitle} numberOfLines={1}>
-                                        {item.title}
-                                    </Text>
-                                    <Text style={styles.resultSubtitle} numberOfLines={1}>
-                                        {item.subtitle || itemSubtitle(item) || 'Song / Unknown'}
-                                    </Text>
-                                </View>
-                            </TouchableOpacity>
-                            );
-                        })}
+                        {query.trim() ? (
+                            groupedSearchSections.length > 0 ? (
+                                groupedSearchSections.map((section) => (
+                                    <View key={section.type} style={styles.resultsSection}>
+                                        <Text style={styles.resultsSectionTitle}>{section.title}</Text>
+                                        {section.items.map(renderResultItem)}
+                                    </View>
+                                ))
+                            ) : (
+                                <Text style={styles.emptySearchText}>No matches found</Text>
+                            )
+                        ) : (
+                            listToRender.map(renderResultItem)
+                        )}
                     </ScrollView>
                 </View>
             </LinearGradient>
@@ -532,6 +682,7 @@ const styles = StyleSheet.create({
         height: scale(82),
         borderRadius: scale(41),
         marginBottom: scale(8),
+        marginLeft: scale(-3),
         backgroundColor: 'rgba(48,12,10,0.5)',
     },
     recentImageSquare: {
@@ -547,17 +698,33 @@ const styles = StyleSheet.create({
         paddingBottom: scale(120),
         gap: scale(0),
     },
+    resultsSection: {
+        marginBottom: scale(18),
+    },
+    resultsSectionTitle: {
+        color: '#F5D8CB',
+        fontFamily: 'Unbounded-Medium',
+        fontSize: scale(16),
+        marginBottom: scale(12),
+    },
+    emptySearchText: {
+        color: 'rgba(245,216,203,0.75)',
+        fontFamily: 'Poppins-Regular',
+        fontSize: scale(15),
+        marginTop: scale(8),
+    },
     resultCard: {
         width: '100%',
         minHeight: scale(80),
-        marginBottom: scale(16),
+        marginBottom: scale(12),
         borderRadius: scale(20),
         borderTopLeftRadius: scale(50),
         borderBottomLeftRadius: scale(50),
         backgroundColor: 'rgba(48, 12, 10, 0.2)',
         flexDirection: 'row',
         alignItems: 'center',
-        paddingHorizontal: scale(12),
+        paddingLeft: scale(8),
+        paddingRight: scale(12),
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.3,
@@ -566,9 +733,15 @@ const styles = StyleSheet.create({
     resultImage: {
         width: scale(80),
         height: scale(80),
-        borderRadius: scale(15),
         backgroundColor: '#333',
+        marginLeft: scale(-4),
         marginRight: scale(12),
+    },
+    resultImageSquare: {
+        borderRadius: scale(15),
+    },
+    resultImageRound: {
+        borderRadius: scale(40),
     },
     resultFallback: {
         backgroundColor: 'rgba(20, 8, 8, 0.8)',

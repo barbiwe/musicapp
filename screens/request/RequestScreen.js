@@ -59,17 +59,17 @@ export default function RequestScreen({ navigation }) {
                         fallback="‹"
                     />
                 </TouchableOpacity>
-
-                <Text style={styles.title}>Start your{"\n"}music journey</Text>
             </View>
-
-            <TouchableOpacity
-                style={styles.createButton}
-                activeOpacity={0.85}
-                onPress={() => navigation.navigate('RequestTerms')}
-            >
-                <Text style={styles.createButtonText}>Create artist profile</Text>
-            </TouchableOpacity>
+            <View style={styles.bottomBlock}>
+                <Text style={styles.title}>Start your{"\n"}music journey</Text>
+                <TouchableOpacity
+                    style={styles.createButton}
+                    activeOpacity={0.85}
+                    onPress={() => navigation.navigate('RequestTerms')}
+                >
+                    <Text style={styles.createButtonText}>Create artist profile</Text>
+                </TouchableOpacity>
+            </View>
         </View>
     );
 
@@ -127,6 +127,10 @@ const styles = StyleSheet.create({
         fontSize: scale(32),
         lineHeight: scale(72 / 2),
         maxWidth: scale(270),
+        marginBottom: scale(24),
+    },
+    bottomBlock: {
+        width: '100%',
     },
     createButton: {
         width: '100%',
@@ -135,7 +139,7 @@ const styles = StyleSheet.create({
         backgroundColor: '#F5D8CB',
         justifyContent: 'center',
         alignItems: 'center',
-        marginBottom: scale(52 ),
+        marginBottom: scale(52),
     },
     createButtonText: {
         color: '#300C0A',
